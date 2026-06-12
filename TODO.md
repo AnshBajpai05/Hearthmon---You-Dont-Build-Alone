@@ -118,8 +118,9 @@ Everything below is **live** in the current build:
 ## 💡 Brainstormed Additions (not in doc, but would add serious value)
 
 ### Small but Mighty
-- [ ] **"Good Things Jar"** — a dedicated button that opens a jar animation and pulls 3 random wins/good moments; one tap, instant warmth
-- [ ] **Daily opening ritual** — first app launch of the day: pet does a tiny stretch animation + says the date + one line; makes it feel like a morning companion, not a tool
+- [x] **"Good Things Jar"** — a dedicated button that opens a jar animation and pulls 3 random wins/good moments; one tap, instant warmth
+- [x] **Daily opening ritual** — first app launch of the day: pet does a tiny stretch animation + says the date + one line; makes it feel like a morning companion, not a tool
+- [x] **"Leave a note"** — type a note tonight that the pet will read back to you tomorrow morning (memory `kind: 'letter'`, displayed on next greeting)
 - [ ] **Gentle real-world nudge** — after 3+ hrs session, pet occasionally says "maybe message someone today?" (not guilt, genuine care; aligns with healthy attachment principle)
 - [ ] **"We survived that week" retrospective** — every Sunday, if 5+ memories logged that week, pet reflects on it quietly
 - [ ] **Keyboard shortcut overlay** — hidden press (e.g. Alt+H) brings up Hearthmon from tray without clicking
