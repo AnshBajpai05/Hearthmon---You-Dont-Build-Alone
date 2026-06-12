@@ -5,6 +5,7 @@
   import { allMemories, getMeta, type Memory } from "../db";
   import { daysTogether, bondStage } from "../bond";
   import { shortDate } from "../lines";
+  import BadgesPanel from "./BadgesPanel.svelte";
 
   interface Props {
     petName: string;
@@ -16,6 +17,7 @@
   let days = $state(0);
   let stage = $state("Stranger");
   let loaded = $state(false);
+  let tab = $state<"timeline" | "badges">("timeline");
 
   const MOOD_EMOJI: Record<string, string> = {
     good: "🙂",
@@ -32,6 +34,7 @@
     if (m.kind === "learned") return "📘";
     if (m.kind === "survived") return "⛰";
     if (m.kind === "seed") return "🌱";
+    if (m.kind === ("letter" as any)) return "✉️";
     return "◓";
   }
 
@@ -72,20 +75,34 @@
     {days === 1 ? "day" : "days"} · <em>{stage}</em>
   </p>
 
+  <!-- Tab strip -->
+  <div class="tabs">
+    <button class="tab" class:active={tab === "timeline"} onclick={() => (tab = "timeline")}>
+      Timeline
+    </button>
+    <button class="tab" class:active={tab === "badges"} onclick={() => (tab = "badges")}>
+      Badges 🏅
+    </button>
+  </div>
+
   <div class="scroll">
-    {#if loaded && !groups.length}
-      <p class="empty">The first page is still blank.<br />It won't stay that way.</p>
-    {/if}
-    {#each groups as g (g.month)}
-      <h3>{g.month}</h3>
-      {#each g.items as m (m.id)}
-        <div class="item">
-          <span class="icon">{iconFor(m)}</span>
-          <span class="text">{textFor(m)}</span>
-          <span class="date">{shortDate(m.created_at)}</span>
-        </div>
+    {#if tab === "timeline"}
+      {#if loaded && !groups.length}
+        <p class="empty">The first page is still blank.<br />It won't stay that way.</p>
+      {/if}
+      {#each groups as g (g.month)}
+        <h3>{g.month}</h3>
+        {#each g.items as m (m.id)}
+          <div class="item">
+            <span class="icon">{iconFor(m)}</span>
+            <span class="text">{textFor(m)}</span>
+            <span class="date">{shortDate(m.created_at)}</span>
+          </div>
+        {/each}
       {/each}
-    {/each}
+    {:else}
+      <BadgesPanel {petName} />
+    {/if}
   </div>
 </div>
 
@@ -95,7 +112,7 @@
     top: 10px;
     left: 10px;
     right: 10px;
-    max-height: 300px;
+    max-height: 320px;
     padding: 12px;
     border-radius: 16px;
     background: rgba(33, 28, 48, 0.96);
@@ -121,6 +138,7 @@
     cursor: pointer;
     font-size: 12px;
   }
+  .x:hover { color: #f0b66a; }
   .sub {
     margin: 0;
     font-size: 11px;
@@ -131,6 +149,36 @@
     color: #f0b66a;
     font-style: normal;
   }
+
+  /* ---- Tab strip ---- */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid rgba(120, 108, 160, 0.22);
+    padding-bottom: 6px;
+  }
+  .tab {
+    flex: 1;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #7a7098;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 4px 0;
+    font-family: inherit;
+    transition: color 0.18s, border-color 0.18s, background 0.18s;
+  }
+  .tab:hover {
+    color: #c4b5f0;
+  }
+  .tab.active {
+    color: #f0b66a;
+    border-color: rgba(240, 182, 106, 0.35);
+    background: rgba(240, 182, 106, 0.08);
+    font-weight: 600;
+  }
+
   .scroll {
     overflow-y: auto;
     display: flex;
