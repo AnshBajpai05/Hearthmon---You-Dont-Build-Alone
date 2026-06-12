@@ -7,7 +7,8 @@ import {
   welcomeBackLines,
   longSessionLines,
   lateNightLines,
-  ambientLines
+  ambientLines,
+  dailyRitualLines
 } from "./lines";
 
 export type PetState = "idle" | "sleeping" | "happy";
@@ -15,6 +16,11 @@ export type PetState = "idle" | "sleeping" | "happy";
 export interface PresenceCallbacks {
   say: (line: string, ms?: number) => void;
   setState: (state: PetState) => void;
+}
+
+export interface PresenceOpts {
+  greet?: boolean;
+  onRitual?: () => void;
 }
 
 const LINE_COOLDOWN_MS = 20 * 60 * 1000; // ambient lines at most every 20 min
@@ -38,7 +44,7 @@ export function setFocus(on: boolean): void {
 
 export async function initPresence(
   callbacks: PresenceCallbacks,
-  opts: { greet?: boolean } = {}
+  opts: PresenceOpts = {}
 ): Promise<void> {
   cb = callbacks;
   sessionStart = Date.now();
@@ -56,6 +62,18 @@ export async function initPresence(
     const line = daysAway >= 3 ? pick(welcomeBackLines) : greetingFor(now.getHours());
     // small delay so the pet appears first, then speaks
     setTimeout(() => speak(line, 9000), 1800);
+  }
+
+  // Daily ritual — first launch of this calendar day: stretch + warm line
+  const today = now.toDateString();
+  const lastRitual = await getMeta("last_daily_ritual");
+  if (lastRitual !== today && opts.greet !== false) {
+    await setMeta("last_daily_ritual", today);
+    // A beat after the greeting, the stretch happens in the UI;
+    // we emit the ritual line slightly later so it doesn't overlap
+    setTimeout(() => speak(pick(dailyRitualLines), 10000), 4500);
+    // Signal the caller so it can run the stretch animation
+    if (opts.onRitual) opts.onRitual();
   }
 
   if (timer) clearInterval(timer);

@@ -157,3 +157,28 @@ export function shortDate(dateStr: string): string {
   const d = new Date(dateStr.replace(" ", "T"));
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+// ---- daily opening ritual — first launch of the day, once only ----
+export const dailyRitualLines = [
+  "New day. Still here. Let's see what it brings.",
+  "Morning. You made it to another one.",
+  "Today's a blank page. No mistakes yet.",
+  "Hey. Good to see you again.",
+  "Here we go. One day at a time.",
+  "Another morning. You've got this one."
+];
+
+// Good Things Jar — the one line the pet says when you open it
+export const jarLines = [
+  "Want to see something?",
+  "I've been saving these.",
+  "Open the jar.",
+  "Look what we've collected."
+];
+
+// Letter read-back — what the pet says when a note is waiting
+export const letterReadyLines = [
+  "You left something for yourself.",
+  "Past you had something to say.",
+  "There's a note waiting for you."
+];

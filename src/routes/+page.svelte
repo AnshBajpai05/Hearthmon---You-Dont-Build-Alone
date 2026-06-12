@@ -15,6 +15,8 @@
   import SwitchCompanion from "$lib/components/SwitchCompanion.svelte";
   import BattleScene from "$lib/components/BattleScene.svelte";
   import JourneyPanel from "$lib/components/JourneyPanel.svelte";
+  import GoodThingsJar from "$lib/components/GoodThingsJar.svelte";
+  import LeaveNote from "$lib/components/LeaveNote.svelte";
   import {
     playCry,
     voiceCry,
@@ -42,7 +44,9 @@
     switchLines,
     burnoutLines,
     anniversaryLine,
-    pokeReactions
+    pokeReactions,
+    jarLines,
+    letterReadyLines
   } from "$lib/lines";
   import {
     dexEntry,
@@ -63,7 +67,7 @@
   } from "$lib/attackfx";
   import { animKind, type AnimKind } from "$lib/fx";
 
-  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey";
+  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note";
   // the full Ash sequence: recall beam → ball returns → "Name, go!" → thrown ball arcs in → release
   type SwitchFx = "none" | "recall" | "ballout" | "gap" | "throw" | "release";
 
@@ -82,6 +86,13 @@
   let moodGlow = $state(""); // emotional weather: tint after a check-in
   let delight = $state<"none" | "star" | "rain" | "fireworks">("none");
   let delightTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // ---- daily opening ritual: stretch animation ----
+  let ritualStretch = $state(false);
+  function triggerRitual() {
+    ritualStretch = true;
+    setTimeout(() => (ritualStretch = false), 1200);
+  }
 
   async function toggleFocus() {
     focusMode = !focusMode;
@@ -284,6 +295,8 @@
     panel = panel === p ? "none" : p;
     poke();
     if (opening && p === "switch") playVoiceClip("lets-go-catch-some-pokemon", 0.8, 0.3);
+    if (opening && p === "jar") say(pick(jarLines), 5000);
+    if (opening && p === "note") say(pick(letterReadyLines), 5000);
   }
 
   onMount(() => {
@@ -314,7 +327,10 @@
       }
       vols = getVolumes();
       phase = "home";
-      await initPresence({ say, setState: (s) => (petState = s) });
+      await initPresence(
+        { say, setState: (s) => (petState = s) },
+        { onRitual: triggerRitual }
+      );
       // soft hello: says its own name, then its cry (unless we're focusing)
       if (!focusMode)
         setTimeout(() => voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.16), 1400);
@@ -621,6 +637,10 @@
       />
     {:else if panel === "journey"}
       <JourneyPanel {petName} onClose={() => (panel = "none")} />
+    {:else if panel === "jar"}
+      <GoodThingsJar onClose={() => (panel = "none")} />
+    {:else if panel === "note"}
+      <LeaveNote {petName} onClose={() => (panel = "none")} />
     {/if}
 
     {#if isNight}
@@ -693,6 +713,7 @@
           class:channeling={attacking && attackMove?.cls === 1}
           class:jump={oneShot === "jump"}
           class:spin={oneShot === "spin"}
+          class:stretch={ritualStretch}
         >
           {#if switchFx === "ballout" || switchFx === "throw"}
             <div class="pokeball" class:flyout={switchFx === "ballout"} class:throwin={switchFx === "throw"}></div>
@@ -755,6 +776,8 @@
       <button title="For the record…" onclick={() => togglePanel("log")}>✦</button>
       <button title="Remind me who I am" onclick={() => togglePanel("remind")}>🔥</button>
       <button title="Our journey" onclick={() => togglePanel("journey")}>📖</button>
+      <button title="Good Things Jar" onclick={() => togglePanel("jar")}>🫙</button>
+      <button title="Leave a note for tomorrow" onclick={() => togglePanel("note")}>✉️</button>
       <button title="Switch form" onclick={() => togglePanel("switch")}>
         <span class="miniball"></span>
       </button>
@@ -954,6 +977,19 @@
     100% {
       transform: rotate(calc(var(--dir) * 360deg));
     }
+  }
+
+  /* ---- daily ritual stretch — a gentle yawn-and-stretch on first launch ---- */
+  .petwrap.stretch {
+    animation: morningstretch 1.1s cubic-bezier(0.34, 1.3, 0.64, 1);
+  }
+  @keyframes morningstretch {
+    0%   { transform: scaleY(1) scaleX(1); }
+    18%  { transform: scaleY(0.88) scaleX(1.07); }  /* squish down */
+    42%  { transform: scaleY(1.14) scaleX(0.93) translateY(-6px); } /* stretch tall */
+    65%  { transform: scaleY(0.96) scaleX(1.04) translateY(0); }
+    82%  { transform: scaleY(1.04) scaleX(0.98); }
+    100% { transform: scaleY(1) scaleX(1); }
   }
 
   /* ---- butterfly visitor ---- */
