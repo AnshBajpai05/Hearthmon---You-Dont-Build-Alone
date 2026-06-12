@@ -1,7 +1,7 @@
 // The Memory Engine — local-first SQLite. Nothing ever leaves this machine.
 import Database from "@tauri-apps/plugin-sql";
 
-export type MemoryKind = "mood" | "win" | "learned" | "survived" | "seed" | "note";
+export type MemoryKind = "mood" | "win" | "learned" | "survived" | "seed" | "note" | "letter";
 export type Mood = "good" | "stressed" | "tired" | "low" | "frustrated" | "uncertain";
 
 export interface Memory {
@@ -123,4 +123,28 @@ export async function bumpCounter(key: string): Promise<number> {
   const n = Number((await getMeta(key)) ?? 0) + 1;
   await setMeta(key, String(n));
   return n;
+}
+
+/** How many memories of any kind were logged in the last N days. */
+export async function weeklyMemoryCount(days = 7): Promise<number> {
+  const d = await getDb();
+  const rows = await d.select<{ n: number }[]>(
+    `SELECT COUNT(*) AS n FROM memories
+     WHERE kind NOT IN ('seed','letter')
+       AND created_at > datetime('now','localtime','-' || $1 || ' days')`,
+    [days]
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/** The most recent letter not yet acknowledged by the user (id > lastReadId). */
+export async function unreadLetter(lastReadId: number): Promise<Memory | null> {
+  const d = await getDb();
+  const rows = await d.select<Memory[]>(
+    `SELECT * FROM memories
+     WHERE kind = 'letter' AND id > $1
+     ORDER BY id ASC LIMIT 1`,
+    [lastReadId]
+  );
+  return rows.length ? rows[0] : null;
 }

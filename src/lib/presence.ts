@@ -1,6 +1,6 @@
 // The Presence System — Rule 7: presence > conversation.
 // The pet should mostly do nothing. Lines are rare and time-aware.
-import { getMeta, setMeta } from "./db";
+import { getMeta, setMeta, weeklyMemoryCount } from "./db";
 import {
   pick,
   greetingFor,
@@ -24,8 +24,9 @@ export interface PresenceOpts {
 }
 
 const LINE_COOLDOWN_MS = 20 * 60 * 1000; // ambient lines at most every 20 min
-const SLEEP_AFTER_MS = 15 * 60 * 1000; // doze off after 15 min without interaction
+const SLEEP_AFTER_MS  = 15 * 60 * 1000; // doze off after 15 min without interaction
 const LONG_SESSION_MIN = 180;
+const NUDGE_SESSION_MIN = 180;           // gentle real-world nudge after 3 hrs
 
 let cb: PresenceCallbacks;
 let sessionStart = 0;
@@ -33,6 +34,7 @@ let lastInteraction = 0;
 let lastLineAt = 0;
 let saidLongSession = false;
 let saidLateNight = false;
+let saidNudge = false;
 let sleeping = false;
 let focused = false;
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -49,6 +51,9 @@ export async function initPresence(
   cb = callbacks;
   sessionStart = Date.now();
   lastInteraction = Date.now();
+  saidLongSession = false;
+  saidLateNight = false;
+  saidNudge = false;
 
   const now = new Date();
   const lastSeen = await getMeta("last_seen");
@@ -65,9 +70,9 @@ export async function initPresence(
   }
 
   // Opening ritual — fires on every launch (every relaunch feels intentional).
-  // Stretch animation fires immediately; the warm line comes after the greeting settles.
+  // Stretch animation fires immediately; the warm line comes shortly after the greeting.
   if (opts.greet !== false) {
-    setTimeout(() => speak(pick(dailyRitualLines), 10000), 4500);
+    setTimeout(() => speak(pick(dailyRitualLines), 10000), 3200);
     if (opts.onRitual) opts.onRitual();
   }
 
@@ -119,7 +124,39 @@ async function tick(): Promise<void> {
     return;
   }
 
-  // rare ambient murmur (~0.4% per minute ≈ a few times a day, capped by cooldown)
+  // gentle real-world nudge — once per session after 3 hrs, never guilt
+  if (!saidNudge && elapsed > NUDGE_SESSION_MIN * 60_000) {
+    saidNudge = true;
+    const nudges = [
+      "Maybe message someone today?",
+      "Long session. Anyone you've been meaning to reach out to?",
+      "Hey — is there someone you should check in with?"
+    ];
+    speak(pick(nudges), 9000);
+    return;
+  }
+
+  // Sunday retrospective — if today is Sunday and 5+ memories logged this week
+  const isSunday = now.getDay() === 0;
+  if (isSunday && cooledDown) {
+    const lastRetro = await getMeta("last_sunday_retro");
+    const todayStr = now.toDateString();
+    if (lastRetro !== todayStr) {
+      const weekCount = await weeklyMemoryCount(7);
+      if (weekCount >= 5) {
+        await setMeta("last_sunday_retro", todayStr);
+        const retroLines = [
+          "We logged a lot this week. That matters.",
+          "This was a full week. You showed up.",
+          "We survived that week. Quietly proud."
+        ];
+        speak(pick(retroLines), 12000);
+        return;
+      }
+    }
+  }
+
+  // rare ambient murmur
   if (Math.random() < 0.004) {
     speak(pick(ambientLines), 5000);
   }
