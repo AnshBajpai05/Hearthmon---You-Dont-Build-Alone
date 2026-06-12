@@ -64,15 +64,10 @@ export async function initPresence(
     setTimeout(() => speak(line, 9000), 1800);
   }
 
-  // Daily ritual — first launch of this calendar day: stretch + warm line
-  const today = now.toDateString();
-  const lastRitual = await getMeta("last_daily_ritual");
-  if (lastRitual !== today && opts.greet !== false) {
-    await setMeta("last_daily_ritual", today);
-    // A beat after the greeting, the stretch happens in the UI;
-    // we emit the ritual line slightly later so it doesn't overlap
+  // Opening ritual — fires on every launch (every relaunch feels intentional).
+  // Stretch animation fires immediately; the warm line comes after the greeting settles.
+  if (opts.greet !== false) {
     setTimeout(() => speak(pick(dailyRitualLines), 10000), 4500);
-    // Signal the caller so it can run the stretch animation
     if (opts.onRitual) opts.onRitual();
   }
 
