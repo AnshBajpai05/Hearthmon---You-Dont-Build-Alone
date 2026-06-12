@@ -1,0 +1,16 @@
+.DS_Store
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# personal-use audio — never publish (ripped/cloned voice clips)
+/static/voice/*.mp3
+/static/voice/*.wav
+/ash_all_voices.mp3
+/tools/.venv-voice
