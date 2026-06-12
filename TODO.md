@@ -28,7 +28,13 @@ Everything below is **live** in the current build:
 - [x] **1v1 Battle Arena** — real stats + type chart, damage numbers, cries, confetti
 - [x] **Wander / zoomies / butterfly / visitor** — ambient life animations
 - [x] **Voice cloning pipeline** — `tools/clone_voice.py` with XTTS v2 (attempt 5 in progress)
-- [x] **Memory engine** — SQLite local-first, `memories` + `meta` tables
+- [x] **Memory engine** — SQLite local-first, `memories` + `meta` tables, `letter` kind added
+- [x] **Good Things Jar 🫙** — jar animation, sparkles, 3 random wins/good moments surfaced; sidebar button
+- [x] **Opening ritual** — on every relaunch: pet stretch animation + warm daily line (3.2s after greeting)
+- [x] **Leave a note ✉️** — write tonight, pet reads it back tomorrow; ID-based tracking; sidebar button
+- [x] **Achievement badges wall** — 17 emotional badges in Journey → Badges tab; staggered reveal; rare glow
+- [x] **Gentle real-world nudge** — after 3hr session: "Maybe message someone today?" (once per session)
+- [x] **Sunday retrospective** — if Sunday + 5+ memories logged: "We survived that week. Quietly proud."
 
 ---
 
@@ -36,24 +42,24 @@ Everything below is **live** in the current build:
 
 ### Coding Awareness
 - [ ] **Git integration** — watch `.git/COMMIT_EDITMSG` for new commits → quiet pet reaction
-- [ ] **Bug-fix celebration** — detect error → fix pattern from git (commit message heuristic) → small dance
-- [ ] **Long-session tracker** — already in presence but no visual IDE signal; hook into a VS Code extension or file watcher
+- [ ] **Bug-fix celebration** — detect fix pattern in commit message heuristic → small dance
+- [ ] **Long-session tracker** — presence has it but no IDE signal; VS Code extension or file watcher
 - [ ] **Build / deploy detector** — watch for terminal output patterns or a sentinel file
 
 ### Companion Personality Evolution
 - [ ] **Personality dimension tracking** — store `coding_style`, `session_times`, `mood_trend` in `meta`
-- [ ] **Emergent personality labels** — night owl, thoughtful nerd, chaotic goblin etc., surface in Journey panel
+- [ ] **Emergent personality labels** — night owl, thoughtful nerd, chaotic goblin — surface in Journey
 - [ ] **Personality-aware lines** — tweak line selection based on evolved personality type
 
 ### "Remind Me Who I Am" — Depth
-- [ ] **"Wins You Forgot"** already retrieved but needs UI cards with dates + text (not just list)
-- [ ] **"Hard Things Archive"** list view — survived memories in chronological order, styled like a medal wall
-- [ ] **"Things You Learned"** timeline — `learned` memories visualized as skill tree nodes
+- [ ] **"Wins You Forgot" UI cards** — dates + text as proper cards, not a flat list
+- [ ] **"Hard Things Archive" medal wall** — survived memories in chronological order
+- [ ] **"Things You Learned" timeline** — `learned` memories visualized as skill tree nodes
 
 ### Onboarding Polish
 - [ ] **First-meeting companion preview** — show sprite + cry before committing, not just a list
 - [ ] **Name suggestion** — auto-suggest nicknames based on species personality
-- [ ] **Seed memory follow-up** — on Day 2, pet should mention what you said you were building
+- [ ] **Seed memory follow-up** — on Day 2, pet mentions what you said you were building
 
 ---
 
@@ -63,7 +69,7 @@ Everything below is **live** in the current build:
 - [ ] **Themed background layers** — cozy coding room / Pokémon center lab / rainy cabin / Ghibli workshop
 - [ ] **Room unlocks via bond depth** — desk plant at Familiar, warm lamp at Trusted Friend, bookshelf at Companion
 - [ ] **Seasonal decorations** — snow in winter, cherry blossoms in spring (system clock)
-- [ ] **Weather-driven ambience** — rain sounds + rain visual on pixel rain delight (already exists, extend it)
+- [ ] **Weather-driven ambience** — rain sounds + rain visual on pixel rain delight
 
 ### Growth Reflection "Movies"
 - [ ] **Quarterly recap** — "Spring 2026: You learned X, survived Y, logged Z good days"
@@ -72,7 +78,7 @@ Everything below is **live** in the current build:
 
 ### Evolution Ceremonies
 - [ ] **Bond depth tier transitions** — visual ceremony when moving from Stranger → Familiar etc.
-- [ ] **Companion form evolution** — optional visual form-shift tied to bond depth (e.g. base → stage 1 sprite)
+- [ ] **Companion form evolution** — optional visual form-shift tied to bond depth
 - [ ] **Tier badge in Journey panel** — animated reveal of new bond level
 
 ### Emotional Pattern Detection
@@ -80,8 +86,8 @@ Everything below is **live** in the current build:
 - [ ] **Mood calendar heatmap** — 12-week rolling view of mood colors in Journey panel
 
 ### Future Self Mode
-- [ ] **"What would future me say?"** — generates a grounded reply based on past resilience + wins
-- [ ] **Emotional Time Machine** — "What were you worried about 6 months ago?" → surfaces old mood logs
+- [ ] **"What would future me say?"** — grounded reply based on past resilience + wins
+- [ ] **Emotional Time Machine** — "What were you worried about 6 months ago?" → surfaces old moods
 
 ### Life RPG / Chapters
 - [ ] **Chapter tagging** — user can name a period ("Docker Journey", "Internship Season")
@@ -93,24 +99,24 @@ Everything below is **live** in the current build:
 ## 🟢 P3 — Moonshots & Fun (vision doc CRAZY BUT BRILLIANT)
 
 ### Dream System
-- [ ] **Nightly dream bubble** — when pet has been sleeping for > 2 hrs, show a dream thought bubble with a memory symbol
-- [ ] **Symbolic dream content** — if you struggled with ML, dream shows 🏔️; finished project = 🌅
-- [ ] **Dream log** — stored in memories as `kind: 'dream'`, visible in Journey
+- [ ] **Nightly dream bubble** — pet sleeping > 2 hrs → dream thought bubble with memory symbol
+- [ ] **Symbolic dream content** — ML struggle = 🏔️; finished project = 🌅
+- [ ] **Dream log** — stored as `kind: 'dream'`, visible in Journey
 
 ### Community Layer (post-v1)
-- [ ] **Friend companion visits** — a friend's companion sprite wanders through with a tiny gift emoji
+- [ ] **Friend companion visits** — friend's sprite wanders through with a tiny gift emoji
 - [ ] **Encouragement pings** — send a non-intrusive "thinking of you" to a friend's app
-- [ ] **Cozy guilds** — "Research guild", "Night coders" — shared milestone feed, NO leaderboards
+- [ ] **Cozy guilds** — Research guild, Night coders — shared milestone feed, NO leaderboards
 
 ### Adaptive Soundtrack
 - [ ] **Ambient music player** — Lo-fi / Pokémon Center / rain ambience, per-room track
 - [ ] **Mood-driven track switch** — good day → upbeat; low → quiet piano; night → ambient
-- [ ] **Volume fades with focus mode** (music only, not kills it)
+- [ ] **Volume fades with focus mode** (music only, doesn't kill it)
 
 ### AI Superpowers (opt-in, local LLM first)
 - [ ] **Ollama integration** — local LLM (mistral / llama3) for emotional pattern detection
-- [ ] **Emotional aura world** — room color + particle style shifts subtly with LLM-inferred state
-- [ ] **AI-generated lore** — companion "writes" a tiny journal entry once a week based on your memories
+- [ ] **Emotional aura world** — room color + particle style shifts with LLM-inferred state
+- [ ] **AI-generated lore** — companion "writes" a tiny journal entry once a week
 - [ ] **"Future conversations"** — pet holds a short reflective chat about where you're headed
 
 ---
@@ -118,46 +124,45 @@ Everything below is **live** in the current build:
 ## 💡 Brainstormed Additions (not in doc, but would add serious value)
 
 ### Small but Mighty
-- [x] **"Good Things Jar"** — a dedicated button that opens a jar animation and pulls 3 random wins/good moments; one tap, instant warmth
-- [x] **Daily opening ritual** — first app launch of the day: pet does a tiny stretch animation + says the date + one line; makes it feel like a morning companion, not a tool
-- [x] **"Leave a note"** — type a note tonight that the pet will read back to you tomorrow morning (memory `kind: 'letter'`, displayed on next greeting)
-- [ ] **Gentle real-world nudge** — after 3+ hrs session, pet occasionally says "maybe message someone today?" (not guilt, genuine care; aligns with healthy attachment principle)
-- [ ] **"We survived that week" retrospective** — every Sunday, if 5+ memories logged that week, pet reflects on it quietly
-- [ ] **Keyboard shortcut overlay** — hidden press (e.g. Alt+H) brings up Hearthmon from tray without clicking
-- [ ] **System tray icon** — pet lives in tray; double-click to show/hide widget (Tauri tray support exists)
+- [x] **Good Things Jar** — jar animation, 3 random wins/good moments; one tap, instant warmth
+- [x] **Opening ritual** — every relaunch: stretch animation + warm line
+- [x] **Leave a note** — write tonight; pet reads it back before you can write a new one
+- [x] **Gentle real-world nudge** — after 3hr session, once per session, never guilt
+- [x] **Sunday retrospective** — if Sunday + 5+ memories: pet reflects quietly
+- [ ] **Keyboard shortcut** — hidden press (e.g. Alt+H) brings widget up without clicking
+- [ ] **System tray icon** — pet lives in tray; double-click to show/hide (Tauri tray plugin)
 
 ### Fun & Delight
-- [ ] **Mini games** — pet vs pet tic-tac-toe / rock-paper-scissors (taps the sidebar button, tiny popup, 30 seconds of fun)
-- [ ] **Pet birthday** — on the anniversary of `first_met` date (same day, 1 year in), special "Happy Birthday, [name]!" moment with a party hat sprite overlay
-- [ ] **"Leave a note"** — type a note tonight that the pet will read back to you tomorrow morning (memory `kind: 'letter'`, displayed on next greeting)
-- [ ] **Achievement badges wall** — not progress badges, emotional ones: "CUDA Survivor", "Builder's Courage", "Quiet Consistency" — displayed in Journey panel
-- [ ] **Seasonal outfits** — pixel overlay on sprite (a tiny scarf in winter, sunglasses in summer) — pure delight, zero function
-- [ ] **Secret clickable easter eggs** — click the moon in Night Mode → constellation appears; click the shooting star → pet reacts; these tiny hidden interactions create "I found something!" moments
-- [ ] **Rare legendary visit trigger** — after logging a major win (not just any win) there's a 10% chance a legendary wanders through; epic moment
+- [ ] **Mini games** — pet vs pet rock-paper-scissors; 30 seconds of fun
+- [ ] **Pet birthday** — party hat overlay + special moment on `first_met` anniversary
+- [x] **Achievement badges wall** — 17 emotional badges in Journey; staggered reveal; rare glow
+- [ ] **Seasonal outfits** — pixel scarf in winter, sunglasses in summer — pure delight
+- [ ] **Secret easter eggs** — click moon → constellation; click shooting star → pet reacts
+- [ ] **Rare legendary visit trigger** — 10% chance after logging a major win
 
 ### Quality of Life
-- [ ] **Export memories** — download your journey as a `.txt` or `.json` (local export only, no server); the memory is yours
-- [ ] **Import / restore** — drag in a backup to restore memories on a new machine
-- [ ] **Window position memory** — remember last window position between sessions (not just bottom-right anchor)
-- [ ] **Multi-monitor awareness** — correctly anchor to the primary or last-used monitor
-- [ ] **"Presence without app open"** — VS Code extension that writes session data to a sentinel file; app reads it on next open and reacts to what happened while it was closed
-- [ ] **Notification-free "peek"** — a tiny status icon in the corner of the pet that shows bond level without opening Journey panel; tap to expand
+- [ ] **Export memories** — download journey as `.txt` / `.json` (local only)
+- [ ] **Import / restore** — drag in a backup on a new machine
+- [ ] **Window position memory** — remember last position between sessions
+- [ ] **Multi-monitor awareness** — anchor to primary or last-used monitor
+- [ ] **"Presence without app open"** — VS Code extension writes sentinel file; app reacts on next launch
+- [ ] **Notification-free "peek"** — bond level visible in a corner icon; tap to expand
 
 ### Technical / Infrastructure
 - [ ] **Auto-updater** — Tauri updater plugin hooked to GitHub Releases
-- [ ] **Crash reporting** — local-only crash log written to `%APPDATA%`; user can optionally share
-- [ ] **`.venv-voice` setup script** — one-command install for the XTTS voice pipeline (`tools/setup_voice.ps1`)
-- [ ] **Voice clone batch validation** — script that plays each cloned clip and lets you approve/reject before saving
-- [ ] **Signed Windows installer** — self-signed cert + NSIS installer so Windows Defender doesn't scream
+- [ ] **Crash reporting** — local-only crash log; user can optionally share
+- [ ] **`.venv-voice` setup script** — one-command XTTS install (`tools/setup_voice.ps1`)
+- [ ] **Voice clone batch validation** — play each cloned clip, approve/reject before saving
+- [ ] **Signed Windows installer** — self-signed cert + NSIS so Windows Defender doesn't scream
 - [ ] **macOS / Linux port** — Tauri already supports it; needs a CI matrix build
 
 ---
 
 ## 🚫 Anti-Features — Never Add (from the doc)
-> These are listed here so they stay front-of-mind as the project grows.
+> Listed here so they stay front-of-mind as the project grows.
 
 - ❌ Streak guilt
-- ❌ Pet dying / getting sick if you don't open the app  
+- ❌ Pet dying / getting sick if you don't open the app
 - ❌ Leaderboards or comparison mechanics
 - ❌ Spammy push notifications
 - ❌ Toxic positivity ("YOU GOT THIS!!!")
@@ -168,4 +173,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: June 2026 — voice cloning attempt 5 in progress (torch 2.8 + XTTS, no FFmpeg DLL dependency)*
+*Last updated: June 2026 — session 2 active | voice cloning attempt 5 in progress (torch 2.8 + XTTS)*
