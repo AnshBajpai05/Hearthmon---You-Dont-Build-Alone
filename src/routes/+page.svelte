@@ -27,7 +27,15 @@
     getVolumes,
     type Channel
   } from "$lib/sound";
-  import { getMeta, setMeta, addMemory, findFamiliar, hardMoodCount, bumpCounter } from "$lib/db";
+  import {
+    getMeta,
+    setMeta,
+    addMemory,
+    findFamiliar,
+    hardMoodCount,
+    bumpCounter,
+    unreadLetter
+  } from "$lib/db";
   import type { Mood, MemoryKind } from "$lib/db";
   import { initPresence, poke, setFocus } from "$lib/presence";
   import type { PetState } from "$lib/presence";
@@ -290,13 +298,18 @@
     bubbleTimer = setTimeout(() => (bubble = ""), ms);
   }
 
-  function togglePanel(p: Panel) {
+  async function togglePanel(p: Panel) {
     const opening = panel !== p;
     panel = panel === p ? "none" : p;
     poke();
-    if (opening && p === "switch") playVoiceClip("lets-go-catch-some-pokemon", 0.8, 0.3);
-    if (opening && p === "jar") say(pick(jarLines), 5000);
-    if (opening && p === "note") say(pick(letterReadyLines), 5000);
+    if (!opening) return;
+    if (p === "switch") playVoiceClip("lets-go-catch-some-pokemon", 0.8, 0.3);
+    else if (p === "jar") say(pick(jarLines), 5000);
+    else if (p === "note") {
+      // only promise a waiting note when one actually exists
+      const lastReadId = Number((await getMeta("letter_last_read_id")) ?? 0);
+      if (await unreadLetter(lastReadId)) say(pick(letterReadyLines), 5000);
+    }
   }
 
   onMount(() => {
@@ -345,14 +358,25 @@
       // anniversaries: every 30 days, and especially every 365
       const firstMet = await getMeta("first_met");
       const days = daysTogether(firstMet);
+      let hadAnniversary = false;
       if (days > 0 && (days % 365 === 0 || days % 30 === 0)) {
         const today = new Date().toDateString();
         if ((await getMeta("last_anniversary")) !== today) {
+          hadAnniversary = true;
           await setMeta("last_anniversary", today);
           setTimeout(() => {
             say(anniversaryLine(days), 14000);
             runDelight("fireworks", 3200);
           }, 6000);
+        }
+      }
+
+      // a note from past-you is waiting — the pet remembers, so you don't have to.
+      // gentle, deferred, and never on top of an anniversary or focus session.
+      if (!focusMode && !hadAnniversary) {
+        const lastReadId = Number((await getMeta("letter_last_read_id")) ?? 0);
+        if (await unreadLetter(lastReadId)) {
+          setTimeout(() => say(pick(letterReadyLines) + " (✉️ tap to read)", 11000), 7000);
         }
       }
     })();

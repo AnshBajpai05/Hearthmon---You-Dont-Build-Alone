@@ -27,7 +27,8 @@ Everything below is **live** in the current build:
 - [x] **Real movesets** — type-based attack FX, beams / bolts / slashes / orbs
 - [x] **1v1 Battle Arena** — real stats + type chart, damage numbers, cries, confetti
 - [x] **Wander / zoomies / butterfly / visitor** — ambient life animations
-- [x] **Voice cloning pipeline** — `tools/clone_voice.py` with XTTS v2 (attempt 5 in progress)
+- [x] **Real Ash voice clips** — `tools/caption_split.py` cuts + labels clips from supplied audio; wired into throws, battles, wins, greetings, quit
+- [x] **Voice cloning pipeline written** — `tools/clone_voice.py` (XTTS v2); ⚠️ blocked on Windows, see Known Issues
 - [x] **Memory engine** — SQLite local-first, `memories` + `meta` tables, `letter` kind added
 - [x] **Good Things Jar 🫙** — jar animation, sparkles, 3 random wins/good moments surfaced; sidebar button
 - [x] **Opening ritual** — on every relaunch: pet stretch animation + warm daily line (3.2s after greeting)
@@ -35,6 +36,19 @@ Everything below is **live** in the current build:
 - [x] **Achievement badges wall** — 17 emotional badges in Journey → Badges tab; staggered reveal; rare glow
 - [x] **Gentle real-world nudge** — after 3hr session: "Maybe message someone today?" (once per session)
 - [x] **Sunday retrospective** — if Sunday + 5+ memories logged: "We survived that week. Quietly proud."
+
+---
+
+## 🔧 Known Issues / Blockers
+- [ ] **Local voice cloning (XTTS v2) blocked on Windows.** Modern `coqui-tts` pulls in
+      `torchcodec`, whose prebuilt DLL won't load without matching FFmpeg shared libs.
+      Tried torch 2.8/2.9 + transformers 4.40–4.56 + removing torchcodec — all fail at
+      import or runtime. **Fix to try next:** a fully pinned legacy env in `tools/.venv-voice` —
+      `torch==2.1.2 torchaudio==2.1.2 transformers==4.40.2 coqui-tts==0.24.*` (predates the
+      torchcodec requirement). Until then, the in-app TTS ("Charizard…" → real "I choose you!"
+      clip) is the working fallback, and supplied real clips already play.
+- [ ] Battle effectiveness uses **primary type only** (dual-types not yet considered).
+- [ ] A few Svelte `state_referenced_locally` warnings (cosmetic, not bugs).
 
 ---
 
@@ -173,4 +187,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: June 2026 — session 2 active | voice cloning attempt 5 in progress (torch 2.8 + XTTS)*
+*Last updated: 2026-06-13 — soul layer complete; fun layer ("god mode") complete; voice cloning blocked (TTS fallback live).*
