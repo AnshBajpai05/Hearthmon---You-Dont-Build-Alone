@@ -1020,6 +1020,8 @@
 <main
   class="widget"
   class:idle={idleNow}
+  class:ground-mode={bgStyle === "ground"}
+  class:no-bg={bgStyle === "off"}
   style="--orbr: {Math.round((imgSize + 84) / 2)}px; --wo: {widgetOpacity}"
   onpointerdown={() => phase === "home" && poke()}
   onpointerenter={() => (hovering = true)}
@@ -1427,6 +1429,12 @@
       #000 var(--orbr, 110px),
       transparent calc(var(--orbr, 110px) + 10px)
     );
+  }
+  /* Ground mode: no sphere clip — the pet and platform must show fully */
+  .widget.ground-mode.idle .stage,
+  .widget.no-bg.idle .stage {
+    -webkit-mask: none;
+    mask: none;
   }
   .mover {
     position: relative;
