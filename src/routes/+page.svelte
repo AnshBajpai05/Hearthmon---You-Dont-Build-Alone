@@ -20,6 +20,7 @@
   import VaultPanel from "$lib/components/VaultPanel.svelte";
   import WeatherFx from "$lib/components/WeatherFx.svelte";
   import type { WeatherKind } from "$lib/components/WeatherFx.svelte";
+  import RadialMenu from "$lib/components/RadialMenu.svelte";
   import {
     playCry,
     voiceCry,
@@ -265,6 +266,11 @@
     }, 350);
   }
 
+  // ---- pet direction hint from radial menu hover ----
+  function onRadialDirHint(d: 1 | -1 | 0) {
+    if (d !== 0) dir = d;
+  }
+
   // ---- wild visitor: a random Pokémon wanders through, then leaves ----
   let visitor = $state<{
     entry: DexEntry;
@@ -415,6 +421,11 @@
     } catch {
       // dragging unavailable in web preview
     }
+  }
+
+  // ---- one-tap pet from radial menu ----
+  function petOnce() {
+    onPetStroke(); // reuse the same affection logic
   }
 
   // ---- petting reaction (called from Pet while you stroke it) ----
@@ -1280,55 +1291,30 @@
       {#if isShiny}<span class="shinytag">✨</span>{/if}
     </div>
 
-    <!-- left rail: feelings & comfort (the soul) -->
-    <div class="rail railLeft">
-      <button title="How are we doing?" onclick={() => togglePanel("mood")}>🙂</button>
-      <button title="Remind me who I am" onclick={() => togglePanel("remind")}>🔥</button>
-      <button title="Good Things Jar" onclick={() => togglePanel("jar")}>🫙</button>
-      <button title="Leave a note / open a capsule" onclick={() => togglePanel("note")}>✉️</button>
-      <button title="When it feels like too much" onclick={() => togglePanel("vault")}>🫂</button>
-      <button title="Feed a treat" onclick={feed}>🍙</button>
-    </div>
-
-    <!-- right rail: record, look back & play -->
-    <div class="rail railRight">
-      <button title="For the record…" onclick={() => togglePanel("log")}>✦</button>
-      <button title="Our journey" onclick={() => togglePanel("journey")}>📖</button>
-      <button title="Switch form" onclick={() => togglePanel("switch")}>
-        <span class="miniball"></span>
-      </button>
-      <button title="Surprise me — random Pokémon" onclick={() => switchTo(randomEntry(dexId))}
-        >🎲</button
-      >
-      <button title="Battle!" onclick={openBattle}>⚔</button>
-    </div>
-
-    <div class="syscluster">
-      <button
-        title={weatherEnabled ? (weatherKind !== "none" ? `Weather: ${weatherKind} — tap to stop` : "Weather effects: on") : "Weather effects: off"}
-        class:active={weatherKind !== "none"}
-        onclick={cycleWeatherManual}>🌦️</button
-      >
-      <button
-        title={bgStyle === "orb" ? "Backdrop: orb" : bgStyle === "ground" ? "Backdrop: ground" : "Backdrop: off"}
-        class:active={bgStyle !== "off"}
-        onclick={cycleBg}>🌿</button
-      >
-      <button
-        title={nightForced ? "Night mode on — tap for daytime" : "Night mode"}
-        class:active={nightForced}
-        onclick={toggleNight}>🌙</button
-      >
-      <button
-        title={focusMode ? "Focus mode on — I'll stay quiet" : "Focus mode"}
-        class:active={focusMode}
-        onclick={toggleFocus}>🎯</button
-      >
-      <button title="Sound" onclick={() => (soundPanel = !soundPanel)}>{muted ? "🔇" : "🔊"}</button>
-      <button title="Smaller (or scroll down)" onclick={() => nudgeScale(-0.15)}>−</button>
-      <button title="Bigger (or scroll up)" onclick={() => nudgeScale(0.15)}>+</button>
-      <button title="Goodnight" onclick={quit}>✕</button>
-    </div>
+    <!-- Radial menu replaces both rails + syscluster -->
+    <RadialMenu
+      {muted}
+      {focusMode}
+      {nightForced}
+      {bgStyle}
+      {weatherKind}
+      soundPanelOpen={soundPanel}
+      onTogglePanel={togglePanel}
+      onFeed={feed}
+      onPet={petOnce}
+      onOpenBattle={openBattle}
+      onSwitchRandom={() => switchTo(randomEntry(dexId))}
+      onToggleMute={toggleMute}
+      onToggleNight={toggleNight}
+      onToggleFocus={toggleFocus}
+      onCycleBg={cycleBg}
+      onCycleWeather={cycleWeatherManual}
+      onNudgeScale={nudgeScale}
+      onToggleSoundPanel={() => (soundPanel = !soundPanel)}
+      onQuit={quit}
+      onMenuOpen={() => { petState = 'happy'; setTimeout(() => (petState = 'idle'), 800); }}
+      onDirHint={onRadialDirHint}
+    />
 
     <!-- transparency slider: fades the whole widget (pet + orb) -->
     <div class="opacitybar" title="Widget transparency">
@@ -1445,101 +1431,8 @@
     transition-property: transform;
     transition-timing-function: linear;
   }
-  /* two vertical rails, one per edge — keeps the pet centered, not boxed in */
-  .rail {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    opacity: 0;
-    transition: opacity 0.25s ease;
-    z-index: 6;
-  }
-  .railLeft {
-    left: 8px;
-  }
-  .railRight {
-    right: 8px;
-  }
-  /* system cluster: top-right corner — focus, sound, size, close */
-  .syscluster {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    display: flex;
-    gap: 6px;
-    opacity: 0;
-    transition: opacity 0.25s ease;
-    z-index: 6;
-  }
-  .widget:hover .rail,
-  .widget:hover .syscluster {
-    opacity: 1;
-  }
-  .rail button,
-  .syscluster button {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    border: 1px solid rgba(120, 108, 160, 0.45);
-    background: rgba(33, 28, 48, 0.92);
-    color: #d9d0ec;
-    font-size: 13px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-  }
-  .syscluster button {
-    width: 26px;
-    height: 26px;
-    font-size: 11px;
-  }
-  .syscluster button.active {
-    border-color: #f0b66a;
-    background: rgba(240, 182, 106, 0.22);
-  }
 
   /* transparency slider along the bottom, revealed on hover */
-  .opacitybar {
-    position: absolute;
-    bottom: 7px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 4px 11px;
-    border-radius: 999px;
-    background: rgba(33, 28, 48, 0.92);
-    border: 1px solid rgba(120, 108, 160, 0.45);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-    opacity: 0;
-    transition: opacity 0.25s ease;
-    z-index: 6;
-  }
-  .widget:hover .opacitybar {
-    opacity: 1;
-  }
-  .opacitybar input {
-    width: 104px;
-    accent-color: #f0b66a;
-    cursor: pointer;
-  }
-  .opicon {
-    font-size: 11px;
-    color: #9d92bd;
-  }
-  .rail button:hover,
-  .syscluster button:hover {
-    border-color: #f0b66a;
-    background: rgba(53, 44, 74, 0.96);
-  }
-
-  /* corner resize grip — grab to scale the whole companion */
   .resizeGrip {
     position: absolute;
     right: 2px;
@@ -2605,34 +2498,4 @@
     }
   }
 
-  /* tiny Pokéball toolbar icon */
-  .miniball {
-    display: block;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: linear-gradient(
-      to bottom,
-      #e3350d 0%,
-      #e3350d 42%,
-      #1c1c1c 42%,
-      #1c1c1c 58%,
-      #f5f5f5 58%,
-      #f5f5f5 100%
-    );
-    border: 1px solid #1c1c1c;
-    position: relative;
-  }
-  .miniball::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 4px;
-    height: 4px;
-    transform: translate(-50%, -50%);
-    background: #f5f5f5;
-    border: 1px solid #1c1c1c;
-    border-radius: 50%;
-  }
 </style>
