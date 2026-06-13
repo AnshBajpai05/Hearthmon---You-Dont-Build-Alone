@@ -17,6 +17,7 @@
   let learned = $state<Memory[]>([]);
   let wins = $state<Memory[]>([]);
   let hardDays = $state<Memory[]>([]);
+  let praise = $state<Memory[]>([]);
   let seed = $state<Memory | null>(null);
   let loaded = $state(false);
 
@@ -32,13 +33,19 @@
     wins = await forgottenWins(4);
     if (!wins.length) wins = await memoriesOfKind("win", 4);
     hardDays = await hardDaysSurvived(4);
+    praise = await memoriesOfKind("praise", 5);
     const seeds = await memoriesOfKind("seed", 1);
     seed = seeds.length ? seeds[0] : null;
     loaded = true;
   });
 
   const isEmpty = $derived(
-    loaded && !survived.length && !learned.length && !wins.length && !hardDays.length
+    loaded &&
+      !survived.length &&
+      !learned.length &&
+      !wins.length &&
+      !hardDays.length &&
+      !praise.length
   );
 </script>
 
@@ -82,6 +89,15 @@
           <div class="item">
             <span class="date">{shortDate(m.created_at)}</span>
             you felt {moodWord[m.mood ?? ""] ?? m.mood}{m.text ? ` — ${m.text}` : ""}. You're still here.
+          </div>
+        {/each}
+      {/if}
+
+      {#if praise.length}
+        <h3>Things people saw in you</h3>
+        {#each praise as m (m.id)}
+          <div class="item praise">
+            <span class="date">{shortDate(m.created_at)}</span>"{m.text}"
           </div>
         {/each}
       {/if}
@@ -163,6 +179,10 @@
   }
   .seed {
     font-style: italic;
+  }
+  .praise {
+    font-style: italic;
+    color: #f0cfe6;
   }
   .empty {
     font-size: 12px;

@@ -51,6 +51,12 @@ export const ambientLines = [
 // Tiny reactions when poked. Sometimes nothing. That's intentional.
 export const pokeReactions = ["?", "♪", "Hi.", "*blinks*", "Mm?"];
 
+// After a treat — small and content.
+export const treatLines = ["Nom.", "*munch munch*", "Thank you.", "…tasty.", "♪", "More? …kidding."];
+
+// While being petted — rare, soft, content.
+export const pettingLines = ["*happy noises*", "♥", "mmm.", "*leans in*", "This is nice."];
+
 // ---- mood responses: grounded, never toxic positivity ----
 export const moodResponses: Record<Mood, string[]> = {
   good: [
@@ -106,6 +112,13 @@ export const survivedSaved = [
   "Survived and recorded.",
   "We'll remember this one was hard."
 ];
+// Praise — tender, not triumphant. Someone saw something real in you.
+export const praiseSaved = [
+  "Someone saw that in you. I'll keep it.",
+  "Worth holding onto. Saved.",
+  "They meant it. We'll remember.",
+  "For the days you forget — this is here now."
+];
 
 // First meeting — the seed memory response.
 export const firstMeetingClose = [
@@ -121,11 +134,36 @@ export const switchLines = [
   "Different shape — same journey."
 ];
 
+// Evolution — earned through bonding, never forced. The companion chooses to grow with you.
+export const evolveOfferLines = [
+  "Something feels different… like I'm ready to grow.",
+  "I think being here with you is changing me.",
+  "I feel it — there's a next shape for me. Together?"
+];
+export const evolveDoneLines = [
+  "We grew. Same heart, bigger form.",
+  "That happened because of you.",
+  "Still me — just more. Thank you for staying."
+];
+export const evolveDeclineLines = [
+  "Okay. I like who I am right now too.",
+  "No rush. We'll know when it's time.",
+  "Staying as I am. With you."
+];
+
 // Gentle burnout awareness — no diagnosis, no advice. Just noticing.
 export const burnoutLines = [
   "Feels like we've been carrying a lot lately.",
   "Heavy week. We don't have to fix it tonight.",
   "You've been pushing hard. I noticed."
+];
+
+// Comfort Mode — when things feel heavy, the pet softens and offers something familiar.
+export const comfortOffer = [
+  "Want something familiar?",
+  "We can just sit with this.",
+  "Want to look at something kind?",
+  "No fixing tonight. I'm just here."
 ];
 
 // Anniversaries — memory > motivation.

@@ -1,7 +1,15 @@
 // The Memory Engine — local-first SQLite. Nothing ever leaves this machine.
 import Database from "@tauri-apps/plugin-sql";
 
-export type MemoryKind = "mood" | "win" | "learned" | "survived" | "seed" | "note" | "letter";
+export type MemoryKind =
+  | "mood"
+  | "win"
+  | "learned"
+  | "survived"
+  | "seed"
+  | "note"
+  | "letter"
+  | "praise"; // kind words others said — the "Someone Believed In You" archive
 export type Mood = "good" | "stressed" | "tired" | "low" | "frustrated" | "uncertain";
 
 export interface Memory {
@@ -10,6 +18,8 @@ export interface Memory {
   mood: Mood | null;
   text: string | null;
   created_at: string;
+  open_at?: string | null; // memory capsules: don't surface until this time
+  read_at?: string | null; // when the user opened this letter/capsule
 }
 
 let db: Database | null = null;
@@ -23,6 +33,8 @@ export async function getDb(): Promise<Database> {
         kind TEXT NOT NULL,
         mood TEXT,
         text TEXT,
+        open_at TEXT,
+        read_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
       );
     `);
@@ -32,6 +44,14 @@ export async function getDb(): Promise<Database> {
         value TEXT NOT NULL
       );
     `);
+    // migrate older DBs that predate capsules (ALTER fails harmlessly if column exists)
+    for (const col of ["open_at", "read_at"]) {
+      try {
+        await db.execute(`ALTER TABLE memories ADD COLUMN ${col} TEXT`);
+      } catch {
+        /* column already present */
+      }
+    }
   }
   return db;
 }
@@ -47,12 +67,16 @@ export async function setMeta(key: string, value: string): Promise<void> {
   await d.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ($1, $2)", [key, value]);
 }
 
-export async function addMemory(kind: MemoryKind, opts: { mood?: Mood; text?: string } = {}): Promise<void> {
+export async function addMemory(
+  kind: MemoryKind,
+  opts: { mood?: Mood; text?: string; openAt?: string } = {}
+): Promise<void> {
   const d = await getDb();
-  await d.execute("INSERT INTO memories (kind, mood, text) VALUES ($1, $2, $3)", [
+  await d.execute("INSERT INTO memories (kind, mood, text, open_at) VALUES ($1, $2, $3, $4)", [
     kind,
     opts.mood ?? null,
-    opts.text ?? null
+    opts.text ?? null,
+    opts.openAt ?? null
   ]);
 }
 
@@ -137,14 +161,36 @@ export async function weeklyMemoryCount(days = 7): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
-/** The most recent letter not yet acknowledged by the user (id > lastReadId). */
-export async function unreadLetter(lastReadId: number): Promise<Memory | null> {
+/**
+ * The oldest unread letter/capsule that is *due* — i.e. not yet read and either
+ * has no release date or its release date has passed. Capsules stay hidden until then.
+ */
+export async function unreadLetter(): Promise<Memory | null> {
   const d = await getDb();
   const rows = await d.select<Memory[]>(
     `SELECT * FROM memories
-     WHERE kind = 'letter' AND id > $1
-     ORDER BY id ASC LIMIT 1`,
-    [lastReadId]
+     WHERE kind = 'letter' AND read_at IS NULL
+       AND (open_at IS NULL OR open_at <= datetime('now','localtime'))
+     ORDER BY created_at ASC LIMIT 1`,
+    []
   );
   return rows.length ? rows[0] : null;
+}
+
+/** Mark a letter/capsule as opened, so it never surfaces again. */
+export async function markLetterRead(id: number): Promise<void> {
+  const d = await getDb();
+  await d.execute("UPDATE memories SET read_at = datetime('now','localtime') WHERE id = $1", [id]);
+}
+
+/** Capsules sealed for the future that aren't due yet — for a gentle waiting count. */
+export async function pendingCapsules(): Promise<Memory[]> {
+  const d = await getDb();
+  return d.select<Memory[]>(
+    `SELECT * FROM memories
+     WHERE kind = 'letter' AND read_at IS NULL
+       AND open_at IS NOT NULL AND open_at > datetime('now','localtime')
+     ORDER BY open_at ASC`,
+    []
+  );
 }

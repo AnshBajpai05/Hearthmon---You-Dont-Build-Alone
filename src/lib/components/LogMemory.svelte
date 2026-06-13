@@ -10,7 +10,8 @@
   const KINDS: { kind: MemoryKind; icon: string; label: string }[] = [
     { kind: "win", icon: "✦", label: "a win" },
     { kind: "learned", icon: "📘", label: "learned" },
-    { kind: "survived", icon: "⛰", label: "survived" }
+    { kind: "survived", icon: "⛰", label: "survived" },
+    { kind: "praise", icon: "💬", label: "someone said" }
   ];
 
   let kind = $state<MemoryKind>("win");
@@ -35,7 +36,9 @@
       ? "what happened?"
       : kind === "learned"
         ? "what did you learn?"
-        : "what did you get through?"}
+        : kind === "survived"
+          ? "what did you get through?"
+          : "what did they say? (and who?)"}
     bind:value={text}
     maxlength="200"
     onkeydown={(e) => e.key === "Enter" && text.trim() && onSave(kind, text.trim())}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { addMemory, getMeta, setMeta, unreadLetter, type Memory } from "../db";
+  import { addMemory, unreadLetter, markLetterRead, pendingCapsules, type Memory } from "../db";
 
   interface Props {
     petName: string;
@@ -10,50 +10,94 @@
 
   let noteText = $state("");
   let pendingLetter = $state<Memory | null>(null);
+  let waiting = $state<Memory[]>([]);
   let loaded = $state(false);
   let saved = $state(false);
   let phase = $state<"read" | "write">("write");
 
+  // when should future-you get this back?
+  const WHENS: { id: string; label: string; days: number }[] = [
+    { id: "tomorrow", label: "tomorrow", days: 1 },
+    { id: "week", label: "in a week", days: 7 },
+    { id: "month", label: "in a month", days: 30 },
+    { id: "3mo", label: "in 3 months", days: 90 },
+    { id: "6mo", label: "in 6 months", days: 182 },
+    { id: "year", label: "in a year", days: 365 }
+  ];
+  let whenId = $state("tomorrow");
+
   const MAX = 280;
   const remaining = $derived(MAX - noteText.length);
 
+  function fmt(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
+
   onMount(async () => {
-    // ID-based tracking: never show the same letter twice, even if multiple exist
-    const lastReadId = Number((await getMeta("letter_last_read_id")) ?? 0);
-    const letter = await unreadLetter(lastReadId);
-    if (letter) {
-      pendingLetter = letter;
-      phase = "read";
-    }
+    pendingLetter = await unreadLetter();
+    if (pendingLetter) phase = "read";
+    waiting = await pendingCapsules();
     loaded = true;
   });
 
   async function markRead() {
     if (!pendingLetter) return;
-    await setMeta("letter_last_read_id", String(pendingLetter.id));
-    pendingLetter = null;
-    phase = "write";
+    await markLetterRead(pendingLetter.id);
+    pendingLetter = await unreadLetter(); // another one due? keep reading
+    if (!pendingLetter) {
+      waiting = await pendingCapsules();
+      phase = "write";
+    }
   }
 
   async function saveNote() {
     const t = noteText.trim();
     if (!t) return;
-    await addMemory("letter", { text: t });
+    const days = WHENS.find((w) => w.id === whenId)?.days ?? 1;
+    const open = new Date(Date.now() + days * 86_400_000);
+    await addMemory("letter", { text: t, openAt: fmt(open) });
     saved = true;
     setTimeout(onClose, 1600);
   }
 
   function formatDate(dateStr: string): string {
     const d = new Date(dateStr.replace(" ", "T"));
-    return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", year: "numeric" });
   }
+
+  function ago(dateStr: string): string {
+    const days = Math.floor((Date.now() - new Date(dateStr.replace(" ", "T")).getTime()) / 86_400_000);
+    if (days <= 0) return "earlier today";
+    if (days === 1) return "yesterday";
+    if (days < 30) return `${days} days ago`;
+    const months = Math.round(days / 30);
+    if (months < 12) return months === 1 ? "a month ago" : `${months} months ago`;
+    const years = Math.round(months / 12);
+    return years === 1 ? "a year ago" : `${years} years ago`;
+  }
+
+  function untilLabel(openAt: string): string {
+    const days = Math.ceil((new Date(openAt.replace(" ", "T")).getTime() - Date.now()) / 86_400_000);
+    if (days <= 1) return "opens tomorrow";
+    if (days < 30) return `opens in ${days} days`;
+    const months = Math.round(days / 30);
+    return months <= 1 ? "opens in a month" : `opens in ${months} months`;
+  }
+
+  // a long-sealed note that just came due is a true capsule, not a next-day note
+  const isCapsule = $derived(
+    !!pendingLetter &&
+      Date.now() - new Date((pendingLetter.created_at ?? "").replace(" ", "T")).getTime() >
+        20 * 86_400_000
+  );
 </script>
 
 <div class="panel" role="dialog" aria-label="Leave a note">
   <div class="head">
     <span>
       {#if phase === "read"}
-        📬 A note from past you
+        {isCapsule ? "📦 A capsule from past you" : "📬 A note from past you"}
       {:else}
         ✉️ Leave a note
       {/if}
@@ -66,33 +110,57 @@
 
   {:else if phase === "read" && pendingLetter}
     <div class="letter-card">
-      <p class="letter-from">You wrote this on {formatDate(pendingLetter.created_at)}:</p>
+      <p class="letter-from">
+        You sealed this {ago(pendingLetter.created_at)} — {formatDate(pendingLetter.created_at)}:
+      </p>
       <blockquote class="letter-body">"{pendingLetter.text}"</blockquote>
       <p class="letter-pet">— {petName} kept it safe.</p>
     </div>
     <button class="btn primary" onclick={markRead}>I've read it →</button>
 
   {:else}
-    <p class="sub">{petName} will hold it until tomorrow.</p>
+    <p class="sub">Write to future-you. {petName} holds it until it's time.</p>
     <textarea
       class="note-area"
       bind:value={noteText}
       maxlength={MAX}
-      placeholder="Write something for tomorrow-you…"
-      rows={4}
+      placeholder="Write something for a future you…"
+      rows={3}
       spellcheck="false"
     ></textarea>
+
+    <div class="when">
+      <span class="when-label">open</span>
+      <div class="chips">
+        {#each WHENS as w (w.id)}
+          <button class="chip" class:on={whenId === w.id} onclick={() => (whenId = w.id)}>
+            {w.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
     <div class="row">
       <span class="count" class:warn={remaining < 30}>{remaining}</span>
       {#if saved}
         <span class="saved-tag">✓ sealed</span>
       {:else}
         <button class="btn primary" disabled={!noteText.trim()} onclick={saveNote}>
-          Seal & leave 🫙
+          Seal it 🫙
         </button>
       {/if}
     </div>
-    <p class="tip">Next time you open this, {petName} will read it back before you can write a new one.</p>
+
+    {#if waiting.length}
+      <p class="tip">
+        🔒 {waiting.length}
+        {waiting.length === 1 ? "capsule" : "capsules"} still sealed · next {untilLabel(
+          waiting[0].open_at ?? ""
+        )}
+      </p>
+    {:else}
+      <p class="tip">A capsule stays hidden until its day — then {petName} brings it to you.</p>
+    {/if}
   {/if}
 </div>
 
@@ -159,6 +227,23 @@
   .note-area:focus { border-color: rgba(180, 160, 240, 0.5); }
   .note-area::placeholder { color: #5d5580; }
 
+  .when { display: flex; align-items: center; gap: 8px; }
+  .when-label { font-size: 10px; color: #8d82ab; text-transform: uppercase; letter-spacing: 0.06em; }
+  .chips { display: flex; gap: 4px; overflow-x: auto; flex: 1; padding-bottom: 2px; }
+  .chips::-webkit-scrollbar { height: 4px; }
+  .chips::-webkit-scrollbar-thumb { background: rgba(120,108,160,0.4); border-radius: 2px; }
+  .chip {
+    flex: 0 0 auto;
+    padding: 3px 9px; border-radius: 999px;
+    border: 1px solid rgba(120, 108, 160, 0.4);
+    background: transparent; color: #b6acce; font-size: 10px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .chip.on {
+    background: rgba(180, 160, 240, 0.9); border-color: rgba(180,160,240,0.9);
+    color: #221a36; font-weight: 700;
+  }
+
   .row { display: flex; justify-content: space-between; align-items: center; }
   .count { font-size: 10px; color: #5d5580; }
   .count.warn { color: #e3884a; }
@@ -177,5 +262,5 @@
   }
   .btn.primary:hover:not(:disabled) { background: rgba(100, 80, 150, 0.5); }
 
-  .tip { font-size: 10px; color: #4d4570; margin: 0; line-height: 1.5; }
+  .tip { font-size: 10px; color: #6d6590; margin: 0; line-height: 1.5; }
 </style>

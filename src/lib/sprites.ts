@@ -75,6 +75,34 @@ export function randomEntry(excludeId?: number): DexEntry {
   return e;
 }
 
+import { EVOLVES_INTO } from "./evolutions";
+
+/** The form this companion can evolve into next, or null. Branching picks one. */
+export function nextEvolution(dexId: number): DexEntry | null {
+  const into = EVOLVES_INTO[dexId];
+  if (!into?.length) return null;
+  // branching (Eevee etc.): pick a random valid next form within our dex
+  const pick = into[Math.floor(Math.random() * into.length)];
+  return byId.get(pick) ?? null;
+}
+
+export function hasEvolution(dexId: number): boolean {
+  return !!EVOLVES_INTO[dexId]?.length;
+}
+
+/** How many evolutions remain ahead of this form (follows the first branch). */
+export function evolutionStepsAhead(dexId: number): number {
+  let steps = 0;
+  let cur = dexId;
+  const seen = new Set<number>();
+  while (EVOLVES_INTO[cur]?.length && !seen.has(cur)) {
+    seen.add(cur);
+    cur = EVOLVES_INTO[cur][0];
+    steps += 1;
+  }
+  return steps;
+}
+
 export function searchDex(query: string, limit = 12): DexEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];

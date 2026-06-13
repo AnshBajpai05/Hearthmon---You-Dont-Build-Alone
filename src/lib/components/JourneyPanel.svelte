@@ -6,6 +6,7 @@
   import { daysTogether, bondStage } from "../bond";
   import { shortDate } from "../lines";
   import BadgesPanel from "./BadgesPanel.svelte";
+  import Constellation from "./Constellation.svelte";
 
   interface Props {
     petName: string;
@@ -14,10 +15,11 @@
   let { petName, onClose }: Props = $props();
 
   let groups = $state<{ month: string; items: Memory[] }[]>([]);
+  let memories = $state<Memory[]>([]);
   let days = $state(0);
   let stage = $state("Stranger");
   let loaded = $state(false);
-  let tab = $state<"timeline" | "badges">("timeline");
+  let tab = $state<"timeline" | "badges" | "sky">("timeline");
 
   const MOOD_EMOJI: Record<string, string> = {
     good: "🙂",
@@ -34,13 +36,15 @@
     if (m.kind === "learned") return "📘";
     if (m.kind === "survived") return "⛰";
     if (m.kind === "seed") return "🌱";
-    if (m.kind === ("letter" as any)) return "✉️";
+    if (m.kind === "praise") return "💬";
+    if (m.kind === "letter") return "✉️";
     return "◓";
   }
 
   function textFor(m: Memory): string {
     if (m.kind === "mood") return m.text ? `felt ${m.mood} — ${m.text}` : `felt ${m.mood}`;
     if (m.kind === "seed") return `where we started: "${m.text}"`;
+    if (m.kind === "praise") return `"${m.text}"`;
     return m.text ?? "";
   }
 
@@ -50,7 +54,7 @@
   }
 
   onMount(async () => {
-    const memories = await allMemories(250);
+    memories = await allMemories(250);
     const byMonth = new Map<string, Memory[]>();
     for (const m of memories) {
       const k = monthLabel(m.created_at);
@@ -83,6 +87,9 @@
     <button class="tab" class:active={tab === "badges"} onclick={() => (tab = "badges")}>
       Badges 🏅
     </button>
+    <button class="tab" class:active={tab === "sky"} onclick={() => (tab = "sky")}>
+      Sky ✦
+    </button>
   </div>
 
   <div class="scroll">
@@ -100,8 +107,10 @@
           </div>
         {/each}
       {/each}
-    {:else}
+    {:else if tab === "badges"}
       <BadgesPanel {petName} />
+    {:else}
+      <Constellation {memories} />
     {/if}
   </div>
 </div>

@@ -17,6 +17,9 @@
   import JourneyPanel from "$lib/components/JourneyPanel.svelte";
   import GoodThingsJar from "$lib/components/GoodThingsJar.svelte";
   import LeaveNote from "$lib/components/LeaveNote.svelte";
+  import VaultPanel from "$lib/components/VaultPanel.svelte";
+  import WeatherFx from "$lib/components/WeatherFx.svelte";
+  import type { WeatherKind } from "$lib/components/WeatherFx.svelte";
   import {
     playCry,
     voiceCry,
@@ -49,11 +52,18 @@
     winSaved,
     learnedSaved,
     survivedSaved,
+    praiseSaved,
     firstMeetingClose,
     switchLines,
     burnoutLines,
+    comfortOffer,
+    evolveOfferLines,
+    evolveDoneLines,
+    evolveDeclineLines,
     anniversaryLine,
     pokeReactions,
+    treatLines,
+    pettingLines,
     jarLines,
     letterReadyLines
   } from "$lib/lines";
@@ -63,6 +73,9 @@
     displayName,
     spriteUrl,
     fallbackUrl,
+    nextEvolution,
+    hasEvolution,
+    evolutionStepsAhead,
     TRAINER_URL,
     type Creature,
     type DexEntry
@@ -71,12 +84,23 @@
     makeParticles,
     randomMove,
     signatureMove,
+    TYPE_FX,
     type Move,
     type Particle
   } from "$lib/attackfx";
   import { animKind, type AnimKind } from "$lib/fx";
+  import { backgroundFor } from "$lib/backgrounds";
 
-  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note";
+  type Panel =
+    | "none"
+    | "mood"
+    | "log"
+    | "remind"
+    | "switch"
+    | "journey"
+    | "jar"
+    | "note"
+    | "vault";
   // the full Ash sequence: recall beam → ball returns → "Name, go!" → thrown ball arcs in → release
   type SwitchFx = "none" | "recall" | "ballout" | "gap" | "throw" | "release";
 
@@ -89,11 +113,58 @@
   let switchFx = $state<SwitchFx>("none");
   let battleOpen = $state(false);
   let isShiny = $state(false);
+  // ---- evolution ceremony ----
+  let evoOffer = $state(false); // the gentle "ready to grow?" prompt
+  let evoActive = $state(false); // the white-silhouette ceremony is playing
+  let evoShowNew = $state(false); // which silhouette shows mid-flicker
+  let evoFlash = $state(false); // the bright reveal flash
+  let evoTarget = $state<DexEntry | null>(null);
+  let evoCount = $state(0); // evolutions for the current companion lineage
   let muted = $state(false);
   let focusMode = $state(false);
   let nightAuto = $state(false); // true 00–05h
   let nightForced = $state(false); // manual moon toggle, persisted
-  const isNight = $derived(nightAuto || nightForced); // night ambience on if either
+  let isWinter = $state(false); // Dec–Feb seasonal snow
+  // backdrop style: glossy "orb" sphere · "ground" curved platform · "off"
+  let bgStyle = $state<"orb" | "ground" | "off">("orb");
+  const curType = $derived(dexEntry(dexId)?.type ?? "normal");
+  async function cycleBg() {
+    bgStyle = bgStyle === "orb" ? "ground" : bgStyle === "ground" ? "off" : "orb";
+    await setMeta("bg_style", bgStyle);
+  }
+
+  // overall widget transparency (pet + orb), user-adjustable
+  let widgetOpacity = $state(1);
+  let opacityTimer: ReturnType<typeof setTimeout> | undefined;
+  function setWidgetOpacity(v: number) {
+    widgetOpacity = Math.min(1, Math.max(0.2, v));
+    clearTimeout(opacityTimer);
+    opacityTimer = setTimeout(() => setMeta("widget_opacity", String(widgetOpacity)), 300);
+  }
+
+  // when truly idle (not hovering, nothing open), clip the view to just the orb —
+  // the widget reads as a clean self-contained sphere on the desktop
+  let hovering = $state(false);
+  const idleNow = $derived(
+    phase === "home" &&
+      !hovering &&
+      panel === "none" &&
+      !battleOpen &&
+      switchFx === "none" &&
+      !evoActive &&
+      !evoOffer
+  );
+
+  // bgStyle is already declared above with cycleBg()
+  const isNight = $derived(nightAuto || nightForced);
+  let comfortMode = $state(false);
+
+  function refreshComfort() {
+    // comfort lingers a little, then lifts on its own (or instantly on a good day)
+    void getMeta("comfort_until").then((v) => {
+      comfortMode = Number(v ?? 0) > Date.now();
+    });
+  }
   let moodGlow = $state(""); // emotional weather: tint after a check-in
 
   async function toggleNight() {
@@ -108,6 +179,48 @@
   function triggerRitual() {
     ritualStretch = true;
     setTimeout(() => (ritualStretch = false), 1200);
+  }
+
+  // ---- natural weather effects ----
+  const WEATHER_KINDS: WeatherKind[] = ["wind", "rain", "snow", "thunder"];
+  let weatherKind = $state<WeatherKind>("none");
+  let weatherEnabled = $state(true);   // user can toggle off entirely
+  let weatherTimer: ReturnType<typeof setTimeout> | undefined;
+  let weatherAutoTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function playWeather(kind: WeatherKind, durationMs = 24000) {
+    if (!weatherEnabled || weatherKind !== "none") return;
+    weatherKind = kind;
+    clearTimeout(weatherTimer);
+    weatherTimer = setTimeout(() => (weatherKind = "none"), durationMs);
+  }
+
+  function cycleWeatherManual() {
+    // Manual tap: stop current → start next kind, or toggle off if cycling through all
+    clearTimeout(weatherTimer);
+    if (weatherKind !== "none") {
+      weatherKind = "none";
+      return;
+    }
+    // pick a random kind
+    playWeather(WEATHER_KINDS[Math.floor(Math.random() * WEATHER_KINDS.length)], 25000);
+  }
+
+  function scheduleWeatherAuto() {
+    clearTimeout(weatherAutoTimer);
+    // Fire a weather event every 8–18 minutes if enabled
+    const delayMs = (8 + Math.random() * 10) * 60_000;
+    weatherAutoTimer = setTimeout(() => {
+      if (weatherEnabled && weatherKind === "none" && phase === "home") {
+        const kind = WEATHER_KINDS[Math.floor(Math.random() * WEATHER_KINDS.length)];
+        const dur = (20 + Math.random() * 10) * 1000; // 20–30 sec
+        playWeather(kind, dur);
+        // chain the next event after this one clears
+        setTimeout(scheduleWeatherAuto, dur + 2000);
+      } else {
+        scheduleWeatherAuto(); // retry
+      }
+    }, delayMs);
   }
 
   async function toggleFocus() {
@@ -208,6 +321,7 @@
 
   // ---- auto-switch ----
   let autoMinutes = $state(0);
+  let autoMode = $state<"random" | "evolve">("random");
 
   // ---- pet size / window fit ----
   let scale = $state(1.5);
@@ -292,6 +406,54 @@
     nudgeScale(e.deltaY < 0 ? 0.1 : -0.1);
   }
 
+  /** Grab the empty area (the "box" around the pet) to move the window. */
+  async function startWinDrag(e: PointerEvent) {
+    if (e.button !== 0) return;
+    poke();
+    try {
+      await getCurrentWindow().startDragging();
+    } catch {
+      // dragging unavailable in web preview
+    }
+  }
+
+  // ---- petting reaction (called from Pet while you stroke it) ----
+  let petAffection = 0;
+  let lastPetCry = 0;
+  function onPetStroke() {
+    poke();
+    petAffection += 1;
+    if (petAffection % 6 === 0) bumpCounter("interactions");
+    // a soft happy cry / line now and then while petting — never spammy
+    if (Date.now() - lastPetCry > 6000) {
+      lastPetCry = Date.now();
+      if (Math.random() < 0.5) voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.18);
+      else if (Math.random() < 0.5) say(pick(pettingLines), 3500);
+    }
+  }
+
+  // ---- feeding: Poké food is tossed in and arcs toward the pet, who eats it ----
+  // Poffins / berries / curry-bowl — the snacks Pokémon actually eat in the games.
+  const POKE_FOOD = ["🍙", "🫐", "🍡", "🥣", "🧁", "🍃"];
+  let treat = $state<{ from: number; to: number; food: string } | null>(null);
+  let eating = $state(false);
+  function feed() {
+    if (treat || switchFx !== "none" || evoActive || evoOffer || battleOpen || moving) return;
+    poke();
+    if (petState === "sleeping") petState = "idle";
+    const side = Math.random() < 0.5 ? -1 : 1; // food comes from one edge…
+    dir = side as 1 | -1; // …and the pet turns to watch it
+    treat = { from: side * (winW / 2 + 70), to: petX, food: pick(POKE_FOOD) };
+    setTimeout(() => {
+      treat = null;
+      eating = true; // chomp animation
+      setTimeout(() => (eating = false), 900);
+      bumpCounter("interactions");
+      if (Math.random() < 0.6) voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.2);
+      say(pick(treatLines), 5000);
+    }, 760);
+  }
+
   // ---- battle mode: widen the window for the arena, restore after ----
   async function openBattle() {
     panel = "none";
@@ -335,9 +497,8 @@
     if (p === "switch") playVoiceClip("lets-go-catch-some-pokemon", 0.8, 0.3);
     else if (p === "jar") say(pick(jarLines), 5000);
     else if (p === "note") {
-      // only promise a waiting note when one actually exists
-      const lastReadId = Number((await getMeta("letter_last_read_id")) ?? 0);
-      if (await unreadLetter(lastReadId)) say(pick(letterReadyLines), 5000);
+      // only promise a waiting note when one is actually due
+      if (await unreadLetter()) say(pick(letterReadyLines), 5000);
     }
   }
 
@@ -365,6 +526,7 @@
       }
 
       autoMinutes = Number((await getMeta("auto_switch_minutes")) ?? 0) || 0;
+      autoMode = (await getMeta("auto_mode")) === "evolve" ? "evolve" : "random";
 
       const dex = await getMeta("dex_id");
       if (!dex) {
@@ -379,6 +541,10 @@
       focusMode = (await getMeta("focus_mode")) === "1";
       setFocus(focusMode);
       nightForced = (await getMeta("night_forced")) === "1";
+      bgStyle = (await getMeta("bg_style") as ("orb" | "ground" | "off") | null) ?? "orb";
+      widgetOpacity = Number((await getMeta("widget_opacity")) ?? 1) || 1;
+      evoCount = Number((await getMeta("evo_count")) ?? 0) || 0;
+      refreshComfort();
       refreshAutostart();
       for (const ch of ["voice", "cry", "fx"] as Channel[]) {
         const saved = await getMeta(`vol_${ch}`);
@@ -392,6 +558,7 @@
         { say, setState: (s) => (petState = s) },
         { onRitual: triggerRitual }
       );
+      scheduleWeatherAuto(); // start the periodic natural weather cycle
       // soft hello: says its own name, then its cry (unless we're focusing)
       if (!focusMode)
         setTimeout(() => voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.16), 1400);
@@ -419,11 +586,10 @@
         }
       }
 
-      // a note from past-you is waiting — the pet remembers, so you don't have to.
+      // a note/capsule from past-you has come due — the pet remembers, so you don't have to.
       // gentle, deferred, and never on top of an anniversary or focus session.
       if (!focusMode && !hadAnniversary) {
-        const lastReadId = Number((await getMeta("letter_last_read_id")) ?? 0);
-        if (await unreadLetter(lastReadId)) {
+        if (await unreadLetter()) {
           setTimeout(() => say(pick(letterReadyLines) + " (✉️ tap to read)", 11000), 7000);
         }
       }
@@ -433,8 +599,12 @@
     const autoTimer = setInterval(autoSwitchTick, 30_000);
     // Lonely Night Mode — the room dims after midnight
     const checkNight = () => {
-      const h = new Date().getHours();
-      nightAuto = h >= 0 && h < 5;
+      const now = new Date();
+      nightAuto = now.getHours() >= 0 && now.getHours() < 5;
+      const m = now.getMonth();
+      isWinter = m === 11 || m <= 1; // Dec–Feb: snow drifts past the window
+      refreshComfort(); // let comfort decay over time
+      maybeOfferEvolution(); // gently check if the companion is ready to grow
     };
     checkNight();
     const nightTimer = setInterval(checkNight, 5 * 60_000);
@@ -456,13 +626,23 @@
       moving ||
       oneShot !== "none" ||
       panel !== "none" ||
-      battleOpen
+      battleOpen ||
+      evoActive ||
+      evoOffer
     );
   }
 
   function wanderTick() {
     if (busy()) return;
     const r = Math.random();
+    if (comfortMode) {
+      // calmer presence: only slow drifts and the occasional glance — no zoomies,
+      // no attacks, no jumps. Just quietly here.
+      if (r < 0.18) startMove("walk");
+      else if (r < 0.24) dir = dir === 1 ? -1 : 1;
+      else if (r < 0.255) runDelight("rain", 9000); // soft rain suits the mood
+      return;
+    }
     if (r < 0.24) startMove("walk");
     else if (r < 0.31) startMove("run");
     else if (r < 0.37) startMove("hop");
@@ -548,19 +728,39 @@
     }, dur);
   }
 
-  // ---- auto-switch timer ----
-  async function setAutoSwitch(mins: number) {
+  // ---- auto-switch / auto-grow timer ----
+  async function setAutoSwitch(mins: number, mode: "random" | "evolve" = "random") {
     autoMinutes = mins;
+    autoMode = mode;
     await setMeta("auto_switch_minutes", String(mins));
+    await setMeta("auto_mode", mode);
     await setMeta("last_auto_switch", String(Date.now()));
+    // "evolve" splits the chosen interval evenly across the whole evolution chain
+    if (mode === "evolve") {
+      await setMeta("auto_evo_steps", String(Math.max(1, evolutionStepsAhead(dexId))));
+    }
   }
 
   async function autoSwitchTick() {
-    // never mid-battle (it would fight the arena for the window),
-    // never while asleep (we don't disturb a sleeping companion)
+    // never mid-battle, mid-ceremony, or while asleep
     if (!autoMinutes || phase !== "home" || switchFx !== "none" || battleOpen) return;
-    if (petState === "sleeping") return;
+    if (petState === "sleeping" || evoActive || evoOffer) return;
     const last = Number((await getMeta("last_auto_switch")) ?? "0");
+
+    if (autoMode === "evolve") {
+      // split the interval across the chain: one stage per (interval / total steps)
+      if (!hasEvolution(dexId)) return; // fully evolved — nothing left to grow into
+      const steps = Math.max(1, Number((await getMeta("auto_evo_steps")) ?? 1));
+      const stepMs = (autoMinutes / steps) * 60_000;
+      if (Date.now() - last >= stepMs) {
+        await setMeta("last_auto_switch", String(Date.now()));
+        const target = nextEvolution(dexId);
+        if (target) startEvolutionCeremony(target);
+      }
+      return;
+    }
+
+    // random mode (default)
     if (Date.now() - last >= autoMinutes * 60_000) {
       await setMeta("last_auto_switch", String(Date.now()));
       switchTo(randomEntry(dexId));
@@ -576,9 +776,13 @@
   }
 
   function switchTo(entry: DexEntry, typedName?: string) {
-    if (switchFx !== "none" || entry.id === dexId) return;
+    if (switchFx !== "none" || evoActive || entry.id === dexId) return;
     panel = "none";
     poke();
+    // a deliberate switch is a new companion — its evolution journey starts fresh
+    evoOffer = false;
+    evoCount = 0;
+    setMeta("evo_count", "0");
     const newName = resolveName(entry, typedName);
     const becomesShiny = Math.random() < 1 / 128;
 
@@ -614,6 +818,76 @@
     }, 480 + 440 + 700 + 680 + 620);
   }
 
+  // ---- evolution ceremony ----
+  // Offered, never forced (like the games, you can say "not yet"). Earned through
+  // genuine bonding — interactions accrue from taps, moods, logs — and paced apart.
+  async function maybeOfferEvolution() {
+    if (evoOffer || evoActive || switchFx !== "none" || battleOpen || phase !== "home") return;
+    if (petState === "sleeping" || !hasEvolution(dexId)) return;
+    const interactions = Number((await getMeta("interactions")) ?? 0);
+    const need = 12 + evoCount * 18; // escalates with each evolution
+    if (interactions < need) return;
+    const declined = Number((await getMeta(`evo_declined_${dexId}`)) ?? 0);
+    if (Date.now() - declined < 24 * 3_600_000) return; // respect a recent "not yet"
+    evoTarget = nextEvolution(dexId);
+    if (evoTarget) {
+      evoOffer = true;
+      say(pick(evolveOfferLines), 11000);
+    }
+  }
+
+  async function declineEvolution() {
+    evoOffer = false;
+    await setMeta(`evo_declined_${dexId}`, String(Date.now()));
+    say(pick(evolveDeclineLines), 7000);
+  }
+
+  function acceptEvolution() {
+    if (!evoTarget) return;
+    evoOffer = false;
+    startEvolutionCeremony(evoTarget);
+  }
+
+  // The white-silhouette flicker → reveal flash → new form. Used by the manual
+  // offer and by auto-evolve. Keeps nickname + all memory; only the form changes.
+  function startEvolutionCeremony(target: DexEntry) {
+    if (evoActive) return;
+    evoTarget = target;
+    evoActive = true;
+    poke();
+    let t = 0;
+    let gap = 300;
+    const flick = () => {
+      evoShowNew = !evoShowNew;
+      gap = Math.max(70, gap - 22);
+      t += gap;
+      if (t < 2400) {
+        setTimeout(flick, gap);
+      } else {
+        // bright reveal flash → the new form, in color
+        evoFlash = true;
+        evoShowNew = true;
+        playVoiceClip("whoa-you-evolved", 0.9);
+        setTimeout(async () => {
+          dexId = target.id;
+          await setMeta("dex_id", String(target.id));
+          evoCount += 1;
+          await setMeta("evo_count", String(evoCount));
+          await addMemory("note", { text: `evolved into ${displayName(target.name)}` });
+          playCry(target.id, 1);
+        }, 220);
+        setTimeout(() => {
+          evoFlash = false;
+          evoActive = false;
+          evoShowNew = false;
+          evoTarget = null;
+          say(pick(evolveDoneLines), 10000);
+        }, 900);
+      }
+    };
+    flick();
+  }
+
   async function onMeetingDone(creature: Creature, name: string, building: string) {
     await setMeta("dex_id", String(creature.dexId));
     await setMeta("pet_name", name);
@@ -629,8 +903,9 @@
 
   function onPetTap() {
     poke();
-    bumpCounter("interactions"); // the bond deepens through genuine contact
-    if (switchFx !== "none") return;
+    if (evoActive) return;
+    bumpCounter("interactions").then(() => maybeOfferEvolution()); // bond deepens, may be ready to grow
+    if (switchFx !== "none" || evoOffer) return;
     if (Math.random() < 0.12) {
       attack();
       return;
@@ -650,6 +925,18 @@
     moodGlow = MOOD_COLORS[mood]; // emotional weather: the room takes the tint
     setTimeout(() => (moodGlow = ""), 90_000);
 
+    // Comfort Mode — heavy moods soften the pet for a while; a good day lifts it.
+    if (mood === "good") {
+      await setMeta("comfort_until", "0");
+      comfortMode = false;
+    } else {
+      const hrs = mood === "low" ? 24 : mood === "stressed" || mood === "frustrated" ? 14 : 0;
+      if (hrs) {
+        await setMeta("comfort_until", String(Date.now() + hrs * 3_600_000));
+        comfortMode = true;
+      }
+    }
+
     // gentle burnout awareness — once every 3 days at most, never a diagnosis
     if (mood !== "good") {
       const heavy = await hardMoodCount(7);
@@ -665,6 +952,13 @@
     const past = mood !== "good" ? await findFamiliar(mood) : null;
     if (past) say(familiarLine(mood, monthOf(past.created_at)), 12000);
     else say(pick(moodResponses[mood]), 9000);
+
+    // in comfort mode, gently offer something familiar — the Vault for the heaviest
+    // days, the lighter Good Things Jar otherwise.
+    if (comfortMode && mood !== "good") {
+      const hint = mood === "low" ? " (🫂)" : " (🫙)";
+      setTimeout(() => say(pick(comfortOffer) + hint, 9000), 9500);
+    }
   }
 
   async function onLogSave(kind: MemoryKind, text: string) {
@@ -676,10 +970,23 @@
       attack(signatureMove(dexId)); // strongest move for the celebration
       runDelight("fireworks", 3200); // tiny fireworks after a milestone
       if (!focusMode) playVoiceClip(["that-was-awesome", "congrats", "awesome"], 0.85, 0.5);
+    } else if (kind === "praise") {
+      // tender, not triumphant — a soft glow, no fireworks
+      moodGlow = "#f0a8d8";
+      setTimeout(() => (moodGlow = ""), 30_000);
     }
-    petState = "happy";
-    setTimeout(() => (petState = "idle"), 1500);
-    const bank = kind === "win" ? winSaved : kind === "learned" ? learnedSaved : survivedSaved;
+    if (kind !== "praise") {
+      petState = "happy";
+      setTimeout(() => (petState = "idle"), 1500);
+    }
+    const bank =
+      kind === "win"
+        ? winSaved
+        : kind === "learned"
+          ? learnedSaved
+          : kind === "praise"
+            ? praiseSaved
+            : survivedSaved;
     say(pick(bank), 8000);
   }
 
@@ -710,7 +1017,15 @@
   }
 </script>
 
-<main class="widget" onpointerdown={() => phase === "home" && poke()} onwheel={onWheel}>
+<main
+  class="widget"
+  class:idle={idleNow}
+  style="--orbr: {Math.round((imgSize + 84) / 2)}px; --wo: {widgetOpacity}"
+  onpointerdown={() => phase === "home" && poke()}
+  onpointerenter={() => (hovering = true)}
+  onpointerleave={() => (hovering = false)}
+  onwheel={onWheel}
+>
   {#if phase === "meeting"}
     <FirstMeeting onDone={onMeetingDone} />
   {:else if phase === "home"}
@@ -725,6 +1040,8 @@
         currentDexId={dexId}
         currentName={petName}
         {autoMinutes}
+        {autoMode}
+        canEvolve={hasEvolution(dexId)}
         onPick={switchTo}
         onAutoSave={setAutoSwitch}
         onClose={() => (panel = "none")}
@@ -735,12 +1052,31 @@
       <GoodThingsJar onClose={() => (panel = "none")} />
     {:else if panel === "note"}
       <LeaveNote {petName} onClose={() => (panel = "none")} />
+    {:else if panel === "vault"}
+      <VaultPanel {petName} onClose={() => (panel = "none")} />
     {/if}
 
     {#if isNight}
       <div class="nightveil" aria-hidden="true"></div>
       <span class="moon" aria-hidden="true">🌙</span>
     {/if}
+    {#if comfortMode}
+      <div class="comfortglow" aria-hidden="true"></div>
+    {/if}
+    {#if isWinter}
+      <div class="snow" aria-hidden="true">
+        {#each Array(18) as _, i (i)}
+          <span
+            class="flake"
+            style="left: {(i * 5.6 + (i % 4) * 2) % 100}%; animation-delay: {(i % 9) * 0.7}s; animation-duration: {6 + (i % 5)}s; font-size: {7 + (i % 4) * 2}px"
+            >❄</span
+          >
+        {/each}
+      </div>
+    {/if}
+    <!-- Natural weather effects layer (wind / rain / snow / thunder) -->
+    <WeatherFx kind={weatherKind} />
+
     {#if moodGlow}
       <div class="moodglow" style="--mg: {moodGlow}" aria-hidden="true"></div>
     {/if}
@@ -760,6 +1096,55 @@
           style="left: {f.x}%; top: {f.y}%; --fc: {f.c}; animation-delay: {f.d}ms"
           aria-hidden="true"></span>
       {/each}
+    {/if}
+
+    <!-- background drag handle: grabbing the empty box moves the window -->
+    <div class="draglayer" onpointerdown={startWinDrag}></div>
+
+    {#if bgStyle !== "off" && switchFx === "none"}
+      {#if bgStyle === "orb"}
+        <!-- Glossy type-energy orb -->
+        <div
+          class="typebg typebg-orb"
+          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; background: {backgroundFor(
+            curType,
+            dexId
+          )}; width: {imgSize + 84}px; height: {imgSize + 84}px; opacity: calc(0.5 * {widgetOpacity})"
+          aria-hidden="true"
+        >
+          {#each Array(5) as _, i (i)}
+            <span
+              class="mote"
+              style="left: {12 + i * 19}%; animation-delay: {i * 1.1}s; animation-duration: {6 +
+                (i % 3) * 2}s">{TYPE_FX[curType]?.emoji ?? '✦'}</span
+            >
+          {/each}
+        </div>
+      {:else if bgStyle === "ground"}
+        <!-- Curved ground platform — lower half only, no sphere -->
+        <div
+          class="typebg typebg-ground"
+          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; background: {backgroundFor(
+            curType,
+            dexId
+          )}; width: {imgSize + 100}px; opacity: calc(0.72 * {widgetOpacity})"
+          aria-hidden="true"
+        >
+          {#each Array(3) as _, i (i)}
+            <span
+              class="mote"
+              style="left: {18 + i * 28}%; animation-delay: {i * 1.4}s; animation-duration: {5 +
+                i * 2}s">{TYPE_FX[curType]?.emoji ?? '✦'}</span
+            >
+          {/each}
+        </div>
+      {/if}
+    {/if}
+
+    {#if treat}
+      <span class="treat" style="--from: {treat.from}px; --to: {treat.to}px" aria-hidden="true"
+        >{treat.food}</span
+      >
     {/if}
 
     <div class="stage">
@@ -808,8 +1193,18 @@
           class:jump={oneShot === "jump"}
           class:spin={oneShot === "spin"}
           class:stretch={ritualStretch}
+          class:eat={eating}
         >
-          {#if switchFx === "ballout" || switchFx === "throw"}
+          {#if evoActive}
+            <!-- classic evolution: a white silhouette flickering between the two forms -->
+            <img
+              class="evosil"
+              class:revealed={evoFlash}
+              src={spriteUrl(evoShowNew && evoTarget ? evoTarget.id : dexId, isShiny)}
+              alt="evolving"
+              style="width: {imgSize}px; height: {imgSize}px"
+            />
+          {:else if switchFx === "ballout" || switchFx === "throw"}
             <div class="pokeball" class:flyout={switchFx === "ballout"} class:throwin={switchFx === "throw"}></div>
           {:else if switchFx === "gap"}
             <!-- empty stage: the trainer is winding up the throw -->
@@ -823,6 +1218,7 @@
               size={imgSize}
               shiny={isShiny}
               onTap={onPetTap}
+              onPet={onPetStroke}
             />
           {/if}
         </div>
@@ -859,24 +1255,43 @@
       {/if}
     </div>
 
+    {#if evoFlash}
+      <div class="evoflash" aria-hidden="true"></div>
+    {/if}
+
+    {#if evoOffer && evoTarget}
+      <div class="evo-offer">
+        <p class="evo-q">Ready to grow — together?</p>
+        <div class="evo-btns">
+          <button class="evo-yes" onclick={acceptEvolution}>Evolve ✦</button>
+          <button class="evo-no" onclick={declineEvolution}>Not yet</button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- chrome (nameplate, rails, system cluster) hides while a panel or battle is open,
+         so the open surface stands alone instead of buttons piling on top of it -->
+    {#if panel === "none" && !battleOpen}
     <div class="nameplate">
       {petName}{#if dexEntry(dexId) && displayName(dexEntry(dexId)!.name) !== petName}
         <span class="species"> · {displayName(dexEntry(dexId)!.name)}</span>{/if}
       {#if isShiny}<span class="shinytag">✨</span>{/if}
     </div>
 
-    <!-- left rail: memory & feelings (the soul) -->
+    <!-- left rail: feelings & comfort (the soul) -->
     <div class="rail railLeft">
       <button title="How are we doing?" onclick={() => togglePanel("mood")}>🙂</button>
       <button title="Remind me who I am" onclick={() => togglePanel("remind")}>🔥</button>
-      <button title="Our journey" onclick={() => togglePanel("journey")}>📖</button>
       <button title="Good Things Jar" onclick={() => togglePanel("jar")}>🫙</button>
-      <button title="Leave a note for tomorrow" onclick={() => togglePanel("note")}>✉️</button>
+      <button title="Leave a note / open a capsule" onclick={() => togglePanel("note")}>✉️</button>
+      <button title="When it feels like too much" onclick={() => togglePanel("vault")}>🫂</button>
+      <button title="Feed a treat" onclick={feed}>🍙</button>
     </div>
 
-    <!-- right rail: companion & play -->
+    <!-- right rail: record, look back & play -->
     <div class="rail railRight">
       <button title="For the record…" onclick={() => togglePanel("log")}>✦</button>
+      <button title="Our journey" onclick={() => togglePanel("journey")}>📖</button>
       <button title="Switch form" onclick={() => togglePanel("switch")}>
         <span class="miniball"></span>
       </button>
@@ -887,6 +1302,16 @@
     </div>
 
     <div class="syscluster">
+      <button
+        title={weatherEnabled ? (weatherKind !== "none" ? `Weather: ${weatherKind} — tap to stop` : "Weather effects: on") : "Weather effects: off"}
+        class:active={weatherKind !== "none"}
+        onclick={cycleWeatherManual}>🌦️</button
+      >
+      <button
+        title={bgStyle === "orb" ? "Backdrop: orb" : bgStyle === "ground" ? "Backdrop: ground" : "Backdrop: off"}
+        class:active={bgStyle !== "off"}
+        onclick={cycleBg}>🌿</button
+      >
       <button
         title={nightForced ? "Night mode on — tap for daytime" : "Night mode"}
         class:active={nightForced}
@@ -902,6 +1327,19 @@
       <button title="Bigger (or scroll up)" onclick={() => nudgeScale(0.15)}>+</button>
       <button title="Goodnight" onclick={quit}>✕</button>
     </div>
+
+    <!-- transparency slider: fades the whole widget (pet + orb) -->
+    <div class="opacitybar" title="Widget transparency">
+      <span class="opicon">◑</span>
+      <input
+        type="range"
+        min="20"
+        max="100"
+        value={Math.round(widgetOpacity * 100)}
+        oninput={(e) => setWidgetOpacity(Number((e.target as HTMLInputElement).value) / 100)}
+      />
+    </div>
+    {/if}
 
     {#if soundPanel}
       <div class="soundpanel">
@@ -951,15 +1389,44 @@
     height: 100vh;
     overflow: hidden;
   }
+  /* background drag handle fills the window; the pet sits above and re-enables clicks */
+  .draglayer {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    cursor: grab;
+  }
+  .draglayer:active {
+    cursor: grabbing;
+  }
   .stage {
     position: absolute;
     inset: 0;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     /* nudge slightly below true center so the bubble/callout have headroom */
     padding-top: 18px;
+    /* empty areas are click-through to the drag layer; the pet re-enables itself */
+    pointer-events: none;
+    transition: -webkit-mask-position 0.2s ease;
+    opacity: var(--wo, 1); /* user-adjustable widget transparency */
+  }
+  /* idle: clip the pet/shadow/bubble to the orb so only the sphere shows.
+     on hover the mask lifts, so controls and overflow return. */
+  .widget.idle .stage {
+    -webkit-mask: radial-gradient(
+      circle at 50% 52%,
+      #000 var(--orbr, 110px),
+      transparent calc(var(--orbr, 110px) + 10px)
+    );
+    mask: radial-gradient(
+      circle at 50% 52%,
+      #000 var(--orbr, 110px),
+      transparent calc(var(--orbr, 110px) + 10px)
+    );
   }
   .mover {
     position: relative;
@@ -1026,6 +1493,37 @@
   .syscluster button.active {
     border-color: #f0b66a;
     background: rgba(240, 182, 106, 0.22);
+  }
+
+  /* transparency slider along the bottom, revealed on hover */
+  .opacitybar {
+    position: absolute;
+    bottom: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: rgba(33, 28, 48, 0.92);
+    border: 1px solid rgba(120, 108, 160, 0.45);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: 6;
+  }
+  .widget:hover .opacitybar {
+    opacity: 1;
+  }
+  .opacitybar input {
+    width: 104px;
+    accent-color: #f0b66a;
+    cursor: pointer;
+  }
+  .opicon {
+    font-size: 11px;
+    color: #9d92bd;
   }
   .rail button:hover,
   .syscluster button:hover {
@@ -1470,6 +1968,291 @@
     background: radial-gradient(ellipse at 50% 100%, var(--mg) 0%, transparent 70%);
     opacity: 0.14;
     transition: opacity 2s ease;
+  }
+
+  /* comfort mode: a warm, slow-breathing hearth-glow that just stays with you */
+  .comfortglow {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: radial-gradient(
+      ellipse at 50% 78%,
+      rgba(240, 170, 110, 0.16) 0%,
+      rgba(220, 140, 90, 0.07) 45%,
+      transparent 72%
+    );
+    animation: hearth 7s ease-in-out infinite;
+  }
+  @keyframes hearth {
+    0%,
+    100% {
+      opacity: 0.65;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  /* ---- type-themed background: orb (sphere) or ground (curved platform) ---- */
+  .typebg {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    /* opacity is set inline = fraction * widgetOpacity so it dims with the slider */
+    box-shadow: 0 0 26px 2px color-mix(in srgb, var(--tc) 45%, transparent);
+    transition: opacity 0.4s ease;
+  }
+
+  /* Orb: perfect sphere, centered on the pet */
+  .typebg-orb {
+    top: 52%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    box-shadow:
+      0 0 26px 2px color-mix(in srgb, var(--tc) 45%, transparent),
+      inset 0 3px 10px rgba(255, 255, 255, 0.22),
+      inset 0 -10px 22px rgba(0, 0, 0, 0.35);
+  }
+  /* glossy specular highlight for orb */
+  .typebg-orb::before {
+    content: "";
+    position: absolute;
+    top: 8%; left: 22%; width: 56%; height: 34%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 40%, rgba(255,255,255,0.6), transparent 70%);
+    filter: blur(1px);
+  }
+  /* faint starfield clipped to orb */
+  .typebg-orb::after {
+    content: "";
+    position: absolute; inset: 0;
+    background-image: radial-gradient(rgba(255,255,255,0.55) 0.6px, transparent 0.7px);
+    background-size: 9px 9px;
+    opacity: 0.18;
+  }
+
+  /* Ground: curved elliptical platform at the pet's feet — lower 40% only */
+  .typebg-ground {
+    bottom: calc(50% - var(--psize, 110px) * 0.12);
+    transform: translateX(-50%);
+    height: calc(var(--psize, 110px) * 0.45);
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;  /* wide ellipse at top, flat at bottom */
+    box-shadow:
+      0 -4px 28px 4px color-mix(in srgb, var(--tc) 55%, transparent),
+      inset 0 6px 18px rgba(255,255,255,0.18),
+      inset 0 -6px 14px rgba(0,0,0,0.3);
+  }
+  .typebg-ground::before {
+    content: "";
+    position: absolute;
+    top: 4%; left: 15%; width: 70%; height: 42%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.45), transparent 70%);
+    filter: blur(2px);
+  }
+
+  .mote {
+    position: absolute;
+    bottom: 24%;
+    font-size: 11px;
+    opacity: 0.7;
+    filter: drop-shadow(0 0 4px var(--tc));
+    z-index: 1;
+    animation-name: motefloat;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+  }
+  @keyframes motefloat {
+    0% { transform: translateY(0) rotate(0); opacity: 0; }
+    20% { opacity: 0.75; }
+    80% { opacity: 0.6; }
+    100% { transform: translateY(-44px) rotate(40deg); opacity: 0; }
+  }
+
+  /* ---- a treat tossed in, arcing toward the pet, then chomped ---- */
+  .treat {
+    position: absolute;
+    bottom: calc(var(--psize, 110px) * 0.42);
+    left: 50%;
+    z-index: 3;
+    font-size: 20px;
+    pointer-events: none;
+    filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.4));
+    animation: treattoss 0.76s cubic-bezier(0.4, 0, 0.7, 1) forwards;
+  }
+  @keyframes treattoss {
+    0% {
+      transform: translateX(calc(-50% + var(--from))) translateY(-6px) scale(1) rotate(0);
+      opacity: 0;
+    }
+    12% {
+      opacity: 1;
+    }
+    55% {
+      transform: translateX(calc(-50% + (var(--from) * 0.35 + var(--to) * 0.65))) translateY(-52px)
+        scale(1.05) rotate(210deg);
+    }
+    88% {
+      transform: translateX(calc(-50% + var(--to))) translateY(0) scale(1) rotate(355deg);
+      opacity: 1;
+    }
+    100% {
+      transform: translateX(calc(-50% + var(--to))) translateY(3px) scale(0.2) rotate(380deg);
+      opacity: 0;
+    }
+  }
+  /* the eat: a happy little chomp + bob */
+  .petwrap.eat {
+    animation: nom 0.42s ease 2;
+  }
+  @keyframes nom {
+    0%, 100% { transform: translateY(0) scaleY(1); }
+    45% { transform: translateY(5px) scaleY(0.88) scaleX(1.05); }
+  }
+
+  /* ---- winter: snow drifting past ---- */
+  .snow {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .flake {
+    position: absolute;
+    top: -14px;
+    color: rgba(230, 240, 255, 0.85);
+    text-shadow: 0 0 4px rgba(200, 225, 255, 0.6);
+    animation-name: snowfall;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+  @keyframes snowfall {
+    0% {
+      transform: translateY(0) translateX(0) rotate(0);
+      opacity: 0;
+    }
+    12% {
+      opacity: 0.9;
+    }
+    88% {
+      opacity: 0.9;
+    }
+    100% {
+      transform: translateY(105vh) translateX(18px) rotate(220deg);
+      opacity: 0;
+    }
+  }
+
+  /* ---- evolution ceremony ---- */
+  .evosil {
+    object-fit: contain;
+    image-rendering: pixelated;
+    /* turn the sprite into a glowing white silhouette */
+    filter: brightness(0) invert(1) drop-shadow(0 0 10px #cfe6ff) drop-shadow(0 0 22px #9fd0ff);
+    animation: evopulse 0.5s ease-in-out infinite alternate;
+  }
+  .evosil.revealed {
+    /* the reveal: drop the silhouette, show true colors with a burst of glow */
+    filter: drop-shadow(0 0 18px #fff) drop-shadow(0 0 40px #ffe9a8);
+    animation: none;
+    transform: scale(1.06);
+  }
+  @keyframes evopulse {
+    from {
+      transform: scale(0.97);
+      opacity: 0.82;
+    }
+    to {
+      transform: scale(1.04);
+      opacity: 1;
+    }
+  }
+  .evoflash {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    pointer-events: none;
+    background: radial-gradient(circle at 50% 55%, #ffffff 0%, rgba(255, 255, 255, 0.7) 35%, transparent 75%);
+    animation: evoflash 0.9s ease-out forwards;
+  }
+  @keyframes evoflash {
+    0% {
+      opacity: 0;
+    }
+    25% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  .evo-offer {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-radius: 16px;
+    background: rgba(28, 22, 44, 0.96);
+    border: 1px solid rgba(180, 200, 255, 0.4);
+    box-shadow: 0 6px 26px rgba(0, 0, 0, 0.5), 0 0 22px rgba(150, 190, 255, 0.18);
+    animation: evopop 0.34s cubic-bezier(0.34, 1.4, 0.6, 1);
+  }
+  @keyframes evopop {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -46%) scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+  }
+  .evo-q {
+    margin: 0;
+    font-size: 12.5px;
+    color: #dce6ff;
+    text-align: center;
+  }
+  .evo-btns {
+    display: flex;
+    gap: 8px;
+  }
+  .evo-yes,
+  .evo-no {
+    border-radius: 10px;
+    border: 1px solid rgba(180, 200, 255, 0.4);
+    padding: 6px 16px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .evo-yes {
+    background: linear-gradient(180deg, #acd0ff, #6fa8ee);
+    color: #1a1630;
+    font-weight: 700;
+    border-color: transparent;
+  }
+  .evo-yes:hover {
+    filter: brightness(1.08);
+  }
+  .evo-no {
+    background: transparent;
+    color: #9d92bd;
+  }
+  .evo-no:hover {
+    border-color: #c4b5f0;
+    color: #c4b5f0;
   }
 
   /* ---- micro-delights ---- */

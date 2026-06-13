@@ -18,6 +18,7 @@
     survived: "🛡️",
     learned: "🧠",
     mood: "💛",   // only good moods surface here
+    praise: "💬",
     note: "📝",
     seed: "🌱",
     letter: "✉️"
@@ -27,6 +28,7 @@
     survived: "survived",
     learned: "learned",
     mood: "good day",
+    praise: "someone said",
     note: "note",
     seed: "origin",
     letter: "note to self"
@@ -50,6 +52,7 @@
       const ts = new Date(m.created_at.replace(" ", "T")).getTime();
       const old = ts < twoDaysAgo;
       if (m.kind === "win") return true;          // all wins, any age
+      if (m.kind === "praise") return true;       // kind words — always worth resurfacing
       if (m.kind === "survived") return old;
       if (m.kind === "learned") return old;
       if (m.kind === "mood" && m.mood === "good") return old;

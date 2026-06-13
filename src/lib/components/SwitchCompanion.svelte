@@ -15,11 +15,22 @@
     currentDexId: number;
     currentName: string;
     autoMinutes: number;
+    autoMode?: "random" | "evolve";
+    canEvolve?: boolean;
     onPick: (entry: DexEntry, name: string) => void;
-    onAutoSave: (minutes: number) => void;
+    onAutoSave: (minutes: number, mode: "random" | "evolve") => void;
     onClose: () => void;
   }
-  let { currentDexId, currentName, autoMinutes, onPick, onAutoSave, onClose }: Props = $props();
+  let {
+    currentDexId,
+    currentName,
+    autoMinutes,
+    autoMode = "random",
+    canEvolve = false,
+    onPick,
+    onAutoSave,
+    onClose
+  }: Props = $props();
 
   let name = $state(currentName);
   let query = $state("");
@@ -27,6 +38,7 @@
   let selGen = $state(0);
   let autoOn = $state(autoMinutes > 0);
   let autoMins = $state(autoMinutes > 0 ? autoMinutes : 60);
+  let mode = $state<"random" | "evolve">(autoMode);
 
   const suggested: DexEntry[] = STARTERS.map(
     (s) => POKEDEX.find((e) => e.id === s.dexId)!
@@ -58,7 +70,7 @@
 
   function saveAuto() {
     const mins = autoOn ? Math.max(1, Math.floor(autoMins) || 60) : 0;
-    onAutoSave(mins);
+    onAutoSave(mins, mode);
   }
 </script>
 
@@ -123,7 +135,7 @@
   <div class="autorow">
     <label class="autotoggle">
       <input type="checkbox" bind:checked={autoOn} onchange={saveAuto} />
-      auto-switch every
+      auto every
     </label>
     <input
       class="mins"
@@ -136,6 +148,25 @@
     />
     <span class="unit">min</span>
   </div>
+  {#if autoOn}
+    <div class="modes">
+      <button class="mchip" class:on={mode === "random"} onclick={() => { mode = "random"; saveAuto(); }}>
+        🎲 random
+      </button>
+      <button
+        class="mchip"
+        class:on={mode === "evolve"}
+        disabled={!canEvolve}
+        title={canEvolve ? "Grow through the evolution chain over the interval" : "This form has no evolution"}
+        onclick={() => { mode = "evolve"; saveAuto(); }}
+      >
+        ✦ grow
+      </button>
+    </div>
+    {#if mode === "evolve" && canEvolve}
+      <p class="autonote">Splits the interval evenly across the whole evolution line.</p>
+    {/if}
+  {/if}
 
   <input
     class="namebox"
@@ -339,6 +370,36 @@
   }
   .autotoggle input {
     accent-color: #f0b66a;
+  }
+  .modes {
+    display: flex;
+    gap: 6px;
+  }
+  .mchip {
+    flex: 1;
+    padding: 4px 0;
+    border-radius: 8px;
+    border: 1px solid rgba(120, 108, 160, 0.4);
+    background: transparent;
+    color: #b6acce;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .mchip.on {
+    background: rgba(240, 182, 106, 0.15);
+    border-color: #f0b66a;
+    color: #f4e8d6;
+    font-weight: 600;
+  }
+  .mchip:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .autonote {
+    margin: 0;
+    font-size: 9.5px;
+    color: #8d82ab;
+    text-align: center;
   }
   .mins {
     width: 52px;
