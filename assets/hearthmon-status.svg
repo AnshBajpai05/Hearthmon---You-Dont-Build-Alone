@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="480" height="172" viewBox="0 0 480 172" role="img" aria-label="Hearthmon — Pika-Pika, quietly building">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c1830"/><stop offset="1" stop-color="#2b2342"/></linearGradient>
+    <radialGradient id="glow" cx="50%" cy="55%" r="55%"><stop offset="0" stop-color="#f0b66a" stop-opacity="0.55"/><stop offset="1" stop-color="#f0b66a" stop-opacity="0"/></radialGradient>
+    <style>
+      .mon { transform-box: fill-box; transform-origin: 50% 100%; animation: breathe 3.8s ease-in-out infinite; image-rendering: pixelated; }
+      .glow { animation: pulse 4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+      .pt { opacity: 0; animation: rise 4.4s ease-in-out infinite; }
+      .bub { animation: pulse 4.5s ease-in-out infinite; }
+      @keyframes breathe { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-2.5px) scale(1.035); } }
+      @keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.85; } }
+      @keyframes rise { 0% { opacity: 0; transform: translateY(0); } 18% { opacity: 0.9; } 100% { opacity: 0; transform: translateY(-30px); } }
+    </style>
+  </defs>
+
+  <rect width="480" height="172" rx="16" fill="url(#bg)"/>
+  <rect x="0.5" y="0.5" width="479" height="171" rx="16" fill="none" stroke="#786ca0" stroke-opacity="0.35"/>
+
+  <ellipse class="glow" cx="76" cy="100" rx="52" ry="48" fill="url(#glow)"/>
+  <ellipse cx="76" cy="146" rx="40" ry="7" fill="#000" fill-opacity="0.3"/>
+  <text class="pt" x="40" y="120" font-size="11" fill="#f0b66a" style="animation-delay:0s">✦</text><text class="pt" x="96" y="120" font-size="11" fill="#f0b66a" style="animation-delay:1.3s">✦</text><text class="pt" x="70" y="120" font-size="11" fill="#f0b66a" style="animation-delay:2.6s">✦</text><text class="pt" x="118" y="120" font-size="11" fill="#f0b66a" style="animation-delay:3.4s">·</text>
+  <image class="mon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAMAAADVRocKAAAAHlBMVEX///8QEBAmUH0wjrxTsNlrho+boLatvsXE1trp7+6WeXDIAAAAAXRSTlMAQObYZgAAAptJREFUeNrtl4tq5DAMRX2T6vX/P7y6ltM0S1kgowALOaFu7ZZzRu7wmPHy8vLycsWIJk/Zx8EDjdO+aE4sfczV6ydt9dMafBjIJ1oLFp5kIabf6U/aCha0jgokZ0u7AvFXwFsDOqa/pBwmd9FZUJr8fBfVJuZeuyYo8xWedk1wPCfrREdPIWJPaDwfnnzo37ZNin3Pn7/2/bAz+FW/HmOIbNu4AZUxSb2Z1b6gnkd7ZGNu7wR2vujpt6L29fLXyb5y9wJpTCX9Re1TX36ZhZ25/U4AO6+lZGoF93kyjxQKYONed9wMUMlVjohuW+kTQJJs6M3AZoBNFOkTnQu3BYRgALph3ADgF/UYoE/XIiuQMFB/eRsAuQqYWAvcGFjqHsT1BO5uq9Dm/xkQJ9YYkLj4w6uAPn+40CwV4JYFRZ8fJV7fAjNgfQHDElfAK+A9gRJfAsilRnhqAK4coisg1wFkrmgKlHj6ZYVQYzTd0XEl1TkDBusZgULz8p8BLgxIU6D8dgTmVGbSc0eAefnrQd0QA113JB4Co309GRBzc2m7I4gbWQUepd95VdLgp8tzsQWPwDPxiIaAm3gV3OaTAYMT+Twwb8EXVg+1PgF/2zXASQbwHQhpGODRgDv+HXD5cADDlF4DqwDnCA0DXAOOGZCGEVZgLSeAn4GQD/zXwHUWHAGXTwaw74D8FnAWPgrAr4FzmCo3BpYZuiYZmIEPPpBr5DK1OAM6jlAFUu/jbmAMX4GBXwJHYdwtKP0DJQGGVGBoXyAGprrAz4CuE2BE3A7QfzLfkwzktwrMOOpP7wBct1Eq2kKvn7J60DPApZ9lfj4w10fQ/z5Arw17NFBfNp7CzsgzaDwcqP+xjQdRZeVJHg9whpeXl5eXC38Ashcoq2RBrVgAAAAASUVORK5CYII=" x="30" y="52" width="92" height="92" preserveAspectRatio="xMidYMax meet"/>
+
+  <!-- speech bubble -->
+  <g class="bub">
+    <rect x="118" y="40" rx="9" width="136" height="26" fill="#160f24" fill-opacity="0.92" stroke="#786ca0" stroke-opacity="0.5"/>
+    <path d="M130 66 l-8 10 l16 -4 z" fill="#160f24" fill-opacity="0.92"/>
+    <text x="130" y="57" font-size="12" fill="#e9e2fb">quietly building</text>
+  </g>
+
+  <text x="168" y="34" font-size="15" font-weight="700" fill="#f0b66a">🌙 Hearthmon</text>
+  <text x="168" y="62" font-size="19" font-weight="800" fill="#f6f1ff">Pika-Pika <tspan font-size="12" font-weight="400" fill="#9d92bd">the Nihilego</tspan></text>
+  <g><rect x="168" y="74" rx="9" width="72" height="20" fill="#f0b66a" fill-opacity="0.14" stroke="#f0b66a" stroke-opacity="0.4"/><text x="204" y="88" font-size="11" fill="#f0d9a6" text-anchor="middle">Stranger</text></g><g><rect x="248" y="74" rx="9" width="128" height="20" fill="#f0b66a" fill-opacity="0.14" stroke="#f0b66a" stroke-opacity="0.4"/><text x="312" y="88" font-size="11" fill="#f0d9a6" text-anchor="middle">🔧 Quiet Builder</text></g>
+  <text x="168" y="120" font-size="12" fill="#c9bff0">✦ building, quietly</text>
+  <text x="460" y="158" font-size="11" fill="#8d82ab" text-anchor="end">18 commits · 0 days together</text>
+
+  <style>text{font-family:system-ui,'Segoe UI',sans-serif}</style>
+</svg>
