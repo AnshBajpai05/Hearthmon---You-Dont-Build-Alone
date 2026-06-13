@@ -36,6 +36,9 @@ Everything below is **live** in the current build:
 - [x] **Achievement badges wall** — 17 emotional badges in Journey → Badges tab; staggered reveal; rare glow
 - [x] **Gentle real-world nudge** — after 3hr session: "Maybe message someone today?" (once per session)
 - [x] **Sunday retrospective** — if Sunday + 5+ memories logged: "We survived that week. Quietly proud."
+- [x] **Natural weather effects 🌦️** — wind (streaks + leaves), rain (38 drops, slanted), snow (32 flakes w/ swing), thunderstorm (double flash + ⚡ bolt); auto-fires every 8–18 min for 20–30 sec; manual trigger via syscluster button; stop-on-tap
+- [x] **Background style cycle 🌿** — three modes: orb (glossy sphere), ground (flat elliptical platform at pet's feet, glowing), off; persisted; single 🌿 button cycles through
+- [x] **Opacity slider dims background** — reducing the bar now fades both the pet layer AND the orb/ground proportionally (inline calc, not a CSS var fallback)
 
 ---
 
@@ -84,7 +87,7 @@ Everything below is **live** in the current build:
 - [ ] **Room unlocks via bond depth** — desk plant at Familiar, warm lamp at Trusted Friend, bookshelf at Companion
 - [x] **Seasonal decorations (snow)** ✅ — winter (Dec–Feb) drifts gentle snowflakes past the
       window. (Cherry blossoms / other seasons still open.)
-- [ ] **Weather-driven ambience** — rain sounds + rain visual on pixel rain delight
+- [x] **Weather-driven ambience** — 🌦️ rain / snow / wind / thunder fire automatically and on demand; ⚠️ rain *sounds* not yet tied (see Adaptive Soundtrack)
 
 ### Growth Reflection "Movies"
 - [ ] **Quarterly recap** — "Spring 2026: You learned X, survived Y, logged Z good days"
@@ -241,4 +244,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: 2026-06-13 — soul layer complete; fun layer ("god mode") complete; voice cloning blocked (TTS fallback live).*
+*Last updated: 2026-06-13 — soul layer complete; fun layer complete; weather + background system shipped; voice cloning blocked (TTS fallback live).*
