@@ -32,7 +32,7 @@
   <text x="168" y="62" font-size="19" font-weight="800" fill="#f6f1ff">Pika-Pika <tspan font-size="12" font-weight="400" fill="#9d92bd">the Nihilego</tspan></text>
   <g><rect x="168" y="74" rx="9" width="72" height="20" fill="#f0b66a" fill-opacity="0.14" stroke="#f0b66a" stroke-opacity="0.4"/><text x="204" y="88" font-size="11" fill="#f0d9a6" text-anchor="middle">Stranger</text></g><g><rect x="248" y="74" rx="9" width="128" height="20" fill="#f0b66a" fill-opacity="0.14" stroke="#f0b66a" stroke-opacity="0.4"/><text x="312" y="88" font-size="11" fill="#f0d9a6" text-anchor="middle">🔧 Quiet Builder</text></g>
   <text x="168" y="120" font-size="12" fill="#c9bff0">✦ building, quietly</text>
-  <text x="460" y="158" font-size="11" fill="#8d82ab" text-anchor="end">18 commits · 0 days together</text>
+  <text x="460" y="158" font-size="11" fill="#8d82ab" text-anchor="end">19 commits · 0 days together</text>
 
   <style>text{font-family:system-ui,'Segoe UI',sans-serif}</style>
 </svg>
