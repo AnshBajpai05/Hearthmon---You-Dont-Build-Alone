@@ -6,6 +6,8 @@
     PhysicalPosition,
     PhysicalSize
   } from "@tauri-apps/api/window";
+  import { listen } from "@tauri-apps/api/event";
+  import { invoke } from "@tauri-apps/api/core";
   import Pet from "$lib/components/Pet.svelte";
   import Bubble from "$lib/components/Bubble.svelte";
   import MoodCheckIn from "$lib/components/MoodCheckIn.svelte";
@@ -18,6 +20,7 @@
   import GoodThingsJar from "$lib/components/GoodThingsJar.svelte";
   import LeaveNote from "$lib/components/LeaveNote.svelte";
   import VaultPanel from "$lib/components/VaultPanel.svelte";
+  import CodePanel from "$lib/components/CodePanel.svelte";
   import WeatherFx from "$lib/components/WeatherFx.svelte";
   import type { WeatherKind } from "$lib/components/WeatherFx.svelte";
   import RadialMenu from "$lib/components/RadialMenu.svelte";
@@ -42,9 +45,9 @@
     unreadLetter
   } from "$lib/db";
   import type { Mood, MemoryKind } from "$lib/db";
-  import { initPresence, poke, setFocus } from "$lib/presence";
+  import { initPresence, poke, setFocus, setMode, setBondTier } from "$lib/presence";
   import type { PetState } from "$lib/presence";
-  import { daysTogether } from "$lib/bond";
+  import { daysTogether, bondStageIndex } from "$lib/bond";
   import {
     pick,
     moodResponses,
@@ -66,8 +69,14 @@
     treatLines,
     pettingLines,
     jarLines,
-    letterReadyLines
+    letterReadyLines,
+    endOfNightLines,
+    modeLines,
+    softFailLines,
+    commitLines,
+    bugFixLines
   } from "$lib/lines";
+  import type { CompanionMode } from "$lib/lines";
   import {
     dexEntry,
     randomEntry,
@@ -101,7 +110,8 @@
     | "journey"
     | "jar"
     | "note"
-    | "vault";
+    | "vault"
+    | "code";
   // the full Ash sequence: recall beam → ball returns → "Name, go!" → thrown ball arcs in → release
   type SwitchFx = "none" | "recall" | "ballout" | "gap" | "throw" | "release";
 
@@ -182,6 +192,13 @@
     setTimeout(() => (ritualStretch = false), 1200);
   }
 
+  // ---- return-without-shame: a little dust-off shimmy when you come back ----
+  function triggerDustOff() {
+    if (focusMode) return;
+    oneShot = "dust";
+    setTimeout(() => (oneShot = "none"), 900);
+  }
+
   // ---- natural weather effects ----
   const WEATHER_KINDS: WeatherKind[] = ["wind", "rain", "snow", "thunder"];
   let weatherKind = $state<WeatherKind>("none");
@@ -229,6 +246,19 @@
     setFocus(focusMode);
     await setMeta("focus_mode", focusMode ? "1" : "0");
     if (!focusMode) say("I'm here if you need me.", 5000);
+  }
+
+  // ---- companionship mode: user-controlled presence level ----
+  let companionMode = $state<CompanionMode>("default");
+  const MODE_CYCLE: CompanionMode[] = ["default", "just_there", "fun"];
+  async function cycleMode() {
+    const next = MODE_CYCLE[(MODE_CYCLE.indexOf(companionMode) + 1) % MODE_CYCLE.length];
+    companionMode = next;
+    setMode(next);
+    await setMeta("companion_mode", next);
+    poke();
+    // a single quiet line confirming the switch (skips Just-There — it should stay silent)
+    if (next !== "just_there") say(modeLines[next], 4500);
   }
 
   function runDelight(kind: "star" | "rain" | "fireworks", ms: number) {
@@ -316,7 +346,7 @@
   let hopping = $state(false);
   let moveDur = $state(0.5);
   let moveEndTimer: ReturnType<typeof setTimeout> | undefined;
-  let oneShot = $state<"none" | "jump" | "spin">("none");
+  let oneShot = $state<"none" | "jump" | "spin" | "dust">("none");
   let butterfly = $state<{ from: number; to: number; dur: number } | null>(null);
 
   // ---- attack state ----
@@ -511,6 +541,253 @@
     bubbleTimer = setTimeout(() => (bubble = ""), ms);
   }
 
+  // ---- soft failure recovery ----
+  // When something genuinely breaks (db hiccup, weather glitch, unexpected throw),
+  // the pet notices warmly instead of breaking silently or flashing a raw error.
+  // Hard rate-limit so a flurry of errors never turns into nagging.
+  const SOFT_FAIL_COOLDOWN = 5 * 60_000;
+  let lastSoftFail = 0;
+  function softFail(err?: unknown) {
+    console.warn("[hearthmon] soft fail:", err);
+    if (Date.now() - lastSoftFail < SOFT_FAIL_COOLDOWN) return;
+    lastSoftFail = Date.now();
+    if (phase === "home") say(pick(softFailLines), 6000);
+  }
+
+  // ---- coding awareness: react to commits ----
+  // Two sources, pick one: a LOCAL folder (instant, via the Rust reflog watcher)
+  // or a GitHub URL (polls the API every few min — catches pushes from anywhere).
+  let watchingRepo = $state("");     // local folder path
+  let watchingRemote = $state("");   // github url
+  const FIX_RE = /\b(fix(e[sd])?|bug|hotfix|patch|resolve[sd]?|close[sd]?|squash)\b/i;
+  let lastCommitReact = 0;
+  function onCommit(message: string) {
+    poke();
+    // a small, always-silent acknowledgement bob — the pet noticed
+    if (petState === "idle") {
+      petState = "happy";
+      setTimeout(() => (petState = "idle"), 900);
+    }
+    void bumpCounter("commits");
+    if (focusMode || companionMode === "just_there") return; // stay quiet
+    // throttle spoken reactions so a rebase/squash burst can't turn into spam
+    if (Date.now() - lastCommitReact < 15_000) return;
+    lastCommitReact = Date.now();
+    if (FIX_RE.test(message)) {
+      runDelight("star", 2400);
+      say(pick(bugFixLines), 7000);
+      playVoiceClip(["awesome", "that-was-awesome", "congrats"], 0.8, 0.6);
+    } else if (Math.random() < 0.4) {
+      // mostly wordless — only sometimes a word (presence > chatter)
+      say(pick(commitLines), 5000);
+    }
+  }
+
+  // ---- GitHub remote polling: a single repo, OR a whole account ----
+  let remoteKind: "" | "repo" | "user" = "";
+  let remoteId = ""; // "owner/repo" (repo) or "username" (account)
+  let remotePollTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Optional personal-access-token → unlocks PRIVATE repos. Stored only in the
+  // local SQLite (never logged, never sent anywhere but api.github.com/https).
+  let ghToken = "";
+  let hasToken = $state(false);
+  function ghHeaders(): Record<string, string> {
+    const h: Record<string, string> = { Accept: "application/vnd.github+json" };
+    if (ghToken) h.Authorization = `Bearer ${ghToken}`;
+    return h;
+  }
+
+  /** Classify a GitHub URL/handle:
+   *   github.com/owner/repo → { kind:"repo", id:"owner/repo" }
+   *   github.com/owner      → { kind:"user", id:"owner" } (whole account) */
+  function parseGitHub(url: string): { kind: "repo" | "user"; id: string } | null {
+    const m = url.trim().match(/github\.com[/:]([^/\s]+?)(?:\/([^/\s]+?))?(?:\.git)?\/?$/i);
+    if (!m) return null;
+    const owner = m[1];
+    const repo = m[2];
+    return repo ? { kind: "repo", id: `${owner}/${repo}` } : { kind: "user", id: owner };
+  }
+
+  // one repo → its latest commit sha
+  async function pollRepo(initial: boolean) {
+    const res = await fetch(`https://api.github.com/repos/${remoteId}/commits?per_page=1`, {
+      headers: ghHeaders()
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const top = Array.isArray(data) ? data[0] : null;
+    const sha: string | undefined = top?.sha;
+    if (!sha) return;
+    const last = await getMeta("git_remote_sha");
+    if (sha === last) return;
+    await setMeta("git_remote_sha", sha);
+    if (!initial && last) onCommit(top?.commit?.message ?? ""); // never replay history
+  }
+
+  // whole account → newest PushEvent across any repo. With a token we hit the
+  // authenticated feed (includes PRIVATE repo activity); otherwise public-only.
+  async function pollUser(initial: boolean) {
+    const feed = ghToken ? "events" : "events/public";
+    const res = await fetch(`https://api.github.com/users/${remoteId}/${feed}?per_page=30`, {
+      headers: ghHeaders()
+    });
+    if (!res.ok) return;
+    const events = await res.json();
+    if (!Array.isArray(events) || !events.length) return;
+    const newestId: string = events[0].id;
+    const last = await getMeta("git_remote_evt");
+    if (newestId === last) return;
+    await setMeta("git_remote_evt", newestId);
+    if (initial || !last) return; // seed only — don't replay old activity
+    // react once to the most recent *new* push (any repo); messages drive fix-detection
+    const fresh: any[] = [];
+    for (const ev of events) {
+      if (ev.id === last) break;
+      fresh.push(ev);
+    }
+    const push = fresh.find((e) => e.type === "PushEvent");
+    if (push) {
+      const commits = push.payload?.commits ?? [];
+      onCommit(commits.length ? commits[commits.length - 1].message : "");
+    }
+  }
+
+  async function pollRemoteOnce(initial = false) {
+    try {
+      if (remoteKind === "repo") await pollRepo(initial);
+      else if (remoteKind === "user") await pollUser(initial);
+    } catch {
+      /* network hiccup — try again next tick */
+    }
+  }
+
+  function startRemotePoll(url: string) {
+    const t = parseGitHub(url);
+    remoteKind = t?.kind ?? "";
+    remoteId = t?.id ?? "";
+    clearInterval(remotePollTimer);
+    if (!remoteKind) return;
+    void pollRemoteOnce(true); // seed baseline now (no reaction)
+    remotePollTimer = setInterval(() => void pollRemoteOnce(false), 180_000);
+  }
+  function stopRemotePoll() {
+    clearInterval(remotePollTimer);
+    remoteKind = "";
+    remoteId = "";
+  }
+
+  // ---- set / stop the watched source (auto-detects folder vs GitHub URL) ----
+  async function setRepo(input: string) {
+    const p = input.trim();
+    if (!p) return;
+    const looksRemote =
+      /^(https?:\/\/|git@|ssh:\/\/)/i.test(p) || /github\.com/i.test(p) || p.endsWith(".git");
+
+    if (looksRemote) {
+      const t = parseGitHub(p);
+      if (!t) {
+        say("That doesn't look like a GitHub URL.", 6000);
+        return;
+      }
+      // confirm it's reachable & public before committing to it
+      try {
+        const api = t.kind === "repo"
+          ? `https://api.github.com/repos/${t.id}`
+          : `https://api.github.com/users/${t.id}`;
+        const res = await fetch(api, { headers: ghHeaders() });
+        if (!res.ok) {
+          say(res.status === 404
+            ? (ghToken ? "Can't find that — check the URL?" : "Can't find that — is it public, or add a token?")
+            : "GitHub wouldn't show me that — check the URL or token?", 6500);
+          return;
+        }
+      } catch {
+        say("Couldn't reach GitHub just now. Try again in a moment?", 5500);
+        return;
+      }
+      // switch off the local watcher — one source at a time
+      try { await invoke("git_clear_repo"); } catch { /* already clear */ }
+      watchingRepo = "";
+      await setMeta("git_repo", "");
+      watchingRemote = p;
+      await setMeta("git_remote", p);
+      await setMeta("git_remote_sha", ""); // fresh baselines
+      await setMeta("git_remote_evt", "");
+      startRemotePoll(p);
+      say(t.kind === "user"
+        ? "Tracking your whole GitHub. I'll notice pushes across all your repos."
+        : "Tracking that repo on GitHub. I'll notice new pushes.", 6500);
+      panel = "none";
+      return;
+    }
+
+    // local folder
+    try {
+      await invoke("git_set_repo", { path: p });
+      stopRemotePoll();
+      watchingRemote = "";
+      await setMeta("git_remote", "");
+      watchingRepo = p;
+      await setMeta("git_repo", p);
+      say("Watching your repo now. I'll cheer the wins.", 5000);
+      panel = "none";
+    } catch {
+      say("Hmm — I couldn't find a git repo there. Check the folder path?", 5500);
+      // keep the panel open so the path can be corrected
+    }
+  }
+
+  async function stopWatch() {
+    try { await invoke("git_clear_repo"); } catch { /* already clear */ }
+    stopRemotePoll();
+    watchingRepo = "";
+    watchingRemote = "";
+    await setMeta("git_repo", "");
+    await setMeta("git_remote", "");
+    panel = "none";
+  }
+
+  // ---- dev helper: fire a fake commit to preview the reaction instantly ----
+  // (bypasses the 15s throttle so you can hammer it while tuning)
+  function testCommit(message: string) {
+    lastCommitReact = 0;
+    onCommit(message);
+  }
+
+  // ---- GitHub token (private-repo access) — local only, never leaves the box ----
+  async function setToken(token: string) {
+    ghToken = token.trim();
+    hasToken = !!ghToken;
+    await setMeta("git_token", ghToken);
+    // re-baseline so the (now authed) feed seeds without replaying history
+    if (watchingRemote) {
+      await setMeta("git_remote_sha", "");
+      await setMeta("git_remote_evt", "");
+      startRemotePoll(watchingRemote);
+    }
+    say(hasToken ? "Token saved — I can see your private work now." : "Token cleared.", 5000);
+  }
+  async function clearToken() {
+    await setToken("");
+  }
+
+  // ---- friction removal: bare-key shortcuts (M mood · J jar · N notes) ----
+  // 1-second interactions for power users. Ignored while typing, onboarding,
+  // or mid-battle/evolution so they never fire at the wrong moment.
+  function onShortcut(e: KeyboardEvent) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if (phase !== "home" || battleOpen || evoActive || evoOffer) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const key = e.key.toLowerCase();
+    const map: Record<string, Panel> = { m: "mood", j: "jar", n: "note" };
+    const target = map[key];
+    if (!target) return;
+    e.preventDefault();
+    togglePanel(target);
+  }
+
   async function togglePanel(p: Panel) {
     const opening = panel !== p;
     panel = panel === p ? "none" : p;
@@ -569,6 +846,21 @@
       setSoundEnabled(!muted);
       focusMode = (await getMeta("focus_mode")) === "1";
       setFocus(focusMode);
+      companionMode = ((await getMeta("companion_mode")) as CompanionMode | null) ?? "default";
+      setMode(companionMode);
+      // coding awareness: resume the saved source (local folder or GitHub URL)
+      ghToken = (await getMeta("git_token")) ?? "";
+      hasToken = !!ghToken;
+      const savedRepo = await getMeta("git_repo");
+      if (savedRepo) {
+        watchingRepo = savedRepo;
+        invoke("git_set_repo", { path: savedRepo }).catch(() => (watchingRepo = ""));
+      }
+      const savedRemote = await getMeta("git_remote");
+      if (savedRemote) {
+        watchingRemote = savedRemote;
+        startRemotePoll(savedRemote);
+      }
       nightForced = (await getMeta("night_forced")) === "1";
       bgStyle = (await getMeta("bg_style") as ("orb" | "ground" | "off") | null) ?? "orb";
       widgetOpacity = Number((await getMeta("widget_opacity")) ?? 1) || 1;
@@ -583,9 +875,16 @@
       }
       vols = getVolumes();
       phase = "home";
+      // Trust Escalation: tell presence how deep the bond is, so it only
+      // unlocks vulnerable lines once they've been earned.
+      {
+        const fm = await getMeta("first_met");
+        const ix = Number((await getMeta("interactions")) ?? 0) || 0;
+        setBondTier(bondStageIndex(daysTogether(fm), ix));
+      }
       await initPresence(
         { say, setState: (s) => (petState = s) },
-        { onRitual: triggerRitual }
+        { onRitual: triggerRitual, onReturn: triggerDustOff }
       );
       scheduleWeatherAuto(); // start the periodic natural weather cycle
       // soft hello: says its own name, then its cry (unless we're focusing)
@@ -637,10 +936,27 @@
     };
     checkNight();
     const nightTimer = setInterval(checkNight, 5 * 60_000);
+
+    // Soft-failure net: turn uncaught errors / rejected promises into one warm
+    // line. Ignore element resource errors (missing sprite/clip) — those are
+    // designed to fall back, so `e.error` (script errors only) is the filter.
+    const onError = (e: ErrorEvent) => { if (e.error instanceof Error) softFail(e.error); };
+    const onRejection = (e: PromiseRejectionEvent) => softFail(e.reason);
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+
+    // coding awareness: react to commits emitted by the Rust reflog watcher
+    let unlistenCommit: (() => void) | undefined;
+    listen<string>("git-commit", (e) => onCommit(e.payload)).then((un) => (unlistenCommit = un));
+
     return () => {
       clearInterval(wanderTimer);
       clearInterval(autoTimer);
       clearInterval(nightTimer);
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+      unlistenCommit?.();
+      clearInterval(remotePollTimer);
       resizeUnlisten?.();
     };
   });
@@ -666,10 +982,22 @@
     const r = Math.random();
     if (comfortMode) {
       // calmer presence: only slow drifts and the occasional glance — no zoomies,
-      // no attacks, no jumps. Just quietly here.
+      // no attacks, no jumps. Just quietly here. (Comfort overrides Fun mode.)
       if (r < 0.18) startMove("walk");
       else if (r < 0.24) dir = dir === 1 ? -1 : 1;
       else if (r < 0.255) runDelight("rain", 9000); // soft rain suits the mood
+      return;
+    }
+    if (companionMode === "fun") {
+      // Fun mode: more energetic — runs, hops, jumps, zoomies come around far more often.
+      if (r < 0.30) startMove("run");
+      else if (r < 0.42) startMove("hop");
+      else if (r < 0.52) doOneShot("jump");
+      else if (r < 0.60) doOneShot("spin");
+      else if (r < 0.70) zoomies();
+      else if (r < 0.74) spawnButterfly();
+      else if (r < 0.80) startMove("walk");
+      else if (r < 0.83) dir = dir === 1 ? -1 : 1;
       return;
     }
     if (r < 0.24) startMove("walk");
@@ -1022,8 +1350,18 @@
   // ✕ tucks the companion into the system tray — it never truly leaves.
   // (Quit-for-real lives in the tray menu.) Soul: presence, "welcome back".
   async function quit() {
-    playVoiceClip("see-you-later", 0.85);
-    setTimeout(() => getCurrentWindow().hide(), 900);
+    const h = new Date().getHours();
+    // end-of-night ritual: closing late, the pet says goodnight and settles to sleep
+    // before tucking away — never just a cold exit. (Skips Focus / Just-There silence.)
+    if ((h >= 22 || h < 5) && !focusMode && companionMode !== "just_there") {
+      say(pick(endOfNightLines), 4000);
+      petState = "sleeping";
+      playVoiceClip("see-you-later", 0.85);
+      setTimeout(() => getCurrentWindow().hide(), 2600);
+    } else {
+      playVoiceClip("see-you-later", 0.85);
+      setTimeout(() => getCurrentWindow().hide(), 900);
+    }
   }
 
   // ---- launch on startup ----
@@ -1045,6 +1383,8 @@
     await refreshAutostart();
   }
 </script>
+
+<svelte:window onkeydown={onShortcut} />
 
 <main
   class="widget"
@@ -1085,6 +1425,18 @@
       <LeaveNote {petName} onClose={() => (panel = "none")} />
     {:else if panel === "vault"}
       <VaultPanel {petName} onClose={() => (panel = "none")} />
+    {:else if panel === "code"}
+      <CodePanel
+        current={watchingRemote || watchingRepo}
+        isRemote={!!watchingRemote}
+        {hasToken}
+        onSave={setRepo}
+        onStop={stopWatch}
+        onSaveToken={setToken}
+        onClearToken={clearToken}
+        onTest={testCommit}
+        onClose={() => (panel = "none")}
+      />
     {/if}
 
     {#if isNight}
@@ -1223,6 +1575,7 @@
           class:channeling={attacking && attackMove?.cls === 1}
           class:jump={oneShot === "jump"}
           class:spin={oneShot === "spin"}
+          class:dust={oneShot === "dust"}
           class:stretch={ritualStretch}
           class:eat={eating}
         >
@@ -1311,8 +1664,10 @@
 
     <!-- Radial menu replaces both rails + syscluster -->
     <RadialMenu
+      petSize={imgSize}
       {muted}
       {focusMode}
+      {companionMode}
       {nightForced}
       {bgStyle}
       {weatherKind}
@@ -1325,6 +1680,7 @@
       onToggleMute={toggleMute}
       onToggleNight={toggleNight}
       onToggleFocus={toggleFocus}
+      onCycleMode={cycleMode}
       onCycleBg={cycleBg}
       onCycleWeather={cycleWeatherManual}
       onNudgeScale={nudgeScale}
@@ -1583,6 +1939,19 @@
     65%  { transform: scaleY(0.96) scaleX(1.04) translateY(0); }
     82%  { transform: scaleY(1.04) scaleX(0.98); }
     100% { transform: scaleY(1) scaleX(1); }
+  }
+
+  /* ---- return dust-off — a quick "kept things warm" shimmy ---- */
+  .petwrap.dust {
+    animation: dustoff 0.85s ease-in-out;
+  }
+  @keyframes dustoff {
+    0%   { transform: rotate(0deg); }
+    15%  { transform: rotate(-7deg); }
+    35%  { transform: rotate(6deg); }
+    55%  { transform: rotate(-4deg); }
+    75%  { transform: rotate(3deg); }
+    100% { transform: rotate(0deg); }
   }
 
   /* ---- butterfly visitor ---- */

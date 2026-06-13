@@ -5,16 +5,19 @@
   // ║  Nintendo-style: minimal at idle, rich when needed   ║
   // ╚══════════════════════════════════════════════════════╝
   import type { WeatherKind } from "./WeatherFx.svelte";
+  import type { CompanionMode } from "$lib/lines";
 
-  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note" | "vault";
+  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note" | "vault" | "code";
 
   interface Props {
     // reactive state (drives dynamic labels/icons)
-    muted:       boolean;
-    focusMode:   boolean;
-    nightForced: boolean;
-    bgStyle:     "orb" | "ground" | "off";
-    weatherKind: WeatherKind;
+    petSize:      number;   // pet sprite px — the ring sits just outside it
+    muted:        boolean;
+    focusMode:    boolean;
+    companionMode: CompanionMode;
+    nightForced:  boolean;
+    bgStyle:      "orb" | "ground" | "off";
+    weatherKind:  WeatherKind;
     soundPanelOpen: boolean;
     // action callbacks — all owned by +page.svelte
     onTogglePanel:      (p: Panel) => void;
@@ -25,6 +28,7 @@
     onToggleMute:       () => void;
     onToggleNight:      () => void;
     onToggleFocus:      () => void;
+    onCycleMode:        () => void;
     onCycleBg:          () => void;
     onCycleWeather:     () => void;
     onNudgeScale:       (d: number) => void;
@@ -36,20 +40,32 @@
   }
 
   let {
-    muted, focusMode, nightForced, bgStyle, weatherKind, soundPanelOpen,
+    petSize, muted, focusMode, companionMode, nightForced, bgStyle, weatherKind, soundPanelOpen,
     onTogglePanel, onFeed, onPet, onOpenBattle, onSwitchRandom,
-    onToggleMute, onToggleNight, onToggleFocus, onCycleBg, onCycleWeather,
+    onToggleMute, onToggleNight, onToggleFocus, onCycleMode, onCycleBg, onCycleWeather,
     onNudgeScale, onToggleSoundPanel, onQuit,
     onMenuOpen, onDirHint,
   }: Props = $props();
 
   // ─── geometry ────────────────────────────────────────────
-  const R_CAT = 86;   // category ring (px from widget center)
-  const R_SUB = 134;  // sub-item ring (px from widget center)
+  // Rings scale with the pet so the category buttons always bloom just OUTSIDE
+  // the sprite, never on top of it — works for a tiny Pichu or a huge Gyarados.
+  const R_CAT = $derived(Math.max(86, Math.round(petSize / 2 + 18))); // category ring
+  const R_SUB = $derived(R_CAT + 46);                                  // sub-item ring
+  const SUB_STEP_DEG = 22; // angular gap between adjacent sub-items
+  // 22° at this radius → comfortably clear of the 44px buttons, so a ring
+  // stays un-crowded no matter how many items it holds.
 
   function pos(angleDeg: number, r: number) {
     const rad = (angleDeg * Math.PI) / 180;
     return { x: Math.round(r * Math.cos(rad)), y: Math.round(r * Math.sin(rad)) };
+  }
+
+  /** Sub-items fan out evenly, centred on their category's angle. */
+  function subAnglesFor(cat: CatDef): number[] {
+    const n = cat.items.length;
+    const spread = (n - 1) * SUB_STEP_DEG;
+    return cat.items.map((_, i) => cat.angle - spread / 2 + i * SUB_STEP_DEG);
   }
 
   // ─── category / sub-item data ────────────────────────────
@@ -63,7 +79,7 @@
   //   🌙 Atmos  210°  (upper-left)
 
   type CatId = "memory" | "care" | "play" | "system" | "atmos";
-  interface SubDef { id: string; icon: string; label: string; subAngle: number }
+  interface SubDef { id: string; icon: string; label: string }
   interface CatDef {
     id: CatId; icon: string; name: string; tagline: string; angle: number;
     labelSide: "top" | "right" | "left" | "bottom";
@@ -77,10 +93,10 @@
       tagline: "Mood · Jar · Journey · Note",
       angle: 270, labelSide: "bottom", dirHint: 0,
       items: [
-        { id: "mood",    icon: "🙂", label: "Mood",       subAngle: 242 },
-        { id: "jar",     icon: "🫙", label: "Good Jar",   subAngle: 260 },
-        { id: "journey", icon: "📖", label: "Journey",    subAngle: 278 },
-        { id: "note",    icon: "✉️",  label: "Leave Note", subAngle: 297 },
+        { id: "mood",    icon: "🙂", label: "Mood" },
+        { id: "jar",     icon: "🫙", label: "Good Jar" },
+        { id: "journey", icon: "📖", label: "Journey" },
+        { id: "note",    icon: "✉️",  label: "Leave Note" },
       ],
     },
     {
@@ -88,10 +104,10 @@
       tagline: "Feed · Pet · Evolve · Vault",
       angle: 330, labelSide: "right", dirHint: 1,
       items: [
-        { id: "feed",   icon: "🍙", label: "Feed",   subAngle: 303 },
-        { id: "pet",    icon: "🫳", label: "Pet",    subAngle: 325 },
-        { id: "evolve", icon: "✨", label: "Evolve", subAngle: 347 },
-        { id: "vault",  icon: "🫂", label: "Vault",  subAngle: 8   },
+        { id: "feed",   icon: "🍙", label: "Feed" },
+        { id: "pet",    icon: "🫳", label: "Pet" },
+        { id: "evolve", icon: "✨", label: "Evolve" },
+        { id: "vault",  icon: "🫂", label: "Vault" },
       ],
     },
     {
@@ -99,20 +115,22 @@
       tagline: "Battle · Switch · Random",
       angle: 30, labelSide: "right", dirHint: 1,
       items: [
-        { id: "battle", icon: "⚔️",  label: "Battle",  subAngle: 5  },
-        { id: "switch", icon: "🎯",  label: "Switch",  subAngle: 28 },
-        { id: "random", icon: "🎲",  label: "Random",  subAngle: 52 },
+        { id: "battle", icon: "⚔️",  label: "Battle" },
+        { id: "switch", icon: "🎯",  label: "Switch" },
+        { id: "random", icon: "🎲",  label: "Random" },
       ],
     },
     {
       id: "system", icon: "⚙️", name: "System",
-      tagline: "Sound · Bigger · Smaller · Quit",
+      tagline: "Sound · Mode · Code · Size · Quit",
       angle: 150, labelSide: "left", dirHint: -1,
       items: [
-        { id: "sound",   icon: "🔊", label: "Sound",   subAngle: 120 },
-        { id: "bigger",  icon: "＋", label: "Bigger",  subAngle: 142 },
-        { id: "smaller", icon: "－", label: "Smaller", subAngle: 160 },
-        { id: "quit",    icon: "✕",  label: "Quit",    subAngle: 180 },
+        { id: "sound",   icon: "🔊", label: "Sound" },
+        { id: "mode",    icon: "🔔", label: "Mode" },
+        { id: "code",    icon: "🧑‍💻", label: "Code" },
+        { id: "bigger",  icon: "＋", label: "Bigger" },
+        { id: "smaller", icon: "－", label: "Smaller" },
+        { id: "quit",    icon: "✕",  label: "Quit" },
       ],
     },
     {
@@ -120,22 +138,27 @@
       tagline: "Weather · Night · Backdrop · Focus",
       angle: 210, labelSide: "left", dirHint: -1,
       items: [
-        { id: "weather",  icon: "🌦️", label: "Weather",  subAngle: 183 },
-        { id: "night",    icon: "🌙", label: "Night",    subAngle: 205 },
-        { id: "backdrop", icon: "🌿", label: "Backdrop", subAngle: 226 },
-        { id: "focus",    icon: "🎯", label: "Focus",    subAngle: 248 },
+        { id: "weather",  icon: "🌦️", label: "Weather" },
+        { id: "night",    icon: "🌙", label: "Night" },
+        { id: "backdrop", icon: "🌿", label: "Backdrop" },
+        { id: "focus",    icon: "🎯", label: "Focus" },
       ],
     },
   ];
 
   // ─── state ───────────────────────────────────────────────
+  const CLOSE_MS = 240; // reverse-collapse duration before the menu unmounts
   let menuOpen     = $state(false);
+  let closing      = $state(false); // playing the collapse-back animation
   let activeCatId  = $state<CatId | null>(null);
   let hoveredCatId = $state<CatId | null>(null);
   let revealed     = $state(0);
   let timers: ReturnType<typeof setTimeout>[] = [];
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
 
   function openMenu() {
+    clearTimeout(closeTimer);
+    closing     = false;
     menuOpen    = true;
     activeCatId = null;
     revealed    = 0;
@@ -146,14 +169,22 @@
     });
   }
 
+  // Reverse the bloom: keep everything mounted, play the collapse-back
+  // animation, then unmount once it's done. (Premium > snap-away.)
   function closeMenu() {
-    menuOpen     = false;
-    activeCatId  = null;
-    hoveredCatId = null;
-    revealed     = 0;
+    if (!menuOpen || closing) return;
     timers.forEach(clearTimeout);
     timers = [];
     onDirHint(0);
+    hoveredCatId = null;
+    closing = true;
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      menuOpen    = false;
+      closing     = false;
+      activeCatId = null;
+      revealed    = 0;
+    }, CLOSE_MS);
   }
 
   function toggleMenu() {
@@ -173,6 +204,8 @@
   // ─── dynamic icons/labels (reflect current state) ────────
   function subIcon(catId: CatId, itemId: string): string {
     if (catId === "system" && itemId === "sound")    return muted ? "🔇" : "🔊";
+    if (catId === "system" && itemId === "mode")
+      return companionMode === "fun" ? "🎉" : companionMode === "just_there" ? "🤫" : "🔔";
     if (catId === "atmos"  && itemId === "night")    return nightForced ? "🌟" : "🌙";
     if (catId === "atmos"  && itemId === "backdrop") return bgStyle === "off" ? "⬜" : "🌿";
     if (catId === "atmos"  && itemId === "focus")    return focusMode ? "✦" : "🎯";
@@ -183,11 +216,11 @@
 
   function subActive(catId: CatId, itemId: string): boolean {
     if (catId === "system" && itemId === "sound")    return soundPanelOpen;
+    if (catId === "system" && itemId === "mode")     return companionMode !== "default";
     if (catId === "atmos"  && itemId === "night")    return nightForced;
     if (catId === "atmos"  && itemId === "backdrop") return bgStyle !== "off";
     if (catId === "atmos"  && itemId === "focus")    return focusMode;
     if (catId === "atmos"  && itemId === "weather")  return weatherKind !== "none";
-    if (catId === "system" && itemId === "sound")    return !muted;
     return false;
   }
 
@@ -197,7 +230,7 @@
       "memory:mood", "memory:jar", "memory:journey", "memory:note",
       "care:feed", "care:pet", "care:evolve", "care:vault",
       "play:battle", "play:switch", "play:random",
-      "system:quit",
+      "system:code", "system:quit",
     ]);
 
     const key = `${catId}:${itemId}`;
@@ -219,6 +252,8 @@
       case "play:random":    onSwitchRandom();         break;
       // System
       case "system:sound":   onToggleSoundPanel();     break;
+      case "system:mode":    onCycleMode();            break;
+      case "system:code":    onTogglePanel("code");    break;
       case "system:bigger":  onNudgeScale(0.15);       break;
       case "system:smaller": onNudgeScale(-0.15);      break;
       case "system:quit":    onQuit();                 break;
@@ -247,6 +282,15 @@
 {#if menuOpen}
   <div class="menu-backdrop" onclick={closeMenu} aria-hidden="true"></div>
 {/if}
+
+<!-- ─── Quick tray — common one-tap actions, left of the speaker ─── -->
+<!-- hover-revealed; the full set still lives in the radial menu -->
+<div class="quickbar" aria-label="Quick actions">
+  <button class="quick-pill" title="Feed" aria-label="Feed" onclick={onFeed}>🍙</button>
+  <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>＋</button>
+  <button class="quick-pill" title="Smaller" aria-label="Smaller" onclick={() => onNudgeScale(-0.15)}>－</button>
+  <button class="quick-pill" title="Random companion" aria-label="Random companion" onclick={onSwitchRandom}>🎲</button>
+</div>
 
 <!-- ─── Mute safety pill — always visible ─────────────────── -->
 <button
@@ -285,6 +329,7 @@
       class:dimmed={isDim}
       class:hovered={isHov}
       class:revealed={i < revealed}
+      class:closing={closing}
       style="--tx:{p.x}px; --ty:{p.y}px; --i:{i}"
       onclick={() => tapCat(cat.id)}
       onpointerenter={() => hoverCat(cat)}
@@ -305,11 +350,13 @@
 
   <!-- Sub-item fan (only when this category is active) -->
   {#if menuOpen && isAct}
+    {@const angs = subAnglesFor(cat)}
     {#each cat.items as sub, j (sub.id)}
-      {@const sp = pos(sub.subAngle, R_SUB)}
+      {@const sp = pos(angs[j], R_SUB)}
       <button
         class="sub-btn"
         class:sub-active={subActive(cat.id, sub.id)}
+        class:closing={closing}
         style="--tx:{sp.x}px; --ty:{sp.y}px; --j:{j}"
         onclick={() => doSub(cat.id, sub.id)}
         title={sub.label}
@@ -330,6 +377,45 @@
     z-index: 8;
     cursor: default;
   }
+
+  /* Quick tray — common actions, just left of the mute pill (hover-revealed) */
+  .quickbar {
+    position: absolute;
+    top: 8px;
+    right: 40px;          /* clears the 26px mute pill at right:8px */
+    z-index: 12;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s;
+  }
+  :global(.widget:hover) .quickbar {
+    opacity: 1;
+    pointer-events: all;
+  }
+  .quick-pill {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid rgba(120, 108, 160, 0.4);
+    background: rgba(28, 22, 42, 0.88);
+    color: #c4b5f0;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    transition: border-color 0.18s, background 0.18s, transform 0.12s;
+  }
+  .quick-pill:hover {
+    border-color: #f0b66a;
+    background: rgba(50, 40, 72, 0.96);
+    transform: translateY(-1px);
+  }
+  .quick-pill:active { transform: translateY(0) scale(0.92); }
 
   /* Mute pill — always shown (safety action) */
   .mute-pill {
@@ -364,23 +450,28 @@
   }
 
   /* ── ✦ Trigger ─────────────────────────────────────────── */
+  /* Tucked to the left edge, vertically centred — clear of the pet's body, the
+     top-right mute pill, and the centre-bottom opacity slider. The category
+     ring still blooms around the pet from centre when opened. */
   .trigger {
     position: absolute;
-    top: calc(50% + 20px);
-    left: 50%;
+    left: 6px;
+    top: 50%;
+    right: auto;
+    bottom: auto;
     z-index: 10;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     border: 1.5px solid rgba(180, 160, 240, 0.35);
     background: rgba(28, 22, 42, 0.82);
     color: rgba(200, 185, 240, 0.5);
-    font-size: 13px;
+    font-size: 12px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transform: translate(-50%, -50%);
+    transform: translateY(-50%);
     transition:
       color 0.25s,
       border-color 0.25s,
@@ -405,7 +496,7 @@
     box-shadow: 0 0 18px rgba(240, 182, 106, 0.3), 0 2px 12px rgba(0,0,0,0.4);
   }
   .trigger.open {
-    transform: translate(-50%, -50%) rotate(45deg) scale(0.9);
+    transform: translateY(-50%) rotate(45deg) scale(0.9);
   }
 
   /* ── Category buttons ──────────────────────────────────── */
@@ -474,6 +565,16 @@
     box-shadow: 0 0 14px rgba(180,160,240,0.25), 0 2px 10px rgba(0,0,0,0.4);
     scale: 1.04;
     transition: scale 0.16s cubic-bezier(0.34, 1.3, 0.64, 1), border-color 0.18s, background 0.18s;
+  }
+
+  /* reverse-collapse on close — later items leave first, shrinking to centre */
+  .cat-btn.closing {
+    pointer-events: none;
+    animation: catCollapse 0.2s calc((4 - var(--i)) * 26ms) cubic-bezier(0.4, 0, 0.7, 0.4) both;
+  }
+  @keyframes catCollapse {
+    from { opacity: 1; transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(1); }
+    to   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
   }
 
   .cat-icon { font-size: 16px; line-height: 1; pointer-events: none; }
@@ -575,4 +676,24 @@
   }
   .sub-btn:hover .sub-label { color: #f0b66a; }
   .sub-btn.sub-active .sub-label { color: #f0b66a; }
+
+  /* sub-items collapse back toward the category on close */
+  .sub-btn.closing {
+    pointer-events: none;
+    animation: subCollapse 0.16s cubic-bezier(0.4, 0, 0.7, 0.4) both;
+  }
+  @keyframes subCollapse {
+    from { opacity: 1; transform: translate(calc(-50% + var(--tx)),       calc(-50% + var(--ty)))       scale(1); }
+    to   { opacity: 0; transform: translate(calc(-50% + var(--tx) * 0.3), calc(-50% + var(--ty) * 0.3)) scale(0.5); }
+  }
+
+  /* respect reduced-motion: appear/disappear instantly, no bloom/collapse */
+  @media (prefers-reduced-motion: reduce) {
+    .cat-btn.revealed,
+    .cat-btn.closing,
+    .sub-btn,
+    .sub-btn.closing,
+    .whisper,
+    .trigger { animation: none !important; transition: none !important; }
+  }
 </style>

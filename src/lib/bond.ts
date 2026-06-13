@@ -30,3 +30,12 @@ export function bondStage(days: number, interactions: number): BondStage {
   }
   return stage;
 }
+
+/**
+ * Numeric bond tier (0 = Stranger … 5 = Lifetime Companion).
+ * Drives Trust Escalation: emotional depth unlocks as the bond deepens —
+ * vulnerable lines are earned, never offered to a stranger.
+ */
+export function bondStageIndex(days: number, interactions: number): number {
+  return BOND_STAGES.indexOf(bondStage(days, interactions));
+}

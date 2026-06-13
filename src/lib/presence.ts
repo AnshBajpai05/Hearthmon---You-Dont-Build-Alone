@@ -1,15 +1,26 @@
 // The Presence System — Rule 7: presence > conversation.
 // The pet should mostly do nothing. Lines are rare and time-aware.
-import { getMeta, setMeta, weeklyMemoryCount } from "./db";
+import { getMeta, setMeta } from "./db";
 import {
   pick,
   greetingFor,
-  welcomeBackLines,
+  returnDaysLines,
+  returnWeeksLines,
+  returnMonthLines,
+  firstSessionLines,
   longSessionLines,
   lateNightLines,
-  ambientLines,
-  dailyRitualLines
+  quietProudLines,
+  deepBondLines,
+  energyLowLines,
+  ambientLines
 } from "./lines";
+import type { CompanionMode } from "./lines";
+
+// Trust Escalation tiers (mirror bond.ts indices).
+const TIER_FAMILIAR = 1;        // small warmth unlocks
+const TIER_TRUSTED = 2;         // quiet-proud / "I noticed" depth unlocks
+const TIER_COMPANION = 3;       // vulnerable deep-bond callbacks unlock
 
 export type PetState = "idle" | "sleeping" | "happy";
 
@@ -18,15 +29,12 @@ export interface PresenceCallbacks {
   setState: (state: PetState) => void;
 }
 
-export interface PresenceOpts {
-  greet?: boolean;
-  onRitual?: () => void;
-}
-
-const LINE_COOLDOWN_MS = 20 * 60 * 1000; // ambient lines at most every 20 min
-const SLEEP_AFTER_MS  = 15 * 60 * 1000; // doze off after 15 min without interaction
-const LONG_SESSION_MIN = 180;
-const NUDGE_SESSION_MIN = 180;           // gentle real-world nudge after 3 hrs
+// Interaction Budget (SOUL RULE): the companion must never feel like it's
+// "always talking." A proactive line fires at most once every 45 minutes.
+const PROACTIVE_COOLDOWN_MS = 45 * 60 * 1000;
+const SLEEP_AFTER_MS = 15 * 60 * 1000; // doze off after 15 min without interaction
+const LONG_SESSION_MIN = 180;          // ~3 h: "someone noticed" the long haul
+const ENERGY_MIN = 300;                // ~5 h: energy dips, the pet softens its pace
 
 let cb: PresenceCallbacks;
 let sessionStart = 0;
@@ -34,9 +42,12 @@ let lastInteraction = 0;
 let lastLineAt = 0;
 let saidLongSession = false;
 let saidLateNight = false;
-let saidNudge = false;
+let saidEnergy = false;
+let lowEnergy = false;   // after a very long session — quieter, gentler presence
 let sleeping = false;
 let focused = false;
+let mode: CompanionMode = "default";
+let bondTier = 0;   // 0 Stranger … 5 Lifetime Companion (Trust Escalation)
 let timer: ReturnType<typeof setInterval> | undefined;
 
 /** Focus Mode: the pet stays present but says nothing at all. */
@@ -44,36 +55,56 @@ export function setFocus(on: boolean): void {
   focused = on;
 }
 
+/**
+ * Companionship mode — user-controlled presence level.
+ *   default    → standard interaction budget
+ *   just_there → silent presence, zero proactive lines (actions still respond)
+ *   fun        → more frequent ambient murmurs
+ */
+export function setMode(m: CompanionMode): void {
+  mode = m;
+}
+
+/** Trust Escalation: current bond tier (0 Stranger … 5 Lifetime). */
+export function setBondTier(n: number): void {
+  bondTier = n;
+}
+
 export async function initPresence(
   callbacks: PresenceCallbacks,
-  opts: PresenceOpts = {}
+  opts: { greet?: boolean; onRitual?: () => void; onReturn?: () => void } = {}
 ): Promise<void> {
   cb = callbacks;
   sessionStart = Date.now();
   lastInteraction = Date.now();
-  saidLongSession = false;
-  saidLateNight = false;
-  saidNudge = false;
 
   const now = new Date();
   const lastSeen = await getMeta("last_seen");
   await setMeta("last_seen", now.toISOString());
 
   if (opts.greet !== false) {
-    // Launch greeting: long absence gets warmth, never guilt.
+    // Launch greeting — return-without-shame: longer absence gets more warmth,
+    // never a word about broken streaks or where you've been.
     const daysAway = lastSeen
       ? (now.getTime() - new Date(lastSeen).getTime()) / 86_400_000
       : 0;
-    const line = daysAway >= 3 ? pick(welcomeBackLines) : greetingFor(now.getHours());
+    // first launch of a new calendar day → a gentle "let's begin" ritual line
+    const today = now.toDateString();
+    const firstOfDay = (await getMeta("last_greet_day")) !== today;
+    await setMeta("last_greet_day", today);
+
+    let line: string;
+    if (daysAway >= 30) line = pick(returnMonthLines);
+    else if (daysAway >= 7) line = pick(returnWeeksLines);
+    else if (daysAway >= 3) line = pick(returnDaysLines);
+    else if (firstOfDay) line = pick(firstSessionLines);
+    else line = greetingFor(now.getHours());
     // small delay so the pet appears first, then speaks
     setTimeout(() => speak(line, 9000), 1800);
-  }
-
-  // Opening ritual — fires on every launch (every relaunch feels intentional).
-  // Stretch animation fires immediately; the warm line comes shortly after the greeting.
-  if (opts.greet !== false) {
-    setTimeout(() => speak(pick(dailyRitualLines), 10000), 3200);
-    if (opts.onRitual) opts.onRitual();
+    // returning after an absence — a tiny dust-off, "I kept things warm"
+    if (daysAway >= 3 && opts.onReturn) setTimeout(() => opts.onReturn!(), 2400);
+    // opening ritual: a gentle stretch shortly after the greeting
+    if (opts.onRitual) setTimeout(() => opts.onRitual!(), 3200);
   }
 
   if (timer) clearInterval(timer);
@@ -90,7 +121,8 @@ export function poke(): void {
 }
 
 function speak(line: string, ms = 8000): void {
-  if (focused) return; // protect focus — presence without interruption
+  if (focused) return;            // protect focus — presence without interruption
+  if (mode === "just_there") return; // silent presence — zero proactive lines
   lastLineAt = Date.now();
   cb.say(line, ms);
 }
@@ -106,13 +138,24 @@ async function tick(): Promise<void> {
     cb.setState("sleeping");
   }
 
-  const cooledDown = Date.now() - lastLineAt > LINE_COOLDOWN_MS;
+  // Interaction Budget: at most one proactive line per 45 min, ever.
+  const cooledDown = Date.now() - lastLineAt > PROACTIVE_COOLDOWN_MS;
   if (sleeping || !cooledDown) return;
 
   // long session — once per session, a tiny "someone noticed"
   if (!saidLongSession && elapsed > LONG_SESSION_MIN * 60_000) {
     saidLongSession = true;
     speak(pick(longSessionLines));
+    return;
+  }
+
+  // energy sensitivity — after a very long haul the pet softens its pace and
+  // says so once, then stays quieter. Warmth, never a nag to stop.
+  // (Familiar+ — a stranger commenting on your stamina would feel presumptuous.)
+  if (!saidEnergy && bondTier >= TIER_FAMILIAR && elapsed > ENERGY_MIN * 60_000) {
+    saidEnergy = true;
+    lowEnergy = true;
+    speak(pick(energyLowLines), 9000);
     return;
   }
 
@@ -124,40 +167,30 @@ async function tick(): Promise<void> {
     return;
   }
 
-  // gentle real-world nudge — once per session after 3 hrs, never guilt
-  if (!saidNudge && elapsed > NUDGE_SESSION_MIN * 60_000) {
-    saidNudge = true;
-    const nudges = [
-      "Maybe message someone today?",
-      "Long session. Anyone you've been meaning to reach out to?",
-      "Hey — is there someone you should check in with?"
-    ];
-    speak(pick(nudges), 9000);
-    return;
-  }
-
-  // Sunday retrospective — if today is Sunday and 5+ memories logged this week
-  const isSunday = now.getDay() === 0;
-  if (isSunday && cooledDown) {
-    const lastRetro = await getMeta("last_sunday_retro");
-    const todayStr = now.toDateString();
-    if (lastRetro !== todayStr) {
-      const weekCount = await weeklyMemoryCount(7);
-      if (weekCount >= 5) {
-        await setMeta("last_sunday_retro", todayStr);
-        const retroLines = [
-          "We logged a lot this week. That matters.",
-          "This was a full week. You showed up.",
-          "We survived that week. Quietly proud."
-        ];
-        speak(pick(retroLines), 12000);
-        return;
-      }
+  // quiet-proud — sacred rarity (~once every 2 weeks) AND earned: Trusted Friend+.
+  if (mode !== "just_there" && bondTier >= TIER_TRUSTED && Math.random() < 0.0015) {
+    const last = Number((await getMeta("last_quiet_proud")) ?? 0);
+    if (Date.now() - last > 14 * 86_400_000) {
+      await setMeta("last_quiet_proud", String(Date.now()));
+      speak(pick(quietProudLines), 9000);
+      return;
     }
   }
 
-  // rare ambient murmur
-  if (Math.random() < 0.004) {
+  // deep-bond callback — vulnerable, remembering. Companion+ only, and rarer
+  // still than quiet-proud: at most once a month. Vulnerability must be earned.
+  if (mode !== "just_there" && bondTier >= TIER_COMPANION && Math.random() < 0.0008) {
+    const last = Number((await getMeta("last_deep_bond")) ?? 0);
+    if (Date.now() - last > 30 * 86_400_000) {
+      await setMeta("last_deep_bond", String(Date.now()));
+      speak(pick(deepBondLines), 10000);
+      return;
+    }
+  }
+
+  // rare ambient murmur — Fun chatters a little more; low energy goes quieter still.
+  const ambientChance = mode === "fun" ? 0.011 : lowEnergy ? 0.002 : 0.004;
+  if (Math.random() < ambientChance) {
     speak(pick(ambientLines), 5000);
   }
 }

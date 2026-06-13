@@ -52,18 +52,26 @@ Everything below is **live** in the current build:
       torchcodec requirement). Until then, the in-app TTS ("Charizard…" → real "I choose you!"
       clip) is the working fallback, and supplied real clips already play.
 - [ ] Battle effectiveness uses **primary type only** (dual-types not yet considered — pokedex stores single type only, needs data rewrite).
-- [ ] A few Svelte `state_referenced_locally` warnings — **fixed 2026-06-13** ✅ (0 errors, 1 harmless tsconfig warn).
-- [x] **Radial Menu Polish** — trigger repositioned below pet feet, close animation improved, backdrop fixed to `position:absolute`.
+- [ ] A few Svelte `state_referenced_locally` warnings — **fixed 2026-06-13** ✅ (now truly **0 errors, 0 warnings** after `@types/node` install + dead `@ts-expect-error` removal).
+- [x] ⚠️ **REGRESSION found & fixed 2026-06-13** — `lines.ts` + `presence.ts` had reverted to stale copies (missing 9 line banks `+page.svelte` imports + `onRitual` hook) → build was broken with 10 errors. Banks + hook restored, then the previously-claimed-but-missing "Presence AI upgrade" was actually built: 3-tier return-without-shame, end-of-night ritual, quiet-proud rarity gate, and companionship modes (see below). Build now **0/0**.
+- [x] **Radial Menu Polish** — trigger repositioned below pet feet, backdrop fixed to `position:absolute`.
+- [x] **Radial Menu v2** ✅ 2026-06-13 — (1) real **reverse-collapse close animation**: rings shrink back to centre, later items leave first (was a hard snap-away); (2) **auto-distributed sub-angles** (`SUB_STEP_DEG=22°`, centred on the category) replacing brittle hand-tuned `subAngle` magic numbers — fixes the System ring crowding/overlap from the 5th (Mode) item, and stays un-crowded at any item count; (3) `prefers-reduced-motion` support (instant, no bloom/collapse); (4) removed an unreachable `subActive` branch.
+  - ⏳ Still open: **sub-menu edge-detection** (flip the fan when the widget is dragged near a screen edge) — needs live window-bounds measurement; and Phase-3 **context whispers** (faint ❤️ pulse when mood is low).
 
 ---
 
 ## 🔴 P1 — Soul-Critical (from vision doc, not yet built)
 
-### Coding Awareness
-- [ ] **Git integration** — watch `.git/COMMIT_EDITMSG` for new commits → quiet pet reaction
-- [ ] **Bug-fix celebration** — detect fix pattern in commit message heuristic → small dance
+### Coding Awareness ✅ shipped 2026-06-13 (git layer)
+- [x] **Git integration** — three watch sources, pick one in the **Code** panel (radial System ring; `CodePanel`, saved to SQLite meta, resumes on launch; reacts only outside Focus / Just-There; one spoken reaction / 15s throttle):
+  1. **Local folder** (instant) — Rust backend polls `.git/logs/HEAD` reflog every 3s, emits `git-commit` per new commit (backend fs access, no capability/IDE extension).
+  2. **Single GitHub repo URL** — frontend polls `api.github.com/repos/{o}/{r}/commits` every 3 min, diffs the head SHA.
+  3. **Whole GitHub account** (`github.com/<user>`) — polls `/users/{user}/events/public`, reacts to the newest `PushEvent` across *any* repo. (CSP is `null`, so the webview fetches GitHub directly — no http plugin.) Reaction reuses the same bob/celebrate path. Never replays history (seeds baseline SHA/event-id on first sight).
+  - 🔑 **Private repos** — optional fine-grained PAT entered in the Code panel (collapsible, `type=password`, never pre-filled), stored in SQLite meta `git_token`, sent as `Authorization: Bearer` on all GitHub fetches. With a token, account mode switches to the authenticated `/users/{user}/events` feed (includes private activity). Token is local-only, never logged. Recommend read-only Contents+Metadata scope.
+- [x] **Bug-fix celebration** — commit messages matched against `/\b(fix|bug|hotfix|patch|resolve|close|squash)\b/i` → a ✦ star delight + warmer `bugFixLines` ("Got it. That bug never stood a chance.") + a celebratory voice clip.
 - [ ] **Long-session tracker** — presence has it but no IDE signal; VS Code extension or file watcher
 - [ ] **Build / deploy detector** — watch for terminal output patterns or a sentinel file
+- 💡 **Commit counter** — `commits` meta now bumps per commit; ready to feed a future "100 commits together" badge / milestone callbacks.
 
 ### Companion Personality Evolution
 - [ ] **Personality dimension tracking** — store `coding_style`, `session_times`, `mood_trend` in `meta`
@@ -219,8 +227,9 @@ Everything below is **live** in the current build:
       good/strange/peaceful/hard). Builds an emotional timeline, lighter than the mood check-in.
 - [ ] **Emotional Search** — "when did I last feel like this?" → surfaces similar past memories
       ("You felt overwhelmed before that research breakthrough."). Extends findFamiliar.
-- [ ] **"Quiet Proud" moments** — no confetti, just a rare (every 2–3 wks) "Quietly proud of you
-      today." Rarity is the whole point — lands hard because it's scarce.
+- [x] **"Quiet Proud" moments** ✅ 2026-06-13 — `presence.ts` `tick()` fires a `quietProudLines`
+      line very rarely, hard-gated to once per ~14 days via `last_quiet_proud` meta. Rarity is
+      the whole point — lands hard because it's scarce.
 - [x] **The Vault (emergency comfort)** — 🫂 rail button "when it feels like too much": gathers
       a survival + a compliment + a win + a good day + a past-self note + the seed into one calm
       pack, revealed gently. The pet offers it after a `low` mood. ✅ shipped
@@ -235,20 +244,20 @@ Everything below is **live** in the current build:
 > Deep, emotional retention mechanics stolen from the best (Finch, Animal Crossing, Nintendo, VSCode).
 
 ### 1. "Return Without Shame" System ⭐⭐⭐⭐⭐ (P1)
-- [ ] **No-guilt return ritual** — If the user disappears for days/weeks/months, never mention a broken streak. The pet just says, "Hey. It's good to see you again. No worries, I kept things warm here." Add a tiny dust-off animation. Compassion over engagement addiction.
+- [x] **No-guilt return ritual** ✅ 2026-06-13 — 3 absence tiers in `presence.ts` (3–7d / 1–4wk / 1mo+), each warmer, never a word about streaks (`returnDaysLines`/`returnWeeksLines`/`returnMonthLines`). A `dust-off` shimmy animation (`triggerDustOff`) plays on return via the `onReturn` hook.
 
 ### 2. Quiet Presence Mode ⭐⭐⭐⭐⭐ (P1)
 - [ ] **Ambient idle behaviors** — When coding, the pet shouldn't just wait for clicks. It should occasionally look at the cursor, watch typing, do a small sleepy stretch, draw a tiny star, or walk off-screen and return with a leaf. Attention mirroring.
 
 ### 3. Ritual Design Layer ⭐⭐⭐⭐⭐ (P1)
-- [ ] **First coding session of the day** — Pet stretches: "Ready? Let's see what today becomes." Tiny coffee particle.
-- [ ] **End-of-night ritual** — Instead of just quitting: "Good work today. I'll be here tomorrow." Pet sleeps, moon glows.
+- [~] **First coding session of the day** — ✅ 2026-06-13 first launch of a new calendar day greets with `firstSessionLines` ("Ready? Let's see what today becomes.") + the existing opening stretch (`last_greet_day` meta gate). ⏳ tiny coffee particle still TODO.
+- [x] **End-of-night ritual** ✅ 2026-06-13 — closing between 22:00–05:00, `quit()` says an `endOfNightLines` line ("Good work today. I'll be here tomorrow."), the pet goes to `sleeping`, then tucks to tray after a beat. (Skips Focus / Just-There.)
 
 ### 4. Delight Randomness Engine ⭐⭐⭐⭐⭐ (P1)
 - [ ] **Meaningful rarity** — 1/500 chance the pet brings a tiny flower ("Thought this felt like today."). Rare midnight meteor showers with a special line. Unexpected warmth after a difficult week ("Quietly proud of you lately.").
 
 ### 5. Friction Removal Layer ⭐⭐⭐⭐⭐ (P1)
-- [ ] **1-second interactions** — `Alt+H` summons the widget. `J` opens the Jar, `N` opens Notes, `M` opens Mood. Power-user comfort means huge retention.
+- [~] **1-second interactions** — ✅ 2026-06-13 bare-key shortcuts wired (`M` Mood · `J` Jar · `N` Notes) via a `+page.svelte` `svelte:window` handler that ignores typing/onboarding/battle. ⏳ `Alt+H` global summon still pending — needs the Tauri `global-shortcut` plugin (in-page keys can't fire while the window is hidden/unfocused).
 - [ ] **"Return Home" Whistle** — A global hotkey (e.g., `Alt+W` or similar) that instantly recalls the pet. If it has wandered off-screen in Toddler Mode or gotten lost, it whistles and smoothly slides back to the primary monitor center.
 
 ### 6. "Life Events" System ⭐⭐⭐⭐ (P2)
@@ -266,16 +275,16 @@ Everything below is **live** in the current build:
 > Hard structural rules that stop Hearthmon from becoming noisy, clingy, manipulative, or bloated.
 
 ### 1. "Energy Sensitivity" System ⭐⭐⭐⭐⭐ (P1)
-- [ ] **Mood ≠ Energy** — If the user coded for 6 hours, the pet should naturally become quieter, slower, and warmer. E.g., "We can keep it light tonight." Prevents emotional mismatch (happy but exhausted shouldn't trigger zoomies).
+- [x] **Mood ≠ Energy** ✅ 2026-06-13 — after a ~5 h session (`ENERGY_MIN`) `presence.ts` flips `lowEnergy`: says one warm `energyLowLines` line ("We can keep it light from here."), then drops ambient murmur frequency (0.004 → 0.002). Warmth, never a nag to stop. *(Slower wander could later couple to this like comfortMode does.)*
 
 ### 2. "Presence > Interruption" Rule Engine ⭐⭐⭐⭐⭐ (SOUL RULE)
-- [ ] **Interaction Budget** — Hard system rule: Max 1 proactive interaction per 45 min, max 1 emotional interaction per day, max 1 deep reflection per week. The companion must never feel like it's "always talking."
+- [x] **Interaction Budget** — ✅ 2026-06-13 `presence.ts` `PROACTIVE_COOLDOWN_MS = 45 min` hard-gates every proactive line (ambient / long-session / energy / late-night) — at most one per 45 min. Deep reflection (quiet-proud) is its own ~2-week gate. *(Per-day "emotional interaction" cap still loose — mood/burnout lines flow through `+page`, not the presence budget yet.)*
 
 ### 3. "Trust Escalation" System ⭐⭐⭐⭐ (P1)
-- [ ] **Unlock emotional depth** — Interactions should unlock emotionally based on bond depth. Stranger = light encouragement. Familiar = small memories. Trusted Friend = deeper callbacks. Companion = vulnerable moments. High bond: "You've survived hard seasons before. I remember."
+- [x] **Unlock emotional depth** ✅ 2026-06-13 — `bond.ts` `bondStageIndex()` feeds `presence.setBondTier()` on launch. Presence now gates depth by tier: Stranger = greetings/ambient only; **Familiar+** unlocks energy-sensitivity; **Trusted Friend+** unlocks quiet-proud; **Companion+** unlocks the new `deepBondLines` vulnerable callbacks ("You've survived hard seasons before. I remember them with you.") — rarer still (≤ once/month). Vulnerability is earned, never offered to a stranger.
 
 ### 4. "Soft Failure Recovery" ⭐⭐⭐⭐ (P2)
-- [ ] **Graceful degradation** — When a system fails (Git watcher, weather bug, missing voice clip), the pet should handle it with warm UX instead of an error message: "Hmm… something feels a little off. Give me a sec?"
+- [x] **Graceful degradation** ✅ 2026-06-13 — global `+page.svelte` safety net: `error` + `unhandledrejection` listeners route genuine throws / rejected promises (db hiccup, weather glitch) through `softFail()` → one warm `softFailLines` line ("Hmm… something feels a little off. Give me a sec?"), hard rate-limited to once / 5 min, never blaming the user. Resource errors (missing sprite/clip) are filtered out via `e.error` so the designed fallbacks stay silent.
 
 ### 5. "Emotional Safety Boundaries" ⭐⭐⭐⭐⭐ (P1)
 - [x] **Explicit emotional rules** — `docs/EMOTIONAL_SAFETY.md` created: banned phrases table, 5 non-negotiables, interaction budget, emotional territory map, litmus test. ✅ shipped 2026-06-13
@@ -284,7 +293,7 @@ Everything below is **live** in the current build:
 - [ ] **Protected rarity** — Certain interactions should be restricted to once a year, once a chapter, or once a lifetime. Example: After a brutal semester: "You changed this season." Never repeated. Overexposure kills the magic.
 
 ### 7. "Companionship Modes" (User-Controlled Presence) ⭐⭐⭐⭐ (P2)
-- [ ] **Interaction limiters** — Let the user explicitly set a mode that restricts the pet's interaction frequency while keeping actions available. E.g., "Just There Mode" (silent presence, zero proactive lines), "Fun Mode" (more frequent banter and zoomies), or "Default" (uses the standard interaction budget).
+- [x] **Interaction limiters** ✅ 2026-06-13 — `companion_mode` (default / just_there / fun), persisted to meta, cycled from the **Mode** sub-item in the radial **System** category (icon 🔔/🤫/🎉). `presence.ts` `setMode()`: Just-There silences all proactive lines (`speak()` early-returns); Fun raises ambient murmur frequency and `wanderTick` runs a livelier movement table; Default keeps the standard budget.
 - [ ] **Toddler Mode (OS-Level Roaming)** — A special fun mode where the pet freely roams your entire monitor. It moves the actual transparent OS window continuously, making random short shuffles and occasional long walks across the screen.
 
 ---

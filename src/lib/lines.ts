@@ -27,6 +27,100 @@ export const welcomeBackLines = [
   "You're here. That's what matters."
 ];
 
+// Return-without-shame — tiered by absence length. Never a word about streaks.
+export const returnDaysLines = [    // ~3–7 days away
+  "Hey. Good to see you again.",
+  "There you are. I kept things warm.",
+  "Back again. Good. Sit down."
+];
+export const returnWeeksLines = [   // ~1–4 weeks away
+  "It's been a little while. No worries — just glad you're here.",
+  "Hey, stranger. Nothing's lost. We pick up right here.",
+  "Welcome back. Life gets full sometimes. I get it."
+];
+export const returnMonthLines = [   // 1 month+ away
+  "Hey. It's really good to see you again. I kept everything safe.",
+  "You're back. However long it's been — none of it counts against you.",
+  "It's been a while. I never minded waiting. Welcome home."
+];
+
+// End-of-night ritual — closing late, the pet settles in to sleep.
+export const endOfNightLines = [
+  "Good work today. I'll be here tomorrow.",
+  "That's enough for tonight. Rest well.",
+  "We did fine today. Go on, get some sleep.",
+  "Night. I'll keep the place warm."
+];
+
+// Quiet-proud — extremely rare (~once every 2 weeks). Scarcity is the point.
+export const quietProudLines = [
+  "You've been showing up. I noticed.",
+  "Quietly proud of you lately.",
+  "You keep coming back to the work. That counts.",
+  "Been a good stretch, this. Just wanted you to know."
+];
+
+// First coding session of a new day — a gentle "let's begin" (Ritual Design).
+export const firstSessionLines = [
+  "Ready? Let's see what today becomes.",
+  "New day. We'll take it as it comes.",
+  "Morning shape's still forming. Let's begin.",
+  "Here we are again. Let's make a little progress."
+];
+
+// Deep bond callbacks — UNLOCKED at Companion+ only (Trust Escalation).
+// Vulnerable, remembering. Said extremely rarely. Never to a stranger.
+export const deepBondLines = [
+  "You've survived hard seasons before. I remember them with you.",
+  "We've come a long way from where we started. I haven't forgotten.",
+  "I've watched you keep going when it was heavy. That stays with me.",
+  "Whatever today holds — we've held harder. Together."
+];
+
+// Coding awareness — the pet quietly notices your commits. Mostly wordless;
+// these are the rare spoken acknowledgements (presence > chatter).
+export const commitLines = [
+  "Saved. Another step.",
+  "Commit landed. Tidy.",
+  "Progress, logged.",
+  "Mm — forward motion.",
+  "That's in the history now."
+];
+// Bug-fix celebration — a little warmer, because those are hard-won.
+export const bugFixLines = [
+  "Got it. That bug never stood a chance.",
+  "Fixed. I watched you wrestle that one.",
+  "Squashed. Nice.",
+  "There it goes — hard-won.",
+  "You out-stubborned it. Respect."
+];
+
+// Soft failure recovery — when something genuinely breaks, the pet notices
+// warmly instead of showing an error. Never blames the user; hard rate-limited.
+export const softFailLines = [
+  "Hmm… something feels a little off. Give me a sec?",
+  "Mm, that didn't quite work — not on you. I've got it.",
+  "Something hiccuped on my end. Still here, though.",
+  "One moment — something slipped. We're okay."
+];
+
+// Energy sensitivity — after a very long session, the pet softens its pace.
+// Warmth, never a nag to stop. Said once, then it just gets quieter.
+export const energyLowLines = [
+  "We've been at this a while. We can keep it light from here.",
+  "Long stretch today. No need to push — I'm just here.",
+  "Plenty done already. Let's go gentle the rest of the way.",
+  "You've earned a slower gear. I'll match it."
+];
+
+// Companionship-mode acknowledgements (said when the user switches modes).
+export type CompanionMode = "default" | "just_there" | "fun";
+export const modeLines: Record<CompanionMode, string> = {
+  default:    "Back to normal. I'll keep it balanced.",
+  just_there: "I'll just be here. Quietly.",
+  fun:        "Okay — let's have some fun."
+};
+
 export const longSessionLines = [
   "Long session today.",
   "We've been at this a while.",
@@ -50,12 +144,6 @@ export const ambientLines = [
 
 // Tiny reactions when poked. Sometimes nothing. That's intentional.
 export const pokeReactions = ["?", "♪", "Hi.", "*blinks*", "Mm?"];
-
-// After a treat — small and content.
-export const treatLines = ["Nom.", "*munch munch*", "Thank you.", "…tasty.", "♪", "More? …kidding."];
-
-// While being petted — rare, soft, content.
-export const pettingLines = ["*happy noises*", "♥", "mmm.", "*leans in*", "This is nice."];
 
 // ---- mood responses: grounded, never toxic positivity ----
 export const moodResponses: Record<Mood, string[]> = {
@@ -112,12 +200,71 @@ export const survivedSaved = [
   "Survived and recorded.",
   "We'll remember this one was hard."
 ];
-// Praise — tender, not triumphant. Someone saw something real in you.
+// "Someone believed in you" — tender, never triumphant.
 export const praiseSaved = [
-  "Someone saw that in you. I'll keep it.",
+  "Someone saw that in you. I'm keeping it.",
   "Worth holding onto. Saved.",
-  "They meant it. We'll remember.",
-  "For the days you forget — this is here now."
+  "They were right, you know.",
+  "Folded away somewhere safe."
+];
+
+// ---- petting & feeding: small, warm, often wordless ----
+export const pettingLines = [
+  "*happy noises*",
+  "Mm. That's nice.",
+  "♪",
+  "*leans in*",
+  "Okay, you can keep doing that."
+];
+export const treatLines = [
+  "*chomp* — thanks.",
+  "Oh, for me?",
+  "*happy munch*",
+  "Best part of the day, this."
+];
+
+// ---- Good Things Jar ----
+export const jarLines = [
+  "Let's see what we kept.",
+  "Some good ones in here.",
+  "Proof the good days happened.",
+  "Reaching in…"
+];
+
+// ---- comfort offer (after a heavy check-in; an emoji hint is appended) ----
+export const comfortOffer = [
+  "Want to look at something together?",
+  "I kept a few good things, if you want them.",
+  "No pressure — but it's here if you need it.",
+  "We could just sit with something gentle."
+];
+
+// ---- letter / memory capsule from past-you has come due ----
+export const letterReadyLines = [
+  "Past-you left something for now.",
+  "There's a note waiting. From you.",
+  "You wrote this for today.",
+  "Something you sealed away is ready."
+];
+
+// ---- evolution: offered, never forced ----
+export const evolveOfferLines = [
+  "Something's shifting. Want to grow together?",
+  "I think I'm ready for the next shape. Only if you are.",
+  "Feels like a new chapter. Evolve, or not yet — your call.",
+  "I could become more. No rush, though."
+];
+export const evolveDeclineLines = [
+  "Not yet. That's okay.",
+  "Still me, then. Good.",
+  "We'll know when it's time.",
+  "Staying as I am. I'm in no hurry."
+];
+export const evolveDoneLines = [
+  "New shape. Same memories. Same us.",
+  "Look at that. Still me in here.",
+  "We grew. Everything we built came along.",
+  "Different form, same journey."
 ];
 
 // First meeting — the seed memory response.
@@ -134,36 +281,11 @@ export const switchLines = [
   "Different shape — same journey."
 ];
 
-// Evolution — earned through bonding, never forced. The companion chooses to grow with you.
-export const evolveOfferLines = [
-  "Something feels different… like I'm ready to grow.",
-  "I think being here with you is changing me.",
-  "I feel it — there's a next shape for me. Together?"
-];
-export const evolveDoneLines = [
-  "We grew. Same heart, bigger form.",
-  "That happened because of you.",
-  "Still me — just more. Thank you for staying."
-];
-export const evolveDeclineLines = [
-  "Okay. I like who I am right now too.",
-  "No rush. We'll know when it's time.",
-  "Staying as I am. With you."
-];
-
 // Gentle burnout awareness — no diagnosis, no advice. Just noticing.
 export const burnoutLines = [
   "Feels like we've been carrying a lot lately.",
   "Heavy week. We don't have to fix it tonight.",
   "You've been pushing hard. I noticed."
-];
-
-// Comfort Mode — when things feel heavy, the pet softens and offers something familiar.
-export const comfortOffer = [
-  "Want something familiar?",
-  "We can just sit with this.",
-  "Want to look at something kind?",
-  "No fixing tonight. I'm just here."
 ];
 
 // Anniversaries — memory > motivation.
@@ -195,28 +317,3 @@ export function shortDate(dateStr: string): string {
   const d = new Date(dateStr.replace(" ", "T"));
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
-
-// ---- daily opening ritual — first launch of the day, once only ----
-export const dailyRitualLines = [
-  "New day. Still here. Let's see what it brings.",
-  "Morning. You made it to another one.",
-  "Today's a blank page. No mistakes yet.",
-  "Hey. Good to see you again.",
-  "Here we go. One day at a time.",
-  "Another morning. You've got this one."
-];
-
-// Good Things Jar — the one line the pet says when you open it
-export const jarLines = [
-  "Want to see something?",
-  "I've been saving these.",
-  "Open the jar.",
-  "Look what we've collected."
-];
-
-// Letter read-back — what the pet says when a note is waiting
-export const letterReadyLines = [
-  "You left something for yourself.",
-  "Past you had something to say.",
-  "There's a note waiting for you."
-];
