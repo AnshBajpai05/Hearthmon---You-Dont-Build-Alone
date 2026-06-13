@@ -16,13 +16,31 @@
     onSaveToken: (token: string) => void;
     onClearToken: () => void;
     onTest: (kind: "commit" | "fix" | "pr" | "release" | "repo" | "milestone") => void;
+    onShowcase: () => void;
+    onCard: () => void;
     onClose: () => void;
+    // Training awareness
+    trainAware: boolean;
+    onToggleTrain: (on: boolean) => void;
+    logPath: string; // watched log file/folder ("" = off)
+    trainStatus: string; // live "running · epoch 12 · loss 0.34" / "watching…"
+    onSetLog: (path: string) => void;
+    onStopLog: () => void;
+    onTestTrain: () => void;
+    onTestCrash: () => void;
+    gpuAvailable: boolean; // optional bonus readout when an NVIDIA GPU is present
+    gpu: { available: boolean; util: number; mem_used: number; mem_total: number; temp: number; procs: number } | null;
   }
   let {
     localPath, remoteUrl, hasToken,
     onSetLocal, onStopLocal, onSetRemote, onStopRemote,
-    onSaveToken, onClearToken, onTest, onClose
+    onSaveToken, onClearToken, onTest, onShowcase, onCard, onClose,
+    trainAware, onToggleTrain, logPath, trainStatus, onSetLog, onStopLog,
+    onTestTrain, onTestCrash, gpuAvailable, gpu
   }: Props = $props();
+
+  let logIn = $state(untrack(() => logPath));
+  const logDirty = $derived(logIn.trim() !== "" && logIn.trim() !== logPath);
 
   // seed inputs from current values once (initial value only — intentional)
   let local = $state(untrack(() => localPath));
@@ -116,6 +134,55 @@
       <button class="test" class:fix={t.kind === "fix"} onclick={() => fireTest(t.kind)}>{t.label}</button>
     {/each}
   </div>
+
+  <!-- ─── training awareness (log-watch: epoch / loss / done / crash) ─── -->
+  <h3>Training awareness</h3>
+  <label class="gpurow">
+    <input type="checkbox" checked={trainAware} onchange={(e) => onToggleTrain((e.target as HTMLInputElement).checked)} />
+    <span>React to training runs</span>
+  </label>
+  {#if trainAware}
+    <p class="blurb">
+      Point me at a training <strong>log file</strong> or a <strong>folder</strong> (I follow the
+      newest file). I'll cheer epochs, notice the loss drop, celebrate a clean finish, and sit with
+      you if it crashes. Works wherever you train — laptop, server, or Colab synced to a folder.
+    </p>
+    {#if logPath}
+      <div class="status">📜 <code>{logPath}</code>{#if trainStatus} — {trainStatus}{/if}</div>
+    {/if}
+    <input
+      class="path"
+      type="text"
+      spellcheck="false"
+      placeholder="C:\\path\\to\\train.log   ·   or a logs\\ folder"
+      bind:value={logIn}
+      onkeydown={(e) => e.key === "Enter" && logDirty && onSetLog(logIn)}
+    />
+    <div class="row">
+      <button class="save" disabled={!logDirty} onclick={() => onSetLog(logIn)}>
+        {logPath ? "Update" : "Watch log"}
+      </button>
+      {#if logPath}
+        <button class="stop" onclick={onStopLog}>Stop</button>
+      {/if}
+    </div>
+    <div class="testrow">
+      <span class="testlbl">🧪 Try</span>
+      <button class="test" onclick={onTestTrain}>Run finished</button>
+      <button class="test" onclick={onTestCrash}>Crash</button>
+    </div>
+    {#if gpu && gpuAvailable}
+      <div class="status gpu">
+        🎮 GPU <strong>{gpu.util}%</strong>
+        · {(gpu.mem_used / 1024).toFixed(1)}/{(gpu.mem_total / 1024).toFixed(0)} GB
+        · {gpu.temp}°C · {gpu.procs} proc{gpu.procs === 1 ? "" : "s"}
+      </div>
+    {/if}
+  {/if}
+
+  <!-- ─── shareable showcase card ─── -->
+  <button class="showcase" onclick={onShowcase}>📣 Showcase card — share your journey</button>
+  <button class="showcase" onclick={onCard}>🖼️ README card — live status SVG for your repo</button>
 
   <!-- ─── private-repo access (optional token, applies to GitHub) ─── -->
   <div class="tokrow">
@@ -290,6 +357,21 @@
   .test.fix:hover {
     border-color: #8fd6a0;
   }
+  .showcase {
+    margin-top: 4px;
+    padding: 7px 10px;
+    border-radius: 9px;
+    border: 1px solid rgba(240, 182, 106, 0.4);
+    background: rgba(240, 182, 106, 0.12);
+    color: #f0d9a6;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.16s;
+  }
+  .showcase:hover {
+    background: rgba(240, 182, 106, 0.22);
+  }
   .tokrow {
     display: flex;
     margin-top: 2px;
@@ -317,5 +399,20 @@
     font-size: 10px;
     color: #8d82ab;
     margin: 0;
+  }
+  .gpurow {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11.5px;
+    color: #ddd5ee;
+    cursor: pointer;
+  }
+  .gpurow input {
+    accent-color: #f0b66a;
+    cursor: pointer;
+  }
+  .status.gpu strong {
+    color: #f0cfa0;
   }
 </style>

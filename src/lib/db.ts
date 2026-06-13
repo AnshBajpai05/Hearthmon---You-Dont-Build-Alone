@@ -9,7 +9,8 @@ export type MemoryKind =
   | "seed"
   | "note"
   | "letter"
-  | "praise"; // kind words others said — the "Someone Believed In You" archive
+  | "praise" // kind words others said — the "Someone Believed In You" archive
+  | "chapter"; // a named period (Life RPG) — read_at doubles as the close date
 export type Mood = "good" | "stressed" | "tired" | "low" | "frustrated" | "uncertain";
 
 export interface Memory {
@@ -111,6 +112,19 @@ export async function hardDaysSurvived(limit = 4): Promise<Memory[]> {
   );
 }
 
+/** A meaningful older memory (win / learned / survived) for a long-term callback. */
+export async function oldMilestone(minDaysAgo = 30): Promise<Memory | null> {
+  const d = await getDb();
+  const rows = await d.select<Memory[]>(
+    `SELECT * FROM memories
+     WHERE kind IN ('win','learned','survived') AND text IS NOT NULL AND text != ''
+       AND created_at < datetime('now','localtime','-' || $1 || ' days')
+     ORDER BY RANDOM() LIMIT 1`,
+    [minDaysAgo]
+  );
+  return rows.length ? rows[0] : null;
+}
+
 /** "We've been here before" — an old memory of this same mood, if one exists. */
 export async function findFamiliar(mood: Mood): Promise<Memory | null> {
   const d = await getDb();
@@ -140,6 +154,49 @@ export async function hardMoodCount(days = 7): Promise<number> {
     [days]
   );
   return rows[0]?.n ?? 0;
+}
+
+/** Count of memories per kind — `{ win: 12, learned: 5, ... }`. For the recap. */
+export async function kindCounts(): Promise<Record<string, number>> {
+  const d = await getDb();
+  const rows = await d.select<{ kind: string; n: number }[]>(
+    "SELECT kind, COUNT(*) AS n FROM memories GROUP BY kind"
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.kind] = r.n;
+  return out;
+}
+
+/** Count of mood check-ins per mood — `{ good: 9, low: 3, ... }`. */
+export async function moodCounts(): Promise<Record<string, number>> {
+  const d = await getDb();
+  const rows = await d.select<{ mood: string; n: number }[]>(
+    "SELECT mood, COUNT(*) AS n FROM memories WHERE kind = 'mood' AND mood IS NOT NULL GROUP BY mood"
+  );
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.mood] = r.n;
+  return out;
+}
+
+// ---- Chapters (Life RPG): a named period; read_at = when it was closed ----
+export async function startChapter(name: string): Promise<void> {
+  await addMemory("chapter", { text: name });
+}
+export async function currentChapter(): Promise<Memory | null> {
+  const d = await getDb();
+  const rows = await d.select<Memory[]>(
+    "SELECT * FROM memories WHERE kind = 'chapter' AND read_at IS NULL ORDER BY created_at DESC LIMIT 1",
+    []
+  );
+  return rows.length ? rows[0] : null;
+}
+export async function closeChapter(id: number): Promise<void> {
+  const d = await getDb();
+  await d.execute("UPDATE memories SET read_at = datetime('now','localtime') WHERE id = $1", [id]);
+}
+export async function allChapters(): Promise<Memory[]> {
+  const d = await getDb();
+  return d.select<Memory[]>("SELECT * FROM memories WHERE kind = 'chapter' ORDER BY created_at DESC", []);
 }
 
 /** Increment a numeric meta counter (e.g. lifetime interactions). */

@@ -7,13 +7,14 @@
   import type { WeatherKind } from "./WeatherFx.svelte";
   import type { CompanionMode } from "$lib/lines";
 
-  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note" | "vault" | "code";
+  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note" | "vault" | "code" | "wrapped" | "future" | "today" | "movie";
 
   interface Props {
     // reactive state (drives dynamic labels/icons)
     petSize:      number;   // pet sprite px — the ring sits just outside it
     muted:        boolean;
     focusMode:    boolean;
+    roaming:      boolean;
     companionMode: CompanionMode;
     nightForced:  boolean;
     bgStyle:      "orb" | "ground" | "off";
@@ -28,22 +29,25 @@
     onToggleMute:       () => void;
     onToggleNight:      () => void;
     onToggleFocus:      () => void;
+    onToggleRoam:       () => void;
     onCycleMode:        () => void;
     onCycleBg:          () => void;
+    onCycleRoom:        () => void;
     onCycleWeather:     () => void;
     onNudgeScale:       (d: number) => void;
     onToggleSoundPanel: () => void;
     onQuit:             () => void;
+    onPushCard:         () => void;
     // pet reaction hooks
     onMenuOpen:       () => void;     // called when menu blooms
     onDirHint:        (d: 1|-1|0) => void; // pet turns toward hovered cat
   }
 
   let {
-    petSize, muted, focusMode, companionMode, nightForced, bgStyle, weatherKind, soundPanelOpen,
+    petSize, muted, focusMode, roaming, companionMode, nightForced, bgStyle, weatherKind, soundPanelOpen,
     onTogglePanel, onFeed, onPet, onOpenBattle, onSwitchRandom,
-    onToggleMute, onToggleNight, onToggleFocus, onCycleMode, onCycleBg, onCycleWeather,
-    onNudgeScale, onToggleSoundPanel, onQuit,
+    onToggleMute, onToggleNight, onToggleFocus, onToggleRoam, onCycleMode, onCycleBg, onCycleRoom, onCycleWeather,
+    onNudgeScale, onToggleSoundPanel, onQuit, onPushCard,
     onMenuOpen, onDirHint,
   }: Props = $props();
 
@@ -90,12 +94,15 @@
   const CATS: CatDef[] = [
     {
       id: "memory", icon: "🧠", name: "Memory",
-      tagline: "Mood · Jar · Journey · Note",
+      tagline: "Mood · Today · Jar · Journey · Recap · Future · Note",
       angle: 270, labelSide: "bottom", dirHint: 0,
       items: [
         { id: "mood",    icon: "🙂", label: "Mood" },
+        { id: "today",   icon: "☁️", label: "Today" },
         { id: "jar",     icon: "🫙", label: "Good Jar" },
         { id: "journey", icon: "📖", label: "Journey" },
+        { id: "recap",   icon: "🎞️", label: "Recap" },
+        { id: "future",  icon: "🔮", label: "Future" },
         { id: "note",    icon: "✉️",  label: "Leave Note" },
       ],
     },
@@ -122,12 +129,13 @@
     },
     {
       id: "system", icon: "⚙️", name: "System",
-      tagline: "Sound · Mode · Code · Size · Quit",
+      tagline: "Sound · Mode · Code · Roam · Size · Quit",
       angle: 150, labelSide: "left", dirHint: -1,
       items: [
         { id: "sound",   icon: "🔊", label: "Sound" },
         { id: "mode",    icon: "🔔", label: "Mode" },
         { id: "code",    icon: "🧑‍💻", label: "Code" },
+        { id: "roam",    icon: "🚶", label: "Roam" },
         { id: "bigger",  icon: "＋", label: "Bigger" },
         { id: "smaller", icon: "－", label: "Smaller" },
         { id: "quit",    icon: "✕",  label: "Quit" },
@@ -135,12 +143,13 @@
     },
     {
       id: "atmos", icon: "🌙", name: "Atmosphere",
-      tagline: "Weather · Night · Backdrop · Focus",
+      tagline: "Weather · Night · Backdrop · Habitat · Focus",
       angle: 210, labelSide: "left", dirHint: -1,
       items: [
         { id: "weather",  icon: "🌦️", label: "Weather" },
         { id: "night",    icon: "🌙", label: "Night" },
         { id: "backdrop", icon: "🌿", label: "Backdrop" },
+        { id: "room",     icon: "🏞️", label: "Habitat" },
         { id: "focus",    icon: "🎯", label: "Focus" },
       ],
     },
@@ -206,6 +215,7 @@
     if (catId === "system" && itemId === "sound")    return muted ? "🔇" : "🔊";
     if (catId === "system" && itemId === "mode")
       return companionMode === "fun" ? "🎉" : companionMode === "just_there" ? "🤫" : "🔔";
+    if (catId === "system" && itemId === "roam") return roaming ? "🧭" : "🚶";
     if (catId === "atmos"  && itemId === "night")    return nightForced ? "🌟" : "🌙";
     if (catId === "atmos"  && itemId === "backdrop") return bgStyle === "off" ? "⬜" : "🌿";
     if (catId === "atmos"  && itemId === "focus")    return focusMode ? "✦" : "🎯";
@@ -217,6 +227,7 @@
   function subActive(catId: CatId, itemId: string): boolean {
     if (catId === "system" && itemId === "sound")    return soundPanelOpen;
     if (catId === "system" && itemId === "mode")     return companionMode !== "default";
+    if (catId === "system" && itemId === "roam")     return roaming;
     if (catId === "atmos"  && itemId === "night")    return nightForced;
     if (catId === "atmos"  && itemId === "backdrop") return bgStyle !== "off";
     if (catId === "atmos"  && itemId === "focus")    return focusMode;
@@ -227,7 +238,7 @@
   // ─── action dispatch ─────────────────────────────────────
   function doSub(catId: CatId, itemId: string) {
     const closeAfter = new Set([
-      "memory:mood", "memory:jar", "memory:journey", "memory:note",
+      "memory:mood", "memory:today", "memory:jar", "memory:journey", "memory:recap", "memory:future", "memory:note",
       "care:feed", "care:pet", "care:evolve", "care:vault",
       "play:battle", "play:switch", "play:random",
       "system:code", "system:quit",
@@ -238,8 +249,11 @@
     switch (key) {
       // Memory
       case "memory:mood":    onTogglePanel("mood");    break;
+      case "memory:today":   onTogglePanel("today");   break;
       case "memory:jar":     onTogglePanel("jar");     break;
       case "memory:journey": onTogglePanel("journey"); break;
+      case "memory:recap":   onTogglePanel("wrapped");  break;
+      case "memory:future":  onTogglePanel("future");  break;
       case "memory:note":    onTogglePanel("note");    break;
       // Care
       case "care:feed":      onFeed();                 break;
@@ -254,6 +268,7 @@
       case "system:sound":   onToggleSoundPanel();     break;
       case "system:mode":    onCycleMode();            break;
       case "system:code":    onTogglePanel("code");    break;
+      case "system:roam":    onToggleRoam();           break;
       case "system:bigger":  onNudgeScale(0.15);       break;
       case "system:smaller": onNudgeScale(-0.15);      break;
       case "system:quit":    onQuit();                 break;
@@ -261,6 +276,7 @@
       case "atmos:weather":  onCycleWeather();         break;
       case "atmos:night":    onToggleNight();          break;
       case "atmos:backdrop": onCycleBg();              break;
+      case "atmos:room":     onCycleRoom();            break;
       case "atmos:focus":    onToggleFocus();          break;
     }
 
@@ -286,8 +302,9 @@
 <!-- ─── Quick tray — common one-tap actions, left of the speaker ─── -->
 <!-- hover-revealed; the full set still lives in the radial menu -->
 <div class="quickbar" aria-label="Quick actions">
+  <button class="quick-pill" title="Push README card" aria-label="Push card" onclick={onPushCard}>🚀</button>
   <button class="quick-pill" title="Feed" aria-label="Feed" onclick={onFeed}>🍙</button>
-  <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>＋</button>
+  <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>+</button>
   <button class="quick-pill" title="Smaller" aria-label="Smaller" onclick={() => onNudgeScale(-0.15)}>－</button>
   <button class="quick-pill" title="Random companion" aria-label="Random companion" onclick={onSwitchRandom}>🎲</button>
 </div>

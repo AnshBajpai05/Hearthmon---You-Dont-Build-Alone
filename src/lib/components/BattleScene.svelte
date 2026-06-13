@@ -34,7 +34,7 @@
   let { currentDexId, onClose }: Props = $props();
 
   type Side = "L" | "R";
-  type Anim = "idle" | "attack" | "shoot" | "channel" | "hit" | "faint" | "win";
+  type Anim = "idle" | "attack" | "shoot" | "channel" | "hit" | "faint" | "win" | "dodge";
 
   let phase = $state<"setup" | "battle" | "over">("setup");
   let qL = $state("");
@@ -71,6 +71,17 @@
   let flashColor = $state<string | null>(null);
   let dashSide = $state<Side | null>(null);
   let confetti = $state<Confetto[]>([]);
+
+  // ---- cinematic combat: charge buff + big callouts ----
+  let chargedL = false;
+  let chargedR = false;
+  let callout = $state<{ text: string; kind: "dodge" | "charge" | "comeback" | "crit"; key: number } | null>(null);
+  let calloutTimer: ReturnType<typeof setTimeout> | undefined;
+  function showCallout(text: string, kind: "dodge" | "charge" | "comeback" | "crit") {
+    callout = { text, kind, key: Math.random() };
+    clearTimeout(calloutTimer);
+    calloutTimer = setTimeout(() => (callout = null), 1000);
+  }
 
   let alive = true;
   onDestroy(() => (alive = false));
@@ -127,6 +138,8 @@
     hpL = ghostL = maxL;
     hpR = ghostR = maxR;
     animL = animR = "idle";
+    chargedL = chargedR = false;
+    callout = null;
     confetti = [];
     clearFx();
     phase = "battle";
@@ -188,12 +201,54 @@
 
     if (kind === "status") {
       setAnim(side, "channel");
+      if (side === "L") chargedL = true;
+      else chargedR = true;
+      showCallout("POWERING UP!", "charge");
       await wait(900);
       setAnim(side, "idle");
       if (!alive) return;
-      msg = `${disp(atk)} looks pumped…`;
+      msg = `${disp(atk)} is charging up…`;
       await wait(620);
       return;
+    }
+
+    // consume a pending charge buff (set by a previous status move)
+    const charged = side === "L" ? chargedL : chargedR;
+    if (charged) {
+      if (side === "L") chargedL = false;
+      else chargedR = false;
+    }
+
+    // dodge — a charged hit always connects (payoff); a low-HP defender slips more often
+    const defFrac = defSide === "L" ? hpL / maxL : hpR / maxR;
+    const dodged = !charged && Math.random() < Math.min(0.3, 0.1 + (defFrac < 0.35 ? 0.16 : 0));
+    if (dodged) {
+      if (kind === "slash") {
+        dashSide = side;
+        setAnim(side, "attack");
+      } else {
+        setAnim(side, "shoot");
+      }
+      await wait(300);
+      if (!alive) return;
+      dashSide = null;
+      setAnim(defSide, "dodge");
+      showCallout("DODGED!", "dodge");
+      playVoiceClip(["woah", "no-way", "phew", "awww"], 0.8, 0.7);
+      msg = `${disp(def)} slipped away!`;
+      await wait(640);
+      setAnim(side, "idle");
+      setAnim(defSide, "idle");
+      return;
+    }
+
+    // a charged hit: amplified, with a wind-up flare and forced heavy FX
+    if (charged) {
+      res.damage = Math.round(res.damage * 1.7);
+      setAnim(side, "channel");
+      showCallout("FULLY CHARGED!", "charge");
+      await wait(520);
+      if (!alive) return;
     }
 
     if (kind === "slash") {
@@ -244,15 +299,17 @@
       crit: res.crit && res.eff > 0,
       key: Math.random()
     };
-    thump(res.eff >= 2 || res.crit ? 1 : 0.55);
+    const heavy = res.eff >= 2 || res.crit || charged;
+    thump(heavy ? 1 : 0.55);
     zoom = true;
     setTimeout(() => (zoom = false), 270);
-    if (res.eff >= 2 || res.crit) {
+    if (heavy) {
       flashColor = mv.color;
       setTimeout(() => (flashColor = null), 230);
       shake = true;
       setTimeout(() => (shake = false), 420);
     }
+    if (res.crit && res.eff > 0) showCallout("CRITICAL!", "crit");
     if (defSide === "L") hpL = Math.max(0, hpL - res.damage);
     else hpR = Math.max(0, hpR - res.damage);
     setTimeout(() => {
@@ -274,6 +331,17 @@
     if (t) {
       msg = t;
       await wait(560);
+    }
+    // comeback moment — attacker on the ropes lands a big one
+    const atkFrac = side === "L" ? hpL / maxL : hpR / maxR;
+    const defAlive = (defSide === "L" ? hpL : hpR) > 0;
+    if ((res.crit || res.eff >= 2) && atkFrac < 0.3 && defAlive) {
+      showCallout("COMEBACK!", "comeback");
+      playVoiceClip(["lets-go", "that-was-awesome", "awesome"], 0.85, 0.7);
+      shake = true;
+      setTimeout(() => (shake = false), 480);
+      msg = "What a comeback!";
+      await wait(620);
     }
   }
 
@@ -446,6 +514,12 @@
           style="left: {c.x}%; background: {c.color}; animation-delay: {c.delay}ms; --drift: {c.drift}px"
         ></span>
       {/each}
+
+      {#if callout}
+        {#key callout.key}
+          <div class="callout c-{callout.kind}">{callout.text}</div>
+        {/key}
+      {/if}
 
       {#if intro && selL && selR}
         <div class="vs">
@@ -740,6 +814,25 @@
     30% { transform: translate(12px, -5px) scale(1.06, 0.94); filter: brightness(1.8); }
     55% { transform: translate(-8px, 3px); filter: brightness(1.3); }
   }
+  /* ---- dodge sidestep ---- */
+  .anim-dodge.monL {
+    animation: dodgeL 0.6s cubic-bezier(0.3, 0.9, 0.3, 1);
+  }
+  .anim-dodge.monR {
+    animation: dodgeR 0.6s cubic-bezier(0.3, 0.9, 0.3, 1);
+  }
+  @keyframes dodgeL {
+    0% { transform: translate(0, 0); }
+    35% { transform: translate(-30px, -16px) rotate(-9deg); }
+    65% { transform: translate(-30px, -16px) rotate(-9deg); }
+    100% { transform: translate(0, 0); }
+  }
+  @keyframes dodgeR {
+    0% { transform: translate(0, 0); }
+    35% { transform: translate(30px, -16px) rotate(9deg); }
+    65% { transform: translate(30px, -16px) rotate(9deg); }
+    100% { transform: translate(0, 0); }
+  }
   .anim-channel {
     animation: chan 0.9s ease;
   }
@@ -960,6 +1053,35 @@
     0% { opacity: 0; }
     25% { opacity: 0.3; }
     100% { opacity: 0; }
+  }
+
+  /* ---- big cartoon callouts (dodge / charge / comeback / crit) ---- */
+  .callout {
+    position: absolute;
+    top: 38%;
+    left: 50%;
+    z-index: 9;
+    transform: translate(-50%, -50%);
+    font-size: 30px;
+    font-weight: 900;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+    animation: calloutpop 1s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+  }
+  .c-dodge { color: #6fe3e0; }
+  .c-charge { color: #ffd94a; }
+  .c-comeback { color: #ff7a5c; }
+  .c-crit { color: #ffec8a; }
+  @keyframes calloutpop {
+    0% { transform: translate(-50%, -50%) scale(2.4) rotate(-6deg); opacity: 0; }
+    18% { transform: translate(-50%, -50%) scale(1) rotate(-3deg); opacity: 1; }
+    70% { transform: translate(-50%, -50%) scale(1) rotate(-3deg); opacity: 1; }
+    100% { transform: translate(-50%, -64%) scale(0.9); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .callout { animation: none; }
   }
 
   /* ---- VS intro ---- */

@@ -1,6 +1,6 @@
 // The Presence System — Rule 7: presence > conversation.
 // The pet should mostly do nothing. Lines are rare and time-aware.
-import { getMeta, setMeta } from "./db";
+import { getMeta, setMeta, oldMilestone } from "./db";
 import {
   pick,
   greetingFor,
@@ -13,7 +13,10 @@ import {
   quietProudLines,
   deepBondLines,
   energyLowLines,
-  ambientLines
+  ambientLines,
+  personaAmbient,
+  monthOf,
+  lifeCallbackLine
 } from "./lines";
 import type { CompanionMode } from "./lines";
 
@@ -48,6 +51,7 @@ let sleeping = false;
 let focused = false;
 let mode: CompanionMode = "default";
 let bondTier = 0;   // 0 Stranger … 5 Lifetime Companion (Trust Escalation)
+let persona = "";   // emergent personality label — flavors ambient murmurs
 let timer: ReturnType<typeof setInterval> | undefined;
 
 /** Focus Mode: the pet stays present but says nothing at all. */
@@ -68,6 +72,11 @@ export function setMode(m: CompanionMode): void {
 /** Trust Escalation: current bond tier (0 Stranger … 5 Lifetime). */
 export function setBondTier(n: number): void {
   bondTier = n;
+}
+
+/** Emergent personality label (from lib/personality) — flavors ambient lines. */
+export function setPersona(label: string): void {
+  persona = label;
 }
 
 export async function initPresence(
@@ -177,6 +186,20 @@ async function tick(): Promise<void> {
     }
   }
 
+  // life-event callback — a specific old win/lesson, resurfaced months later
+  // ("Remember June? You figured that out."). Trusted Friend+, ≥ ~18 days apart.
+  if (mode !== "just_there" && bondTier >= TIER_TRUSTED && Math.random() < 0.0012) {
+    const last = Number((await getMeta("last_lifecallback")) ?? 0);
+    if (Date.now() - last > 18 * 86_400_000) {
+      const mem = await oldMilestone(30);
+      if (mem?.text) {
+        await setMeta("last_lifecallback", String(Date.now()));
+        speak(lifeCallbackLine(monthOf(mem.created_at), mem.text), 12000);
+        return;
+      }
+    }
+  }
+
   // deep-bond callback — vulnerable, remembering. Companion+ only, and rarer
   // still than quiet-proud: at most once a month. Vulnerability must be earned.
   if (mode !== "just_there" && bondTier >= TIER_COMPANION && Math.random() < 0.0008) {
@@ -191,6 +214,9 @@ async function tick(): Promise<void> {
   // rare ambient murmur — Fun chatters a little more; low energy goes quieter still.
   const ambientChance = mode === "fun" ? 0.011 : lowEnergy ? 0.002 : 0.004;
   if (Math.random() < ambientChance) {
-    speak(pick(ambientLines), 5000);
+    // sometimes a personality-flavored line instead of a generic one
+    const pa = personaAmbient[persona];
+    const line = pa?.length && Math.random() < 0.5 ? pick(pa) : pick(ambientLines);
+    speak(line, 5000);
   }
 }

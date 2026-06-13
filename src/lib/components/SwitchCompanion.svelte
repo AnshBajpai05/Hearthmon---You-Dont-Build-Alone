@@ -19,6 +19,7 @@
     canEvolve?: boolean;
     onPick: (entry: DexEntry, name: string) => void;
     onAutoSave: (minutes: number, mode: "random" | "evolve") => void;
+    onSaveName: (name: string) => void;
     onClose: () => void;
   }
   let {
@@ -29,6 +30,7 @@
     canEvolve = false,
     onPick,
     onAutoSave,
+    onSaveName,
     onClose
   }: Props = $props();
 
@@ -175,14 +177,22 @@
     {/if}
   {/if}
 
-  <input
-    class="namebox"
-    type="text"
-    bind:value={name}
-    maxlength="20"
-    placeholder="name"
-    title="Name carries over — edit it if the new form deserves a new one"
-  />
+  <div class="namerow">
+    <input
+      class="namebox"
+      type="text"
+      bind:value={name}
+      maxlength="20"
+      placeholder="nickname"
+      title="Give your companion a nickname"
+      onkeydown={(e) => { if (e.key === 'Enter') onSaveName(name.trim() || currentName); }}
+    />
+    <button
+      class="savename"
+      onclick={() => onSaveName(name.trim() || currentName)}
+      title="Save nickname"
+    >Save</button>
+  </div>
 </div>
 
 <style>
@@ -425,6 +435,7 @@
     color: #8d82ab;
   }
   .namebox {
+    flex: 1;
     padding: 6px 10px;
     border-radius: 9px;
     border: 1px solid rgba(120, 108, 160, 0.4);
@@ -436,5 +447,25 @@
   }
   .namebox::placeholder {
     color: #7d7398;
+  }
+  .namerow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .savename {
+    padding: 6px 12px;
+    border-radius: 9px;
+    border: 1px solid #f0b66a;
+    background: rgba(240, 182, 106, 0.15);
+    color: #f4e8d6;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .savename:hover {
+    background: rgba(240, 182, 106, 0.32);
   }
 </style>

@@ -44,19 +44,27 @@ Everything below is **live** in the current build:
 ---
 
 ## 🔧 Known Issues / Blockers
-- [ ] **Local voice cloning (XTTS v2) blocked on Windows.** Modern `coqui-tts` pulls in
-      `torchcodec`, whose prebuilt DLL won't load without matching FFmpeg shared libs.
-      Tried torch 2.8/2.9 + transformers 4.40–4.56 + removing torchcodec — all fail at
-      import or runtime. **Fix to try next:** a fully pinned legacy env in `tools/.venv-voice` —
-      `torch==2.1.2 torchaudio==2.1.2 transformers==4.40.2 coqui-tts==0.24.*` (predates the
-      torchcodec requirement). Until then, the in-app TTS ("Charizard…" → real "I choose you!"
-      clip) is the working fallback, and supplied real clips already play.
+- [x] **Voice cloning SOLVED via F5-TTS** ✅ 2026-06-13 — switched off the blocked XTTS path to F5-TTS (`Ash_Voice_Box/ash_prononcing_style.py`, Ash-cadence overrides, dex-name stretch). Generated the **full 1025-dex pack** — name call `<species>.mp3` + throw `go-<species>.mp3` (2040 clips in `Ash_Voice_Box/base_&_go_voices/`), now copied into `static/voice/` and played by `voiceCry`/`announceGo` for every companion. (Old XTTS-on-Windows note retired; in-app TTS remains the fallback for any missing clip.)
 - [ ] Battle effectiveness uses **primary type only** (dual-types not yet considered — pokedex stores single type only, needs data rewrite).
 - [ ] A few Svelte `state_referenced_locally` warnings — **fixed 2026-06-13** ✅ (now truly **0 errors, 0 warnings** after `@types/node` install + dead `@ts-expect-error` removal).
 - [x] ⚠️ **REGRESSION found & fixed 2026-06-13** — `lines.ts` + `presence.ts` had reverted to stale copies (missing 9 line banks `+page.svelte` imports + `onRitual` hook) → build was broken with 10 errors. Banks + hook restored, then the previously-claimed-but-missing "Presence AI upgrade" was actually built: 3-tier return-without-shame, end-of-night ritual, quiet-proud rarity gate, and companionship modes (see below). Build now **0/0**.
 - [x] **Radial Menu Polish** — trigger repositioned below pet feet, backdrop fixed to `position:absolute`.
 - [x] **Radial Menu v2** ✅ 2026-06-13 — (1) real **reverse-collapse close animation**: rings shrink back to centre, later items leave first (was a hard snap-away); (2) **auto-distributed sub-angles** (`SUB_STEP_DEG=22°`, centred on the category) replacing brittle hand-tuned `subAngle` magic numbers — fixes the System ring crowding/overlap from the 5th (Mode) item, and stays un-crowded at any item count; (3) `prefers-reduced-motion` support (instant, no bloom/collapse); (4) removed an unreachable `subActive` branch.
   - ⏳ Still open: **sub-menu edge-detection** (flip the fan when the widget is dragged near a screen edge) — needs live window-bounds measurement; and Phase-3 **context whispers** (faint ❤️ pulse when mood is low).
+
+---
+
+## 👑 Tier S — The 10/10 Multipliers (Highest ROI)  — ✅ ALL SHIPPED 2026-06-13
+> These 5 features shift Hearthmon from "student project" to "unforgettable indie product". They kill friction, maximize perceived intelligence, and build a lasting brand.
+
+- [x] **Aliveness** ✅ 2026-06-13 — **idle breathing** + **cursor-follow facing** + a full **body-language layer**: a `fidgetTick` (every 2.6s, idle-only, reduced-motion aware) fires transform-based micro-behaviours — **blink** (frequent), **head-tilt** ("hmm"), occasional **glance** and rare **sleepy stretch** — plus a **perk of attention when you type** (`typingPerk`, throttled). Stillness is allowed too. Sprites are static images, so it's all rig-level transforms, not eye art.
+- [x] **Head-tracking (lean)** ✅ 2026-06-14 — the pet leans/tilts toward the cursor while it's over the widget (`trackLook` → `lookX/lookY/lookTilt` props → `.petlook` wrapper, 0.22s lerp); settles back after the cursor stops; off while sleeping/attacking. ⏳ global cursor-follow (anywhere on screen) would need a Rust cursor-position poll.
+- [x] **Command Palette (Alt+Space)** ✅ 2026-06-13 — global hotkey (Tauri `global-shortcut` plugin) summons the window + a tiny `CommandBar`. Type and Enter: bare text → win; `fix …` → win + bug-fix flourish; `win/learned/survived/praise …`; `mood low …` → check-in. Routes through the existing `onLogSave`/`onMoodSave` so the pet reacts. Raycast-for-emotions. (cargo check + svelte-check clean.)
+- [x] **Spring physics** ✅ 2026-06-13 — `.mover` transition swapped from `linear` to an overshoot spring (`cubic-bezier(0.32,1.28,0.5,1)`): the pet glides, slightly overshoots, settles. Motion reads as intent. Reduced-motion falls back to `ease-out`.
+- [x] **Better Battles (Cinematic Combat)** ✅ 2026-06-13 — layered drama on the existing FX engine (`BattleScene.svelte`): **dodge** (sidestep anim + "DODGED!" + trainer "woah", low-HP defenders slip more), **charge attacks** (a status move now *powers up* → the next hit is ×1.7 with a wind-up flare, "FULLY CHARGED!", forced heavy FX), **comeback moments** (a sub-30%-HP mon landing a crit/super-effective → "COMEBACK!" + cheer + shake), and big **announcer callouts** (DODGED / POWERING UP / FULLY CHARGED / CRITICAL / COMEBACK). No `battle.ts` change.
+  - ⏳ extras still open: per-move cartoon SFX, status *ailments* (burn/para over turns), boss/announcer voice lines.
+- [x] **Sacred Emotional Moments** ✅ 2026-06-13 — `lib/sacred.ts`: a registry of once-ever moments hard-gated by `sacred_<id>` meta (never repeat), max one per launch, fired gently 12s after launch with a spoken line + visual. Set: **lifetime bond**, **one year** ("remember when one bug made you want to throw the laptop in the ocean? You stayed."), **100 days**, **season changed** (after a brutal stretch + recovery). Rarity is enforced structurally.
+- [x] **GitHub Showcase Mode** ✅ 2026-06-13 — `Showcase.svelte`: a clean, screenshot-friendly card — partner sprite + name/species, bond tier + persona chip, a stat grid (commits · wins · learned · survived · days), "currently building: <seed>", and your `@handle`. **Copy card** to clipboard + **open github.com/<handle>** (via the opener plugin). Handle is derived from the watched GitHub source. Opens from the **Code** panel ("📣 Showcase card"). All local data.
 
 ---
 
@@ -74,18 +82,24 @@ Everything below is **live** in the current build:
 - [x] **Commit milestones** ✅ 2026-06-13 — `commits` counter triggers a grand reaction at 10/25/50/100/250/500/1000 (`milestoneQuip(n)`). *(Caveat: with both local + remote watchers on, the same commit can bump the counter twice — milestones are intentionally loose/celebratory, not exact.)*
 - 🧪 Code panel has per-kind test buttons (Commit · Bug-fix · PR · Release · New repo · Milestone) that fire the real reaction (throttle bypassed).
 - [ ] **Long-session tracker** — presence has it but no IDE signal; VS Code extension or file watcher
+- [x] **Build / Training awareness** ✅ 2026-06-14 (System 2 — the ML-researcher moat) — primary detector is **log-watch** (this dev machine is Intel Arc, no NVIDIA, and real training often runs on a server/Colab anyway, so nvidia-smi was the wrong signal). Rust `LogWatch` (`log_set_path`/`log_clear` + `spawn_log_watcher`, 2s poll) tails a chosen **log file OR folder** (follows the newest file; attaches at EOF so it never replays an old run; emits `train-newfile` + `train-log` per appended line). Frontend matches **epoch / loss / done / crash** regexes and reacts: new run → "I'll stay nearby"; epoch tick → encouragement (90s throttle, shows live `epoch N · loss X`); `RE_DONE` → celebration (fireworks + ship fanfare); `RE_CRASH` (traceback / OOM / RuntimeError / nan loss …) → **sympathy, never blame** (`trainCrashLines`, "we" not "you", rain cue not fireworks). Path persisted (`train_log_path`); toggle `train_aware` (default on); log path + live status in the Code panel; test buttons (Run finished · Crash). **Bonus:** `gpu_stat` (nvidia-smi) still ships as an optional readout that self-disables on non-NVIDIA hardware.
 - [ ] **Build / deploy detector** — watch for terminal output patterns or a sentinel file
+- [x] **"Alongside you" — long-term project awareness** ✅ 2026-06-14 (the "defining feature" — uses existing infra) — the **active project** = the watched local folder's name (or watched repo). Each commit-day bumps a distinct-day counter per project (`proj_<slug>_days/_lastday/_first`). As that grows it surfaces escalating, gentle awareness lines (`ALONGSIDE_STAGES` 3/7/14/30/60/100 → "Still working on Docker, huh?" → "Feels like Docker matters to you." → "…you've really stayed with this one."), once per stage (`proj_<slug>_stage`). On launch, if you've **moved on** from a project you stuck with (≥5 days), it honours it once (`projectStayedLine`, `proj_<slug>_closed`). Fires on commit + ~17s after launch (one line/launch), gated by Focus / Just-There. Pairs with the Life-Events callbacks (#6).
 - 💡 **Commit counter** — `commits` meta now bumps per commit; ready to feed a future "100 commits together" badge / milestone callbacks.
+- [x] **README living-companion card (animated SVG, auto-pushed)** ✅ 2026-06-13 — `lib/card.ts` `buildCard()` renders a self-contained, GitHub-safe **animated** SVG (CSS `@keyframes`: breathing, float, glow pulse, drifting particles, speech bubble; sprite embedded as base64 PNG so it's offline/sandbox-safe). Shows live state: companion · bond · persona · varied context status (`cardStatusLine`) · commits · days.
+  - **Rust:** `write_card` writes `assets/hearthmon-status.svg`; `push_card` rewrites the README's Companion/Mood/Status text + cache-busts the SVG URL (`?v=`) + commits & pushes — **amends its own rolling commit + `--force-with-lease`** so the profile graph isn't spammed; `GIT_TERMINAL_PROMPT=0` fails fast instead of hanging.
+  - **Automation:** 6h smart window — pushes on launch if >6h since last (covers app-was-off-for-days), then every 6h while running; `last_card_push` meta tracks the window; manual 🚀 button resets it. Zero clicks needed once a local profile-repo clone is the watched folder.
+  - Live on `github.com/AnshBajpai05`. Limit: can't update while the app is **off** (state is local) — launch catch-up handles the gap. Truly-24/7 would need an OS scheduled task.
 
 ### Companion Personality Evolution
-- [ ] **Personality dimension tracking** — store `coding_style`, `session_times`, `mood_trend` in `meta`
-- [ ] **Emergent personality labels** — night owl, thoughtful nerd, chaotic goblin — surface in Journey
-- [ ] **Personality-aware lines** — tweak line selection based on evolved personality type
+- [x] **Personality dimension tracking** ✅ 2026-06-13 — `sess_night`/`sess_day` bumped once per launch by hour; commits/learned/wins/good-ratio already in data. Feeds `lib/personality.ts`.
+- [x] **Emergent personality labels** ✅ 2026-06-13 — `derivePersona()` → Night Owl 🦉 / Chaotic Goblin 👺 / Early Bird 🌅 / Thoughtful Nerd 🧠 / Steady Soul 🌿 / Quiet Builder 🔧 / Still Becoming 🌱. Surfaced under the Journey header (with a blurb tooltip). Null until enough signal.
+- [x] **Personality-aware lines** ✅ 2026-06-13 — `+page` computes the persona at launch and calls `presence.setPersona()`; `tick()`'s ambient murmur now ~half the time draws from `personaAmbient[label]` (e.g. Night Owl → "The quiet hours suit you.", Chaotic Goblin → "Chaos — but it's working."), else the generic bank.
 
 ### "Remind Me Who I Am" — Depth
-- [ ] **"Wins You Forgot" UI cards** — dates + text as proper cards, not a flat list
-- [ ] **"Hard Things Archive" medal wall** — survived memories in chronological order
-- [ ] **"Things You Learned" timeline** — `learned` memories visualized as skill tree nodes
+- [x] **"Wins You Forgot" UI cards** ✅ 2026-06-13 — `forgottenWins` shown as a 2-col grid of glowing dated cards in `RemindMe.svelte` (not a flat list).
+- [x] **"Hard Things Archive" medal wall** ✅ 2026-06-13 — `survived` memories as 🎖️ medal rows, **chronological (oldest→newest)** so it reads as a survival arc.
+- [x] **"Things You Learned" timeline** ✅ 2026-06-13 — `learned` memories as a vertical growth timeline (green nodes on a line), oldest→newest.
 
 ### Onboarding Polish
 - [ ] **First-meeting companion preview** — show sprite + cry before committing, not just a list
@@ -96,17 +110,20 @@ Everything below is **live** in the current build:
 
 ## 🟡 P2 — Strong 10× Features (vision doc SHOULD HAVEs)
 
-### Cozy Room System
-- [ ] **Themed background layers** — cozy coding room / Pokémon center lab / rainy cabin / Ghibli workshop
-- [ ] **Room unlocks via bond depth** — desk plant at Familiar, warm lamp at Trusted Friend, bookshelf at Companion
+### Type Habitats (cozy room system v3)
+- [x] **Type Habitats** ✅ 2026-06-14 (v3 — replaces the v2 palette "rooms"; `lib/rooms.ts` scrapped → `lib/biomes.ts`) — the habitat is **auto-chosen by the pet's primary type** (`biomeForType(curType)`), a "Tiny Living Sanctuary" not a generic room. 10 biome archetypes cover all 18 types: **Moonlit Shore** (water, gold standard) · Campfire Workshop (fire) · Ghibli Greenhouse (grass/bug) · Neon Tech Corner (electric/steel) · Mini Cliff Workshop (rock/ground) · Moonlit Attic (ghost/dark/poison) · Snow Cabin (ice) · Stargazing Shrine (dragon/flying) · Dream Observatory (psychic/fairy) · Cozy Corner (normal/fighting). Toggle from radial **Atmosphere → 🏞️ Habitat**; persisted (`room` meta = "none"/"on").
+- [x] **Universal layered template** ✅ 2026-06-14 — atmosphere wall → **window scene** (sc-ocean/forest/snowfall/stars/city/cave/neon/cosmos/plain) → diagonal **light beam** + pool → floor + lit **seam** → **lantern** (identity prop, warmer with bond tier) → **ground interaction** (g-water ripples / g-ember flicker / g-snow / g-cyber ring / g-fog / g-cosmic / g-stone / g-moss / g-warm) → contact **shadow** → **rim-light** on the sprite → biome **particles** (firefly/ember/pollen/spark/dust/snow/star/mist) → **foreground vignette** (real fg/mid/bg depth). Window reacts: moon-tinted at night, rain streaks when raining.
+- [x] **Bespoke window silhouettes** ✅ 2026-06-14 — each biome has a different opening SHAPE (`window: WindowShape`), not the same square recolored: ocean (wide low) · arch (forge) · greenhouse (tall arch) · panel (monitor) · cave (organic) · round (porthole) · frost · shrine (pointed) · dome. Fire scene → `forge` (warm glow + heat shimmer); grass → light rays through the glass.
+- [x] **Type-specific idle behaviours** ✅ 2026-06-14 — `Pet.svelte` runs a per-type idle (composed over the breath): grass leaf-sway · fire mane-flicker · water neck-sway · ice shiver · electric twitch · psychic levitate · ghost waver · dragon hover. Driven by the `type` prop; off under reduced-motion.
+- [x] **Content-fit pet scale** ✅ 2026-06-14 — tiny mons barely fill the sprite frame, so `Pet.svelte` measures the opaque bounding box off-screen (canvas alpha scan) and enlarges so every Pokémon is framed intentionally (clamp 1–1.55×). Best-effort; never blocks the visible sprite.
+- [ ] **Per-species bespoke scenes** — currently type-driven (≈70% of the feel); Lucario dojo / Umbreon observatory etc. would be true per-species.
 - [x] **Seasonal decorations (snow)** ✅ — winter (Dec–Feb) drifts gentle snowflakes past the
       window. (Cherry blossoms / other seasons still open.)
 - [x] **Weather-driven ambience** — 🌦️ rain / snow / wind / thunder fire automatically and on demand; ⚠️ rain *sounds* not yet tied (see Adaptive Soundtrack)
 
 ### Growth Reflection "Movies"
-- [ ] **Quarterly recap** — "Spring 2026: You learned X, survived Y, logged Z good days"
-- [ ] **Spotify-Wrapped-style layout** — full-screen overlay, background music hook, tap to dismiss
-- [ ] **One-year cinematic** — animated storybook of the whole year, auto-triggers on yearly anniversary
+- [x] **Year in Review / "Wrapped"** ✅ 2026-06-13 — `YearInReview.svelte`: full-screen tap-through recap, period-aware (story / season / year), big **count-up** numbers, partner sprite reveal, **copy-to-share** summary. Hard numbers framed gently (resilience, never shame). Data via new `kindCounts()`/`moodCounts()`. Opens from radial Memory → **🎞️ Recap**, and **auto-opens on the yearly anniversary**.
+  - ⏳ still open: background-music hook, animated storybook transitions, true image export (only text copy for now).
 
 ### Evolution Ceremonies
 - [x] **Companion form evolution** ✅ — real PokéAPI evolution data (`evolutions.ts`);
@@ -114,30 +131,30 @@ Everything below is **live** in the current build:
       built up, paced & escalating, declines remembered; classic white-silhouette flicker →
       reveal flash → new form, keeping nickname + all memory; uses `whoa-you-evolved` clip.
       Resets to a fresh lineage on a manual switch.
-- [ ] **Bond depth tier transitions** — visual ceremony when moving Stranger → Familiar etc.
-- [ ] **Tier badge in Journey panel** — animated reveal of new bond level
+- [x] **Bond depth tier transitions** ✅ 2026-06-13 — `bond_tier_seen` meta is compared on launch; crossing into a deeper tier fires a deferred (9s) **ceremony banner** (spinning ✦ + tier name + "bond deepened") with fireworks + a spoken `bondUpLine` ("Something shifted. We're Trusted Friend now."). Fires once per real tier-up, never on first meeting, skipped in Focus.
+- [x] **Tier badge in Journey panel** ✅ 2026-06-13 — bond stage now shown as a glowing ✦ pill badge in the Journey header.
 
 ### Emotional Pattern Detection
-- [ ] **Pattern summary in Journey** — "You tend to feel low on Sundays", "Thursdays are usually good"
-- [ ] **Mood calendar heatmap** — 12-week rolling view of mood colors in Journey panel
+- [x] **Pattern summary in Journey** ✅ 2026-06-13 — gentle weekday observation in the new Moods tab ("Sundays tend to feel heavier — good to know", "Thursdays are often a good one"). Gated to ≥8 check-ins and ≥50% ratio so it's never a shaky diagnosis.
+- [x] **Mood calendar heatmap** ✅ 2026-06-13 — 12-week × 7-day color grid in Journey → **Moods 📊** tab (latest mood per day, per-mood legend). Pure-derive from loaded memories, no DB change.
 
 ### Future Self Mode
-- [ ] **"What would future me say?"** — grounded reply based on past resilience + wins
-- [ ] **Emotional Time Machine** — "What were you worried about 6 months ago?" → surfaces old moods
+- [x] **"What would future me say?"** ✅ 2026-06-13 — `FutureSelf.svelte` (radial Memory → 🔮 Future): a grounded message built only from real logged resilience + wins ("Future you, looking back: you got through N hard things… you'll be glad you didn't stop."), with one concrete callback. No fortune-telling, no toxic positivity.
+- [x] **Emotional Time Machine** ✅ 2026-06-13 — same panel surfaces an old heavy-mood memory you've since outlived ("You felt low — '…'. And here you are.") via `hardDaysSurvived`.
 
-### Life RPG / Chapters
-- [ ] **Chapter tagging** — user can name a period ("Docker Journey", "Internship Season")
-- [ ] **Chapter view in Journey** — collapsible chapters, memories grouped inside
-- [ ] **Chapter completion ceremony** — small confetti + pet line when a chapter is closed
+### Life RPG / Chapters ✅ 2026-06-13 — new **Chapters 📔** tab in Journey
+- [x] **Chapter tagging** — name a period ("Docker Journey"); stored as a `chapter` memory (`startChapter`); one open at a time, `read_at` doubles as the close date.
+- [x] **Chapter view in Journey** — open chapter card (since-date + live memory count) + list of closed chapters with date range + count (`countIn` tallies memories whose timestamp falls in the window). *(Shows counts/range; inline expand-to-list-memories is a later polish.)*
+- [x] **Chapter completion ceremony** — "close this chapter ✓" → `closeChapter` + a `+page` ceremony: fireworks + a spoken `chapterCloseLine` ("'Docker Journey' — that chapter's closed. We lived it.").
 
 ---
 
 ## 🟢 P3 — Moonshots & Fun (vision doc CRAZY BUT BRILLIANT)
 
 ### Dream System
-- [ ] **Nightly dream bubble** — pet sleeping > 2 hrs → dream thought bubble with memory symbol
-- [ ] **Symbolic dream content** — ML struggle = 🏔️; finished project = 🌅
-- [ ] **Dream log** — stored as `kind: 'dream'`, visible in Journey
+- [x] **Nightly dream bubble** ✅ 2026-06-13 — while the pet is `sleeping`, a `dreamTick` (22s, 45% chance) floats a `💭<symbol>` bubble above it, skipped in Focus.
+- [x] **Symbolic dream content** ✅ 2026-06-13 — symbols drawn from your real recent memories (`dreamPool` from `allMemories(30)` → `dreamSymbol`): survived 🏔️ · win 🌅 · learned 📘 · praise 💗 · seed 🌱 · good ☀️ · low 🌧️ (defaults ✨🌙💫).
+- [ ] **Dream log** — stored as `kind: 'dream'`, visible in Journey *(visual only for now; not persisted)*
 
 ### Community Layer (post-v1)
 - [ ] **Friend companion visits** — friend's sprite wanders through with a tiny gift emoji
@@ -181,7 +198,7 @@ Everything below is **live** in the current build:
 
 ### Fun & Delight
 - [ ] **Mini games** — pet vs pet rock-paper-scissors; 30 seconds of fun
-- [ ] **Pet birthday** — party hat overlay + special moment on `first_met` anniversary
+- [x] **Pet birthday** ✅ 2026-06-13 — on the calendar day you first met, a 🎉 **party hat** rides above the pet for the session + a warm spoken line ("N years since the day we met. Thank you for staying.") + fireworks + voice. Once/year (`last_birthday`); takes precedence over the generic anniversary so they never double.
 - [x] **Achievement badges wall** — 17 emotional badges in Journey; staggered reveal; rare glow
 - [ ] **Seasonal outfits** — pixel scarf in winter, sunglasses in summer — pure delight
 - [ ] **Secret easter eggs** — click moon → constellation; click shooting star → pet reacts
@@ -225,10 +242,8 @@ Everything below is **live** in the current build:
       twinkling, hover to remember. Not stats — your life as a night sky.
 - [ ] **"I noticed this about you…"** — very rare (every 2–3 wks), high-confidence-only gentle
       pattern observation ("You're kinder to yourself lately."). Creepy if low-confidence — gate hard.
-- [ ] **Tiny Wins auto-capture** — silently log invisible progress (coded N days straight, worked
-      through a low mood, late-night effort) → occasional "Quietly proud of this week."
-- [ ] **"Today felt like…" reflection** — at night, one-tap emotional word (heavy/hopeful/messy/
-      good/strange/peaceful/hard). Builds an emotional timeline, lighter than the mood check-in.
+- [~] **Tiny Wins auto-capture** ✅ 2026-06-13 (streak) — `+page` tracks a coding streak (`last_active_day` + `streak`: consecutive calendar days the app was opened); at 3/5/7/14/30/60/100/200/365 days it fires a gentle, once-per-value `streakLine` ("7 days in a row. Quietly proud of you.") — no streak-guilt. ⏳ "worked through a low mood" / "late-night effort" captures still open.
+- [x] **"Today felt like…" reflection** ✅ 2026-06-13 — `TodayFelt.svelte` (radial Memory → ☁️ Today): one-tap word (good/hopeful/peaceful/messy/strange/heavy/hard), no note. Logs a `mood` memory (word → mood mapping) so it feeds the same timeline/heatmap; gentle response, no comfort-mode trigger. Lighter than the 6-emoji check-in.
 - [ ] **Emotional Search** — "when did I last feel like this?" → surfaces similar past memories
       ("You felt overwhelmed before that research breakthrough."). Extends findFamiliar.
 - [x] **"Quiet Proud" moments** ✅ 2026-06-13 — `presence.ts` `tick()` fires a `quietProudLines`
@@ -251,7 +266,7 @@ Everything below is **live** in the current build:
 - [x] **No-guilt return ritual** ✅ 2026-06-13 — 3 absence tiers in `presence.ts` (3–7d / 1–4wk / 1mo+), each warmer, never a word about streaks (`returnDaysLines`/`returnWeeksLines`/`returnMonthLines`). A `dust-off` shimmy animation (`triggerDustOff`) plays on return via the `onReturn` hook.
 
 ### 2. Quiet Presence Mode ⭐⭐⭐⭐⭐ (P1)
-- [ ] **Ambient idle behaviors** — When coding, the pet shouldn't just wait for clicks. It should occasionally look at the cursor, watch typing, do a small sleepy stretch, draw a tiny star, or walk off-screen and return with a leaf. Attention mirroring.
+- [x] **Ambient idle behaviors** ✅ 2026-06-13 — blink / head-tilt / glance / sleepy-stretch micro-fidgets on an idle timer + cursor-follow facing + a perk when you type (see Aliveness in Tier S). ⏳ still-fun extras: walk off-screen & return with a leaf, draw a tiny star.
 
 ### 3. Ritual Design Layer ⭐⭐⭐⭐⭐ (P1)
 - [~] **First coding session of the day** — ✅ 2026-06-13 first launch of a new calendar day greets with `firstSessionLines` ("Ready? Let's see what today becomes.") + the existing opening stretch (`last_greet_day` meta gate). ⏳ tiny coffee particle still TODO.
@@ -262,13 +277,13 @@ Everything below is **live** in the current build:
 
 ### 5. Friction Removal Layer ⭐⭐⭐⭐⭐ (P1)
 - [~] **1-second interactions** — ✅ 2026-06-13 bare-key shortcuts wired (`M` Mood · `J` Jar · `N` Notes) via a `+page.svelte` `svelte:window` handler that ignores typing/onboarding/battle. ⏳ `Alt+H` global summon still pending — needs the Tauri `global-shortcut` plugin (in-page keys can't fire while the window is hidden/unfocused).
-- [ ] **"Return Home" Whistle** — A global hotkey (e.g., `Alt+W` or similar) that instantly recalls the pet. If it has wandered off-screen in Toddler Mode or gotten lost, it whistles and smoothly slides back to the primary monitor center.
+- [x] **"Return Home" Whistle** ✅ 2026-06-13 — global **Alt+W** (Tauri global-shortcut) shows + recenters the window on the current monitor with a "Coming home!" line. Rescues a roamed/lost pet. Also the Toddler off-switch's safety net.
 
 ### 6. "Life Events" System ⭐⭐⭐⭐ (P2)
-- [ ] **Long-term memory callbacks** — Pet remembers the internship, the research breakthrough, or the bad exam week. Months later: "Remember when we were struggling with Docker? You figured that out."
+- [x] **Long-term memory callbacks** ✅ 2026-06-13 — `presence.ts` rarely (Trusted Friend+, ≥18 days apart, `last_lifecallback` gate) resurfaces a specific old win/lesson/survival (`oldMilestone()`, ≥30 days old) → `lifeCallbackLine` ("Remember June? '<that thing>'. You figured that out."). Long-term memory, the way Finch/AC do it.
 
 ### 7. Companion Imperfection ⭐⭐⭐⭐ (P2)
-- [ ] **Personality quirks** — The pet is too flawless. Needs quirks based on its personality (e.g., loves late-night coding, hates Mondays, collects stars). Imperfection creates attachment.
+- [x] **Personality quirks** ✅ 2026-06-14 — `lib/quirks.ts`: each species gets a STABLE set (2 observant + 1 habit, seeded by dex id) from a pool — night owl / early bird / hates Mondays / loves rain / cold-sneezes / collects stars / snacker / secretly-tidy / hums / daydreamer. `quirkLine(dexId, ctx)` surfaces a context-matching quirk ("it's Monday…", "found another star"). Wired to a new **ambient murmur tick** (every 70s, ~18% → ~6 min avg, bubble-only/not spoken, gated by Focus/Just-There/sleep) — which ALSO finally uses the previously-dormant `ambientLines`/`personaAmbient` banks. Quirk summary shown in the Journey (`🎭 night owl · collects stars`). Imperfection → attachment.
 
 ### 8. "Tiny Ownership" System ⭐⭐⭐⭐ (P2)
 - [ ] **Lightweight personalization** — Let the user slowly personalize a blanket, a room object, a favorite place, or a tiny badge. No complex Sims mechanics, just "this is mine."
@@ -294,11 +309,11 @@ Everything below is **live** in the current build:
 - [x] **Explicit emotional rules** — `docs/EMOTIONAL_SAFETY.md` created: banned phrases table, 5 non-negotiables, interaction budget, emotional territory map, litmus test. ✅ shipped 2026-06-13
 
 ### 6. "Sacred Rare Moments" System ⭐⭐⭐⭐⭐ (P2)
-- [ ] **Protected rarity** — Certain interactions should be restricted to once a year, once a chapter, or once a lifetime. Example: After a brutal semester: "You changed this season." Never repeated. Overexposure kills the magic.
+- [x] **Protected rarity** ✅ 2026-06-13 — `lib/sacred.ts` `resolveSacred()`: each moment fires at most once *ever* (`sacred_<id>` meta), one per launch. Includes the "You changed this season" after-a-brutal-stretch line. Overexposure structurally impossible. *(Add once-a-chapter tier when chapters land.)*
 
 ### 7. "Companionship Modes" (User-Controlled Presence) ⭐⭐⭐⭐ (P2)
 - [x] **Interaction limiters** ✅ 2026-06-13 — `companion_mode` (default / just_there / fun), persisted to meta, cycled from the **Mode** sub-item in the radial **System** category (icon 🔔/🤫/🎉). `presence.ts` `setMode()`: Just-There silences all proactive lines (`speak()` early-returns); Fun raises ambient murmur frequency and `wanderTick` runs a livelier movement table; Default keeps the standard budget.
-- [ ] **Toddler Mode (OS-Level Roaming)** — A special fun mode where the pet freely roams your entire monitor. It moves the actual transparent OS window continuously, making random short shuffles and occasional long walks across the screen.
+- [x] **Toddler Mode (OS-Level Roaming)** ✅ 2026-06-13 — radial System → 🚶 **Roam** toggles it; the pet moves the real OS window in stepped "walks" (mostly short shuffles, ~30% longer walks), facing its heading. **Hard-clamped to the current monitor's work area** (never off-screen), **idle-gated** (won't fight you mid-drag/panel), persisted (`toddler` meta, resumes on launch). ⏳ needs live tuning of pace/cadence; "sits on tabs / climbs taskbar / startled by notifications" stays out of scope (needs native window-enumeration, not in Tauri).
 
 ---
 

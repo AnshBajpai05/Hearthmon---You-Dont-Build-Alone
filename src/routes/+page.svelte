@@ -8,6 +8,7 @@
   } from "@tauri-apps/api/window";
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
+  import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import Pet from "$lib/components/Pet.svelte";
   import Bubble from "$lib/components/Bubble.svelte";
   import MoodCheckIn from "$lib/components/MoodCheckIn.svelte";
@@ -21,6 +22,11 @@
   import LeaveNote from "$lib/components/LeaveNote.svelte";
   import VaultPanel from "$lib/components/VaultPanel.svelte";
   import CodePanel from "$lib/components/CodePanel.svelte";
+  import CommandBar from "$lib/components/CommandBar.svelte";
+  import YearInReview from "$lib/components/YearInReview.svelte";
+  import Showcase from "$lib/components/Showcase.svelte";
+  import FutureSelf from "$lib/components/FutureSelf.svelte";
+  import TodayFelt from "$lib/components/TodayFelt.svelte";
   import WeatherFx from "$lib/components/WeatherFx.svelte";
   import type { WeatherKind } from "$lib/components/WeatherFx.svelte";
   import RadialMenu from "$lib/components/RadialMenu.svelte";
@@ -49,13 +55,23 @@
     addMemory,
     findFamiliar,
     hardMoodCount,
+    moodCounts,
+    kindCounts,
     bumpCounter,
-    unreadLetter
+    unreadLetter,
+    allMemories,
+    type Memory
   } from "$lib/db";
   import type { Mood, MemoryKind } from "$lib/db";
-  import { initPresence, poke, setFocus, setMode, setBondTier } from "$lib/presence";
+  import { resolveSacred } from "$lib/sacred";
+  import { initPresence, poke, setFocus, setMode, setBondTier, setPersona } from "$lib/presence";
   import type { PetState } from "$lib/presence";
-  import { daysTogether, bondStageIndex } from "$lib/bond";
+  import { derivePersona, type Persona } from "$lib/personality";
+  import { quirkLine } from "$lib/quirks";
+  import { deriveTemperament, driftLine, type Temperament } from "$lib/drift";
+  import { buildCard } from "$lib/card";
+  import { biomeForType } from "$lib/biomes";
+  import { daysTogether, bondStageIndex, BOND_STAGES } from "$lib/bond";
   import {
     pick,
     moodResponses,
@@ -81,12 +97,25 @@
     endOfNightLines,
     modeLines,
     softFailLines,
+    bondUpLine,
+    chapterCloseLine,
+    streakLine,
     commitQuips,
     fixQuips,
     prQuips,
     releaseQuips,
     newRepoQuips,
-    milestoneQuip
+    milestoneQuip,
+    trainStartLines,
+    trainHeavyLines,
+    trainDoneLines,
+    trainProgressLines,
+    trainCrashLines,
+    ambientLines,
+    personaAmbient,
+    ALONGSIDE_STAGES,
+    alongsideLine,
+    projectStayedLine
   } from "$lib/lines";
   import type { CompanionMode } from "$lib/lines";
   import {
@@ -123,7 +152,11 @@
     | "jar"
     | "note"
     | "vault"
-    | "code";
+    | "code"
+    | "wrapped"
+    | "showcase"
+    | "future"
+    | "today";
   // the full Ash sequence: recall beam → ball returns → "Name, go!" → thrown ball arcs in → release
   type SwitchFx = "none" | "recall" | "ballout" | "gap" | "throw" | "release";
 
@@ -358,7 +391,7 @@
   let hopping = $state(false);
   let moveDur = $state(0.5);
   let moveEndTimer: ReturnType<typeof setTimeout> | undefined;
-  let oneShot = $state<"none" | "jump" | "spin" | "dust">("none");
+  let oneShot = $state<"none" | "jump" | "spin" | "dust" | "blink" | "tilt" | "perk">("none");
   let butterfly = $state<{ from: number; to: number; dur: number } | null>(null);
 
   // ---- attack state ----
@@ -366,6 +399,29 @@
   let attackMove = $state<Move | null>(null);
   let atkKind = $state<AnimKind | null>(null);
   let particles = $state<Particle[]>([]);
+
+  // ---- head-tracking: the pet leans toward the cursor ("it's watching you") ----
+  let lookX = $state(0);
+  let lookY = $state(0);
+  let lookTilt = $state(0);
+  let lookTimer: ReturnType<typeof setTimeout> | undefined;
+  function trackLook(e: PointerEvent) {
+    if (petState === "sleeping" || attacking) return;
+    const cx = window.innerWidth / 2 + petX;
+    const cy = window.innerHeight * 0.52;
+    const nx = Math.max(-1, Math.min(1, (e.clientX - cx) / (window.innerWidth / 2 || 1)));
+    const ny = Math.max(-1, Math.min(1, (e.clientY - cy) / (window.innerHeight / 2 || 1)));
+    lookX = +(nx * 6).toFixed(1);
+    lookTilt = +(nx * 5).toFixed(1);
+    lookY = +Math.max(-2, Math.min(4, ny * 4)).toFixed(1);
+    clearTimeout(lookTimer);
+    lookTimer = setTimeout(resetLook, 2400); // settle back if the cursor goes still
+  }
+  function resetLook() {
+    lookX = 0;
+    lookY = 0;
+    lookTilt = 0;
+  }
 
   // ---- auto-switch ----
   let autoMinutes = $state(0);
@@ -448,6 +504,19 @@
     }, 250);
   }
 
+  // Aliveness: while idle, the pet's facing follows the mouse cursor — a cheap,
+  // strong "it's watching me" cue. Throttled; ignored when busy/onboarding.
+  let lastLook = 0;
+  function onMouseLook(e: MouseEvent) {
+    if (!idleNow) return;
+    const now = Date.now();
+    if (now - lastLook < 130) return;
+    lastLook = now;
+    const petScreenX = winW / 2 + petX;        // pet centre in window coords
+    const want: 1 | -1 = e.clientX < petScreenX ? -1 : 1;
+    if (want !== dir) dir = want;
+  }
+
   function onWheel(e: WheelEvent) {
     if (phase !== "home" || panel !== "none" || battleOpen) return;
     e.preventDefault();
@@ -487,7 +556,10 @@
   function onPetStroke() {
     poke();
     petAffection += 1;
-    if (petAffection % 6 === 0) bumpCounter("interactions");
+    if (petAffection % 6 === 0) {
+      bumpCounter("interactions");
+      void bumpCounter("t_aff"); // drift: affectionate temperament
+    }
     // a soft happy cry / line now and then while petting — never spammy
     if (Date.now() - lastPetCry > 6000) {
       lastPetCry = Date.now();
@@ -513,6 +585,7 @@
       eating = true; // chomp animation
       setTimeout(() => (eating = false), 900);
       bumpCounter("interactions");
+      void bumpCounter("t_aff"); // drift: affectionate temperament
       if (Math.random() < 0.6) voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.2);
       say(pick(treatLines), 5000);
     }, 760);
@@ -566,11 +639,202 @@
     if (phase === "home") say(pick(softFailLines), 6000);
   }
 
+  // bond-tier ceremony banner (set when the bond deepens between launches)
+  let bondCeremony = $state<string | null>(null);
+  let birthday = $state(false); // party hat for the day-we-met anniversary
+
+  // ---- command palette (global Alt+Space): Raycast-for-emotions ----
+  let cmdOpen = $state(false);
+  const CMD_KINDS: Record<string, MemoryKind> = {
+    w: "win", win: "win",
+    l: "learned", learned: "learned",
+    s: "survived", survived: "survived",
+    p: "praise", praise: "praise"
+  };
+  const CMD_MOODS = ["good", "stressed", "tired", "low", "frustrated", "uncertain"];
+
+  async function openCommand() {
+    if (phase !== "home") return;
+    try {
+      const w = getCurrentWindow();
+      await w.show();
+      await w.unminimize();
+      await w.setFocus();
+    } catch {
+      /* window ops are best-effort */
+    }
+    cmdOpen = true;
+  }
+
+  // Parse a quick line and route it to the same log/mood handlers the panels use.
+  async function runCommand(raw: string) {
+    cmdOpen = false;
+    const text = raw.trim();
+    if (!text) return;
+    const sp = text.indexOf(" ");
+    const verb = (sp === -1 ? text : text.slice(0, sp)).toLowerCase();
+    const rest = sp === -1 ? "" : text.slice(sp + 1).trim();
+
+    // "fix …" → log a win + the bug-fix flourish
+    if ((verb === "f" || verb === "fix") && rest) {
+      await addMemory("win", { text: rest });
+      await bumpCounter("interactions");
+      reactGit("fix");
+      return;
+    }
+    // "mood low …" → a mood check-in
+    if (verb === "m" || verb === "mood") {
+      const mood = CMD_MOODS.find((x) => rest.toLowerCase().startsWith(x)) as Mood | undefined;
+      if (mood) {
+        await onMoodSave(mood, rest.slice(mood.length).trim());
+        return;
+      }
+    }
+    // "win/learned/survived/praise …"
+    if (CMD_KINDS[verb] && rest) {
+      await onLogSave(CMD_KINDS[verb], rest);
+      return;
+    }
+    // no recognized verb → treat the whole thing as a win
+    await onLogSave("win", text);
+  }
+
+  // ---- Dream system: while the pet sleeps, soft dream bubbles drift up ----
+  // The symbol reflects your real recent life (a struggle survived = 🏔️, a win = 🌅).
+  let dreaming = $state<string | null>(null);
+  let dreamPool: string[] = ["✨", "🌙", "💫"];
+  function dreamSymbol(m: Memory): string {
+    if (m.kind === "survived") return "🏔️";
+    if (m.kind === "win") return "🌅";
+    if (m.kind === "learned") return "📘";
+    if (m.kind === "praise") return "💗";
+    if (m.kind === "seed") return "🌱";
+    if (m.kind === "mood") return m.mood === "good" ? "☀️" : m.mood === "low" ? "🌧️" : "💭";
+    return "✨";
+  }
+  function dreamTick() {
+    if (petState !== "sleeping" || dreaming || focusMode) return;
+    if (Math.random() < 0.45) {
+      dreaming = dreamPool[Math.floor(Math.random() * dreamPool.length)] ?? "✨";
+      setTimeout(() => (dreaming = null), 5200);
+    }
+  }
+
+  // ---- Toddler Mode: the pet roams your actual monitor ----
+  // Moves the OS window in stepped "walks", always clamped to the monitor work
+  // area so it can never fly off-screen. Alt+W (or the Roam toggle) brings it home.
+  let toddler = $state(false);
+  let toddlerTimer: ReturnType<typeof setInterval> | undefined;
+  const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+  async function walkWindowTo(x1: number, y1: number) {
+    const win = getCurrentWindow();
+    const p0 = await win.outerPosition();
+    const steps = 14;
+    for (let i = 1; i <= steps; i++) {
+      if (!toddler) return;
+      const t = i / steps;
+      const e = t * t * (3 - 2 * t); // smoothstep
+      await win.setPosition(
+        new PhysicalPosition(Math.round(p0.x + (x1 - p0.x) * e), Math.round(p0.y + (y1 - p0.y) * e))
+      );
+      await new Promise((r) => setTimeout(r, 28));
+    }
+  }
+
+  async function toddlerHop() {
+    if (!toddler || !idleNow) return; // never fight the user mid-interaction
+    try {
+      const win = getCurrentWindow();
+      const mon = await currentMonitor();
+      if (!mon) return;
+      const size = await win.outerSize();
+      const pos = await win.outerPosition();
+      const minX = mon.position.x;
+      const minY = mon.position.y;
+      const maxX = mon.position.x + mon.size.width - size.width;
+      const maxY = mon.position.y + mon.size.height - size.height;
+      const far = Math.random() < 0.3; // mostly small shuffles, sometimes a long walk
+      const rngX = mon.size.width * (far ? 0.6 : 0.22);
+      const rngY = mon.size.height * (far ? 0.3 : 0.12);
+      const tx = Math.round(clampN(pos.x + (Math.random() * 2 - 1) * rngX, minX, maxX));
+      const ty = Math.round(clampN(pos.y + (Math.random() * 2 - 1) * rngY, minY, maxY));
+      dir = tx >= pos.x ? 1 : -1; // face the way it's heading
+      await walkWindowTo(tx, ty);
+    } catch {
+      /* window ops best-effort */
+    }
+  }
+
+  async function returnHome() {
+    try {
+      const win = getCurrentWindow();
+      const mon = await currentMonitor();
+      if (!mon) return;
+      const size = await win.outerSize();
+      const x = mon.position.x + Math.round((mon.size.width - size.width) / 2);
+      const y = mon.position.y + Math.round((mon.size.height - size.height) / 2);
+      await win.show();
+      await win.setPosition(new PhysicalPosition(x, y));
+      poke();
+      if (!focusMode) say("Coming home!", 3000);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function toggleToddler() {
+    toddler = !toddler;
+    await setMeta("toddler", toddler ? "1" : "0");
+    clearInterval(toddlerTimer);
+    if (toddler) {
+      toddlerTimer = setInterval(() => void toddlerHop(), 6500);
+      if (!focusMode) say("Going exploring! Alt+W brings me home.", 6000);
+    }
+    poke();
+  }
+
   // ---- coding awareness: react to commits ----
   // Two sources, pick one: a LOCAL folder (instant, via the Rust reflog watcher)
   // or a GitHub URL (polls the API every few min — catches pushes from anywhere).
   let watchingRepo = $state("");     // local folder path
   let watchingRemote = $state("");   // github url
+  let petPersona = $state<Persona | null>(null); // emergent personality (for the card)
+  let petTemperament = $state<Temperament | null>(null); // drift: shaped by how you interact
+  let tempPlay = $state(false); // dominant trait → subtly biases the wander
+  let tempCalm = $state(false);
+  let bondTierNow = $state(0); // current bond tier (lantern warmth in the habitat)
+  let room = $state("none"); // habitat toggle: "none" (open sky) or "on"
+  const habitatOn = $derived(room !== "none");
+  // the habitat is chosen by the pet's primary type — a Tiny Living Sanctuary
+  const currentBiome = $derived(biomeForType(curType));
+  // the lantern (identity prop) glows warmer the deeper the bond
+  const lanternGlow = $derived(Math.min(1, 0.4 + bondTierNow * 0.12));
+  // ambient particle slots — fixed positions/timings so they don't re-seed on
+  // every render. The KIND (firefly/ember/snow/star/…) comes from the biome.
+  const PARTICLES = [
+    { i: 0, x: 22, y: 34, s: 3, d: 0, dur: 11 },
+    { i: 1, x: 38, y: 52, s: 2, d: 3.5, dur: 14 },
+    { i: 2, x: 55, y: 40, s: 3, d: 6, dur: 12 },
+    { i: 3, x: 68, y: 58, s: 2, d: 1.8, dur: 15 },
+    { i: 4, x: 80, y: 36, s: 3, d: 8, dur: 13 },
+    { i: 5, x: 47, y: 64, s: 2, d: 4.5, dur: 16 },
+    { i: 6, x: 30, y: 70, s: 2, d: 10, dur: 13 },
+    { i: 7, x: 72, y: 72, s: 2, d: 6.5, dur: 17 }
+  ];
+
+  async function cycleRoom() {
+    room = room === "none" ? "on" : "none";
+    await setMeta("room", room);
+    poke();
+    say(room === "none" ? "Back to open sky." : `${currentBiome.name}.`, 4500);
+  }
+  // github handle for Showcase, derived from whatever remote is set
+  const ghHandle = $derived.by(() => {
+    const t = parseGitHub(watchingRemote);
+    if (!t) return "";
+    return t.kind === "user" ? t.id : t.id.split("/")[0];
+  });
   const FIX_RE = /\b(fix(e[sd])?|bug|hotfix|patch|resolve[sd]?|close[sd]?|squash)\b/i;
   const MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
   type GitKind = "commit" | "fix" | "pr" | "release" | "repo" | "milestone";
@@ -602,11 +866,256 @@
     announce(line);   // and speak it aloud (Microsoft voice)
   }
 
+  // ---- Build / Training awareness (System 2): watch the GPU via nvidia-smi ----
+  type GpuStat = {
+    available: boolean;
+    util: number;
+    mem_used: number;
+    mem_total: number;
+    temp: number;
+    procs: number;
+  };
+  let gpu = $state<GpuStat | null>(null); // latest reading (for the readout)
+  let gpuAvailable = $state(false); // an NVIDIA GPU + nvidia-smi were found
+  let trainAware = $state(true); // user toggle (persisted)
+  let gpuTimer: ReturnType<typeof setInterval> | undefined;
+  let trainingActive = false; // a run is currently in progress
+  let trainStart = 0;
+  let lastHeavyCue = 0;
+
+  async function pollGpu() {
+    if (!trainAware) return;
+    let s: GpuStat;
+    try {
+      s = await invoke<GpuStat>("gpu_stat");
+    } catch {
+      return; // not running under Tauri (web preview) — ignore
+    }
+    if (!s.available) {
+      gpuAvailable = false; // no NVIDIA GPU — stop polling, never nag
+      if (gpuTimer) {
+        clearInterval(gpuTimer);
+        gpuTimer = undefined;
+      }
+      return;
+    }
+    gpuAvailable = true;
+    gpu = s;
+    const heavy = s.util >= 90;
+    const running = s.procs > 0 && s.util >= 40;
+
+    if (running && !trainingActive) {
+      trainingActive = true; // a run just began
+      trainStart = Date.now();
+      lastHeavyCue = 0;
+      trainReact("start");
+    } else if (trainingActive && running && heavy && Date.now() - lastHeavyCue > 10 * 60_000) {
+      lastHeavyCue = Date.now(); // sustained heavy load — gentle check-in (10-min throttle)
+      trainReact("heavy");
+    } else if (trainingActive && s.procs === 0 && s.util < 25) {
+      trainingActive = false; // the run ended
+      if ((Date.now() - trainStart) / 60_000 >= 3) trainReact("done"); // only a real session
+    }
+  }
+
+  type TrainKind = "start" | "heavy" | "progress" | "done" | "crash";
+  function trainReact(kind: TrainKind) {
+    poke();
+    const celebrate = () => {
+      if (petState === "idle") {
+        petState = "happy";
+        setTimeout(() => (petState = "idle"), 900);
+      }
+    };
+    if (focusMode || companionMode === "just_there") {
+      if (kind === "done") celebrate(); // light up but stay quiet
+      return;
+    }
+    let line = "";
+    switch (kind) {
+      case "start": line = pick(trainStartLines); break;
+      case "heavy": line = pick(trainHeavyLines); break;
+      case "progress": line = pick(trainProgressLines); break;
+      case "done":
+        line = pick(trainDoneLines);
+        celebrate();
+        runDelight("fireworks", 3000);
+        shipFanfare();
+        break;
+      case "crash":
+        line = pick(trainCrashLines);
+        runDelight("rain", 2400); // a soft, sympathetic cue — never fireworks
+        break;
+    }
+    say(line, kind === "done" || kind === "crash" ? 9000 : 7000);
+    announce(line);
+  }
+
+  async function setTrainAware(on: boolean) {
+    trainAware = on;
+    await setMeta("train_aware", on ? "1" : "0");
+    if (on && !gpuTimer) {
+      gpuTimer = setInterval(() => void pollGpu(), 5000);
+      void pollGpu();
+    }
+  }
+
+  // ---- log-watch: tail a training log → epoch / loss / done / crash ----
+  let logPath = $state(""); // watched file or folder ("" = off)
+  let trainFile = $state(""); // the concrete run file being followed
+  let trainEpoch = $state(0);
+  let trainLoss = $state<number | null>(null);
+  let lastProgressCue = 0;
+  const RE_EPOCH = /\bepoch\s*[:#]?\s*(\d+)/i;
+  const RE_LOSS = /\bloss[\s:=]+([0-9]*\.?[0-9]+)/i;
+  const RE_DONE = /(training complete|training finished|finished training|run complete|done training|best model saved|saved final|✓\s*done)/i;
+  const RE_CRASH = /(traceback \(most recent call last\)|out of memory|cuda error|runtimeerror|\bexception\b|\berror:|process killed|\bkilled\b|loss is nan|nan loss)/i;
+
+  const trainStatus = $derived(
+    !logPath
+      ? ""
+      : trainingActive
+        ? `running${trainFile ? ` · ${trainFile}` : ""}${trainEpoch ? ` · epoch ${trainEpoch}` : ""}${trainLoss != null ? ` · loss ${trainLoss}` : ""}`
+        : "watching for a run…"
+  );
+
+  function onNewRun(name: string) {
+    trainFile = name;
+    trainingActive = true;
+    trainStart = Date.now();
+    trainEpoch = 0;
+    trainLoss = null;
+    lastProgressCue = Date.now();
+    trainReact("start");
+  }
+
+  function onTrainLine(line: string) {
+    if (!trainAware) return;
+    if (RE_CRASH.test(line)) {
+      if (trainingActive) {
+        trainingActive = false;
+        trainReact("crash");
+      }
+      return;
+    }
+    if (RE_DONE.test(line)) {
+      if (trainingActive) {
+        trainingActive = false;
+        trainReact("done");
+      }
+      return;
+    }
+    const mE = line.match(RE_EPOCH);
+    if (mE) {
+      trainingActive = true; // a run is clearly underway
+      trainEpoch = Number(mE[1]);
+    }
+    const mL = line.match(RE_LOSS);
+    if (mL) trainLoss = Number(Number(mL[1]).toFixed(4));
+    // occasional encouragement on an epoch tick (90s throttle)
+    if (mE && Date.now() - lastProgressCue > 90_000) {
+      lastProgressCue = Date.now();
+      trainReact("progress");
+    }
+  }
+
+  async function setLogPath(path: string) {
+    const p = path.trim();
+    if (!p) return;
+    try {
+      await invoke("log_set_path", { path: p });
+      logPath = p;
+      await setMeta("train_log_path", p);
+      say("Watching that log. I'll follow your runs.", 4500);
+    } catch (e) {
+      say(typeof e === "string" ? e : "Couldn't watch that path.", 5000);
+    }
+  }
+  async function stopLog() {
+    try {
+      await invoke("log_clear");
+    } catch { /* not under Tauri */ }
+    logPath = "";
+    trainFile = "";
+    trainingActive = false;
+    await setMeta("train_log_path", "");
+  }
+
   // A detected commit (local reflog or a remote push). Counts toward milestones.
   async function onCommit(message: string) {
     const n = await bumpCounter("commits");
     if (MILESTONES.includes(n)) reactGit("milestone", milestoneQuip(n));
     else reactGit(FIX_RE.test(message) ? "fix" : "commit");
+    void bumpProjectDay(); // "alongside you": this counts as a day on the project
+  }
+
+  // ---- "Alongside you": long-term awareness of the project you keep at ----
+  // The active project = the watched local folder's name, or the watched repo.
+  const activeProject = $derived.by(() => {
+    if (watchingRepo) {
+      const parts = watchingRepo.replace(/[\\/]+$/, "").split(/[\\/]/);
+      return parts[parts.length - 1] || "";
+    }
+    const t = parseGitHub(watchingRemote);
+    return t?.kind === "repo" ? t.id.split("/")[1] : "";
+  });
+  const projSlug = (p: string) => p.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+  // a commit today → count one distinct day on the active project (then re-check
+  // whether that crosses an awareness threshold).
+  async function bumpProjectDay() {
+    const p = activeProject;
+    if (!p) return;
+    const s = projSlug(p);
+    const today = new Date().toISOString().slice(0, 10);
+    if ((await getMeta(`proj_${s}_lastday`)) === today) return;
+    const days = Number((await getMeta(`proj_${s}_days`)) ?? 0) + 1;
+    await setMeta(`proj_${s}_days`, String(days));
+    await setMeta(`proj_${s}_lastday`, today);
+    if (!(await getMeta(`proj_${s}_first`))) await setMeta(`proj_${s}_first`, today);
+    await alongsideCheck();
+  }
+
+  // fire the next unseen escalation line for the active project, if earned.
+  async function alongsideCheck() {
+    const p = activeProject;
+    if (!p) return;
+    const s = projSlug(p);
+    const days = Number((await getMeta(`proj_${s}_days`)) ?? 0);
+    const seen = Number((await getMeta(`proj_${s}_stage`)) ?? 0);
+    const next = ALONGSIDE_STAGES.filter((x) => x <= days && x > seen).pop();
+    if (!next) return;
+    await setMeta(`proj_${s}_stage`, String(next));
+    if (focusMode || companionMode === "just_there") return; // recorded, stays quiet
+    const line = alongsideLine(next, p);
+    say(line, 8000);
+    announce(line);
+  }
+
+  // on launch: if we moved on from a project we stuck with, honour it once;
+  // otherwise greet the ongoing one. At most one of these per launch.
+  async function alongsideLaunch() {
+    const p = activeProject;
+    const cur = p ? projSlug(p) : "";
+    const prevSlug = (await getMeta("proj_current_slug")) ?? "";
+    const prevName = (await getMeta("proj_current_name")) ?? "";
+    if (cur) {
+      await setMeta("proj_current_slug", cur);
+      await setMeta("proj_current_name", p);
+    }
+    if (prevSlug && prevSlug !== cur) {
+      const prevDays = Number((await getMeta(`proj_${prevSlug}_days`)) ?? 0);
+      if (prevDays >= 5 && (await getMeta(`proj_${prevSlug}_closed`)) !== "1") {
+        await setMeta(`proj_${prevSlug}_closed`, "1");
+        if (!focusMode && companionMode !== "just_there") {
+          const line = projectStayedLine(prevName || prevSlug);
+          say(line, 9000);
+          announce(line);
+          return; // one line per launch
+        }
+      }
+    }
+    await alongsideCheck(); // else: greet the project we're still on
   }
 
   // ---- GitHub remote polling: a single repo, OR a whole account ----
@@ -793,6 +1302,106 @@
     await setMeta("git_remote", "");
   }
 
+  // ---- living-companion README card: an animated SVG snapshot written to the repo ----
+  // embed the sprite as a base64 PNG so the card is self-contained (GitHub-safe)
+  async function spriteDataUri(): Promise<string> {
+    try {
+      const res = await fetch(fallbackUrl(dexId, isShiny));
+      if (!res.ok) return "";
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+      return `data:image/png;base64,${btoa(bin)}`;
+    } catch {
+      return "";
+    }
+  }
+  async function generateCard(silent = false) {
+    const fm = await getMeta("first_met");
+    const days = daysTogether(fm);
+    const interactions = Number((await getMeta("interactions")) ?? 0) || 0;
+    const commits = Number((await getMeta("commits")) ?? 0) || 0;
+    const speciesName = displayName(dexEntry(dexId)?.name ?? petName);
+    const svg = buildCard({
+      name: petName,
+      species: speciesName,
+      bond: BOND_STAGES[bondStageIndex(days, interactions)]?.label ?? "Stranger",
+      personaIcon: petPersona?.icon ?? "",
+      personaLabel: petPersona?.label ?? "",
+      status: cardStatusLine(),
+      commits,
+      days,
+      night: isNight,
+      sprite: await spriteDataUri()
+    });
+    if (watchingRepo) {
+      const path = `${watchingRepo.replace(/[\\/]+$/, "")}/assets/hearthmon-status.svg`;
+      try {
+        await invoke("write_card", { path, svg });
+        if (!silent) say("Card written to assets/. Add to README:  ![Hearthmon](./assets/hearthmon-status.svg)", 10000);
+      } catch {
+        if (!silent) say("Couldn't write the card to that folder.", 5000);
+      }
+    } else if (!silent) {
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+      const a = Object.assign(document.createElement("a"), { href: url, download: "hearthmon-status.svg" });
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      say("Card downloaded — put it at assets/hearthmon-status.svg + add ![Hearthmon](./assets/hearthmon-status.svg).", 10000);
+    }
+  }
+
+  // Helper: build the live companion metadata sent alongside every card push.
+  // Rust uses these to rewrite the static README text block so it always matches.
+  // varied, context-aware one-liner for the card bubble / README status
+  function cardStatusLine(): string {
+    const bank = comfortMode
+      ? ["taking it easy", "catching my breath", "resting a moment"]
+      : focusMode
+        ? ["heads down", "deep in it", "in the zone"]
+        : isNight
+          ? ["coding by moonlight", "late one tonight", "the quiet hours"]
+          : ["quietly building", "tinkering away", "in a good rhythm", "chipping at it", "poking the codebase"];
+    return pick(bank);
+  }
+  function cardMeta() {
+    const speciesName = displayName(dexEntry(dexId)?.name ?? petName);
+    const mood = comfortMode ? "Taking it Easy" : focusMode ? "In Focus" : isNight ? "Late Night Coding" : "Quietly Building";
+    return { companion: speciesName, mood, status: cardStatusLine() };
+  }
+
+  // silent auto-push used by the 6h smart schedule + launch catch-up
+  async function autoPushCard() {
+    if (!watchingRepo) return;
+    try {
+      await generateCard(true);
+      await invoke("push_card", { path: watchingRepo, ...cardMeta() });
+      await setMeta("last_card_push", String(Date.now()));
+    } catch {
+      /* offline / no remote — try again next window */
+    }
+  }
+
+  async function pushCard() {
+    if (!watchingRepo) {
+      say("Set a local profile repo in Code first!", 5000);
+      return;
+    }
+    await generateCard(true); // make sure it's written
+    say("Pushing card to GitHub...", 3000);
+    try {
+      await invoke("push_card", { path: watchingRepo, ...cardMeta() });
+      await setMeta("last_card_push", String(Date.now()));
+      say("Card pushed successfully! 🚀", 5000);
+      runDelight("star", 2000);
+    } catch (e) {
+      say("Failed to push card.", 5000);
+      console.error(e);
+    }
+  }
+
   // ---- dev helper: preview a reaction instantly ----
   // True smoke test: bypasses mode / mute / throttle and plays at full volume,
   // speaking via the same TTS path used for Pokémon names. So clicking a test
@@ -840,6 +1449,7 @@
   // 1-second interactions for power users. Ignored while typing, onboarding,
   // or mid-battle/evolution so they never fire at the wrong moment.
   function onShortcut(e: KeyboardEvent) {
+    typingPerk(); // the pet notices you working — a tiny attention perk
     if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
     if (phase !== "home" || battleOpen || evoActive || evoOffer) return;
     const t = e.target as HTMLElement | null;
@@ -912,6 +1522,16 @@
       setFocus(focusMode);
       companionMode = ((await getMeta("companion_mode")) as CompanionMode | null) ?? "default";
       setMode(companionMode);
+      room = (await getMeta("room")) ?? "none"; // cozy-room theme
+      trainAware = (await getMeta("train_aware")) !== "0"; // training awareness (default on)
+      {
+        const lp = (await getMeta("train_log_path")) ?? "";
+        if (lp) {
+          logPath = lp;
+          try { await invoke("log_set_path", { path: lp }); } catch { /* not under Tauri */ }
+        }
+      }
+
       // coding awareness: resume the saved source (local folder or GitHub URL)
       ghToken = (await getMeta("git_token")) ?? "";
       hasToken = !!ghToken;
@@ -924,6 +1544,12 @@
       if (savedRemote) {
         watchingRemote = savedRemote;
         startRemotePoll(savedRemote);
+      }
+      // Toddler Mode resumes if it was left on
+      if ((await getMeta("toddler")) === "1") {
+        toddler = true;
+        clearInterval(toddlerTimer);
+        toddlerTimer = setInterval(() => void toddlerHop(), 6500);
       }
       nightForced = (await getMeta("night_forced")) === "1";
       bgStyle = (await getMeta("bg_style") as ("orb" | "ground" | "off") | null) ?? "orb";
@@ -939,12 +1565,120 @@
       }
       vols = getVolumes();
       phase = "home";
+      // personality signal: which part of the day you tend to show up (once per launch)
+      {
+        const h0 = new Date().getHours();
+        void bumpCounter(h0 >= 22 || h0 < 6 ? "sess_night" : "sess_day");
+      }
       // Trust Escalation: tell presence how deep the bond is, so it only
       // unlocks vulnerable lines once they've been earned.
       {
         const fm = await getMeta("first_met");
         const ix = Number((await getMeta("interactions")) ?? 0) || 0;
-        setBondTier(bondStageIndex(daysTogether(fm), ix));
+        const tierNow = bondStageIndex(daysTogether(fm), ix);
+        setBondTier(tierNow);
+        bondTierNow = tierNow; // for cozy-room unlocks
+        // emergent personality → flavors the pet's ambient murmurs
+        {
+          const k = await kindCounts();
+          const mc = await moodCounts();
+          const totMoods = Object.values(mc).reduce((a, b) => a + b, 0);
+          petPersona = derivePersona({
+            nightSessions: Number((await getMeta("sess_night")) ?? 0),
+            daySessions: Number((await getMeta("sess_day")) ?? 0),
+            commits: Number((await getMeta("commits")) ?? 0),
+            learned: k["learned"] ?? 0,
+            wins: k["win"] ?? 0,
+            goodRatio: totMoods ? (mc["good"] ?? 0) / totMoods : 0,
+            days: daysTogether(fm)
+          });
+          setPersona(petPersona?.label ?? "");
+        }
+        // personality DRIFT — temperament shaped by how YOU interact with it
+        {
+          const mc2 = await moodCounts();
+          const k2 = await kindCounts();
+          petTemperament = deriveTemperament({
+            pets: Number((await getMeta("t_aff")) ?? 0),
+            feeds: 0,
+            plays: Number((await getMeta("t_play")) ?? 0),
+            comforts: Number((await getMeta("t_comfort")) ?? 0),
+            lowMoods: mc2["low"] ?? 0,
+            nightSessions: Number((await getMeta("sess_night")) ?? 0),
+            daySessions: Number((await getMeta("sess_day")) ?? 0),
+            commits: Number((await getMeta("commits")) ?? 0),
+            learned: k2["learned"] ?? 0
+          });
+          tempPlay = petTemperament.top === "playful";
+          tempCalm = petTemperament.top === "calm";
+          // when a NEW dominant trait emerges (not the first time), say so once
+          if (petTemperament.top) {
+            const seen = (await getMeta("drift_top")) ?? "";
+            if (seen !== petTemperament.top) {
+              await setMeta("drift_top", petTemperament.top);
+              if (seen) {
+                const dl = driftLine(petTemperament.top);
+                setTimeout(() => {
+                  if (!focusMode && companionMode !== "just_there") {
+                    say(dl, 9000);
+                    announce(dl);
+                  }
+                }, 20000);
+              }
+            }
+          }
+        }
+        // living-companion card: refresh the repo's status SVG on launch
+        // living card: catch up on launch if >6h since the last push (covers "app was off for days")
+        if (watchingRepo) {
+          const last = Number((await getMeta("last_card_push")) ?? 0);
+          if (!last || Date.now() - last >= 6 * 3600_000) void autoPushCard();
+        }
+
+        // dream pool: symbols drawn from your real recent memories (for sleep dreams)
+        {
+          const recent = await allMemories(30);
+          const syms = recent.map(dreamSymbol).filter((s) => s !== "💭");
+          if (syms.length) dreamPool = [...new Set(syms)];
+        }
+
+        // tiny-wins: coding streak (consecutive calendar days the app was opened)
+        {
+          const today = new Date().toDateString();
+          const lastDay = await getMeta("last_active_day");
+          let streak = Number((await getMeta("streak")) ?? 0) || 0;
+          if (lastDay !== today) {
+            const yesterday = new Date(Date.now() - 86_400_000).toDateString();
+            streak = lastDay === yesterday ? streak + 1 : 1;
+            await setMeta("streak", String(streak));
+            await setMeta("last_active_day", today);
+          }
+          if ([3, 5, 7, 14, 30, 60, 100, 200, 365].includes(streak) && !focusMode) {
+            if ((await getMeta("streak_seen")) !== String(streak)) {
+              await setMeta("streak_seen", String(streak));
+              const line = streakLine(streak);
+              setTimeout(() => {
+                say(line, 11000);
+                announce(line);
+              }, 15000);
+            }
+          }
+        }
+        // bond-tier ceremony: fire once when we cross into a deeper tier
+        const seenRaw = await getMeta("bond_tier_seen");
+        const seen = seenRaw === null ? -1 : Number(seenRaw);
+        await setMeta("bond_tier_seen", String(tierNow));
+        if (seen >= 0 && tierNow > seen && !focusMode) {
+          const label = BOND_STAGES[tierNow]?.label ?? "";
+          const line = bondUpLine(label);
+          setTimeout(() => {
+            bondCeremony = label;
+            say(line, 12000);
+            announce(line);
+            runDelight("fireworks", 3600);
+            setTimeout(() => (bondCeremony = null), 5200);
+          }, 9000); // deferred so it doesn't pile onto the greeting
+        }
       }
       await initPresence(
         { say, setState: (s) => (petState = s) },
@@ -966,7 +1700,35 @@
       const firstMet = await getMeta("first_met");
       const days = daysTogether(firstMet);
       let hadAnniversary = false;
-      if (days > 0 && (days % 365 === 0 || days % 30 === 0)) {
+
+      // pet birthday — the calendar day we first met (takes precedence over the
+      // generic anniversary so they never double up). Party hat for the session.
+      let isBday = false;
+      if (firstMet && days >= 1 && !focusMode) {
+        const fm = new Date(firstMet.replace(" ", "T"));
+        const now2 = new Date();
+        if (fm.getMonth() === now2.getMonth() && fm.getDate() === now2.getDate()) {
+          const yr = String(now2.getFullYear());
+          if ((await getMeta("last_birthday")) !== yr) {
+            isBday = true;
+            hadAnniversary = true; // suppress the generic anniversary + letter today
+            await setMeta("last_birthday", yr);
+            const years = Math.round(days / 365);
+            const line = years >= 1
+              ? `${years} year${years === 1 ? "" : "s"} since the day we met. 🎂 Thank you for staying.`
+              : "Happy day-we-met. 🎂 Glad it was you.";
+            setTimeout(() => {
+              birthday = true;
+              say(line, 15000);
+              announce(line);
+              runDelight("fireworks", 4000);
+              playVoiceClip(["congrats", "that-was-awesome", "awesome"], 0.85, 0.6);
+            }, 6500);
+          }
+        }
+      }
+
+      if (!isBday && days > 0 && (days % 365 === 0 || days % 30 === 0)) {
         const today = new Date().toDateString();
         if ((await getMeta("last_anniversary")) !== today) {
           hadAnniversary = true;
@@ -974,6 +1736,8 @@
           setTimeout(() => {
             say(anniversaryLine(days), 14000);
             runDelight("fireworks", 3200);
+            // yearly: the pet pulls up your Year in Review on its own
+            if (days % 365 === 0 && !focusMode) setTimeout(() => (panel = "wrapped"), 4000);
           }, 6000);
         }
       }
@@ -985,9 +1749,37 @@
           setTimeout(() => say(pick(letterReadyLines) + " (✉️ tap to read)", 11000), 7000);
         }
       }
+
+      // Sacred moments — at most one, ever; rare, deferred, never stacked on an anniversary.
+      if (!focusMode && !hadAnniversary) {
+        const ix = Number((await getMeta("interactions")) ?? 0) || 0;
+        const sacred = await resolveSacred(
+          {
+            days,
+            bondTier: bondStageIndex(days, ix),
+            hardRecent: await hardMoodCount(14),
+            goodTotal: (await moodCounts())["good"] ?? 0
+          },
+          getMeta,
+          setMeta
+        );
+        if (sacred) {
+          setTimeout(() => {
+            say(sacred.line, 16000);
+            announce(sacred.line);
+            runDelight(sacred.effect, 3600);
+          }, 12000);
+        }
+      }
+      // "Alongside you": greet the ongoing project / honour one we moved on from.
+      // Deferred so it never collides with the greeting or a sacred moment.
+      setTimeout(() => void alongsideLaunch(), 17000);
     })();
 
     const wanderTimer = setInterval(wanderTick, 4000);
+    const murmurTimer = setInterval(murmurTick, 70_000); // rare ambient quirk lines
+    const fidgetTimer = setInterval(fidgetTick, 2600); // ambient blinks / micro-fidgets
+    const dreamTimer = setInterval(dreamTick, 22_000); // dream bubbles while sleeping
     const autoTimer = setInterval(autoSwitchTick, 30_000);
     // Lonely Night Mode — the room dims after midnight
     const checkNight = () => {
@@ -1001,6 +1793,16 @@
     checkNight();
     const nightTimer = setInterval(checkNight, 5 * 60_000);
 
+    // Living card: auto-push on a 6h smart window while running (amends its own
+    // commit so the profile isn't spammed). Launch catch-up handles long-offline.
+    const cardPushTimer = setInterval(() => void autoPushCard(), 6 * 3600_000);
+
+    // Build/Training awareness: poll the GPU (self-disables if there's no NVIDIA).
+    if (trainAware) {
+      gpuTimer = setInterval(() => void pollGpu(), 5000);
+      void pollGpu();
+    }
+
     // Soft-failure net: turn uncaught errors / rejected promises into one warm
     // line. Ignore element resource errors (missing sprite/clip) — those are
     // designed to fall back, so `e.error` (script errors only) is the filter.
@@ -1013,14 +1815,42 @@
     let unlistenCommit: (() => void) | undefined;
     listen<string>("git-commit", (e) => onCommit(e.payload)).then((un) => (unlistenCommit = un));
 
+    // training awareness: react to log lines emitted by the Rust log watcher
+    let unlistenTrain: (() => void) | undefined;
+    let unlistenNewRun: (() => void) | undefined;
+    listen<string>("train-log", (e) => onTrainLine(e.payload)).then((un) => (unlistenTrain = un));
+    listen<string>("train-newfile", (e) => onNewRun(e.payload)).then((un) => (unlistenNewRun = un));
+
+    // global command palette — Alt+Space from anywhere summons the quick log bar
+    register("Alt+Space", (e) => {
+      if (e && typeof e === "object" && "state" in e && (e as { state?: string }).state === "Released") return;
+      void openCommand();
+    }).catch(() => {/* shortcut unavailable (e.g. browser dev) */});
+
+    // Return-home whistle — Alt+W recalls the window to the monitor centre
+    register("Alt+W", (e) => {
+      if (e && typeof e === "object" && "state" in e && (e as { state?: string }).state === "Released") return;
+      void returnHome();
+    }).catch(() => {});
+
     return () => {
       clearInterval(wanderTimer);
+      clearInterval(murmurTimer);
+      clearInterval(fidgetTimer);
+      clearInterval(dreamTimer);
       clearInterval(autoTimer);
       clearInterval(nightTimer);
+      clearInterval(cardPushTimer);
+      if (gpuTimer) clearInterval(gpuTimer);
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onRejection);
       unlistenCommit?.();
+      unlistenTrain?.();
+      unlistenNewRun?.();
       clearInterval(remotePollTimer);
+      clearInterval(toddlerTimer);
+      unregister("Alt+Space").catch(() => {});
+      unregister("Alt+W").catch(() => {});
       resizeUnlisten?.();
     };
   });
@@ -1064,6 +1894,22 @@
       else if (r < 0.83) dir = dir === 1 ? -1 : 1;
       return;
     }
+    // drift: a playful companion moves more; a calm one drifts gentler
+    if (tempCalm) {
+      if (r < 0.26) startMove("walk");
+      else if (r < 0.31) dir = dir === 1 ? -1 : 1;
+      else if (r < 0.325) runDelight("rain", 9000);
+      return;
+    }
+    if (tempPlay && r < 0.66) {
+      if (r < 0.22) startMove("run");
+      else if (r < 0.34) startMove("hop");
+      else if (r < 0.44) doOneShot("jump");
+      else if (r < 0.52) doOneShot("spin");
+      else if (r < 0.60) zoomies();
+      else spawnButterfly();
+      return;
+    }
     if (r < 0.24) startMove("walk");
     else if (r < 0.31) startMove("run");
     else if (r < 0.37) startMove("hop");
@@ -1077,6 +1923,31 @@
     // micro-delights: rare magic, never spammy
     else if (r < 0.572) runDelight("star", 2600); // shooting star
     else if (r < 0.578) runDelight("rain", 9000); // soft pixel rain
+  }
+
+  // Ambient murmurs — mostly the pet says nothing. Occasionally it surfaces a
+  // context-aware PERSONALITY QUIRK ("it's Monday…", "found another star"), or
+  // falls back to a persona/generic murmur. Shown in the bubble only (not spoken
+  // aloud) so it stays gentle and non-intrusive.
+  function murmurTick() {
+    if (busy() || petState === "sleeping") return;
+    if (focusMode || companionMode === "just_there") return; // stay quiet
+    if (Math.random() > 0.18) return; // rare on purpose
+    const now = new Date();
+    const ctx = {
+      hour: now.getHours(),
+      weekday: now.getDay(),
+      weather: weatherKind,
+      isNight,
+      isWinter
+    };
+    let line: string | null = null;
+    if (Math.random() < 0.6) line = quirkLine(dexId, ctx); // a quirk, if one fits now
+    if (!line) {
+      const pa = petPersona ? personaAmbient[petPersona.label] : undefined;
+      line = pick(pa && pa.length && Math.random() < 0.5 ? pa : ambientLines);
+    }
+    if (line) say(line, 5000);
   }
 
   function wanderMax(): number {
@@ -1111,7 +1982,34 @@
     setTimeout(() => (oneShot = "none"), kind === "jump" ? 700 : 650);
   }
 
+  // ---- ambient body language: subtle micro-fidgets that read as "alive" ----
+  // (transform-based, since the sprites are static images)
+  let lastPerk = 0;
+  function fidget(kind: "blink" | "tilt" | "perk") {
+    if (busy()) return;
+    oneShot = kind;
+    const ms = kind === "blink" ? 180 : kind === "perk" ? 380 : 720;
+    setTimeout(() => (oneShot = "none"), ms);
+  }
+  function fidgetTick() {
+    if (!idleNow || busy()) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const r = Math.random();
+    if (r < 0.42) fidget("blink");                 // frequent — a living blink
+    else if (r < 0.52) fidget("tilt");             // a little "hmm" head-tilt
+    else if (r < 0.57) dir = dir === 1 ? -1 : 1;   // glance the other way
+    else if (r < 0.585 && !comfortMode) triggerRitual(); // rare sleepy stretch
+    // otherwise: a still, calm moment (stillness is alive too)
+  }
+  // a tiny perk of attention when you type (only while idle, throttled)
+  function typingPerk() {
+    if (!idleNow || Date.now() - lastPerk < 1500) return;
+    lastPerk = Date.now();
+    fidget("perk");
+  }
+
   async function zoomies() {
+    void bumpCounter("t_play"); // drift: playful temperament
     for (let i = 0; i < 3; i++) {
       if (phase !== "home" || switchFx !== "none" || petState !== "idle") return;
       startMove("run");
@@ -1338,6 +2236,23 @@
     else if (Math.random() < 0.25) say(pick(pokeReactions), 2500);
   }
 
+  // "Today felt like…" — a lighter, one-word check-in that still feeds the mood timeline
+  const FELT_MOOD: Record<string, Mood> = {
+    good: "good", hopeful: "good", peaceful: "good",
+    messy: "uncertain", strange: "uncertain",
+    heavy: "low", hard: "low"
+  };
+  async function onTodayFelt(word: string) {
+    panel = "none";
+    poke();
+    await addMemory("mood", { mood: FELT_MOOD[word] ?? "uncertain", text: `today felt ${word}` });
+    await bumpCounter("interactions");
+    const warm = ["good", "hopeful", "peaceful"].includes(word);
+    say(warm ? "Glad today held some of that." : "Noted. Some days just are — I'm here.", 6500);
+    petState = "happy";
+    setTimeout(() => (petState = "idle"), 1200);
+  }
+
   async function onMoodSave(mood: Mood, note: string) {
     panel = "none";
     poke();
@@ -1354,6 +2269,7 @@
       const hrs = mood === "low" ? 24 : mood === "stressed" || mood === "frustrated" ? 14 : 0;
       if (hrs) {
         await setMeta("comfort_until", String(Date.now() + hrs * 3_600_000));
+        if (!comfortMode) void bumpCounter("t_comfort"); // drift: calm temperament
         comfortMode = true;
       }
     }
@@ -1448,7 +2364,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onShortcut} />
+<svelte:window onkeydown={onShortcut} onmousemove={onMouseLook} />
 
 <main
   class="widget"
@@ -1458,7 +2374,11 @@
   style="--orbr: {Math.round((imgSize + 84) / 2)}px; --wo: {widgetOpacity}"
   onpointerdown={() => phase === "home" && poke()}
   onpointerenter={() => (hovering = true)}
-  onpointerleave={() => (hovering = false)}
+  onpointerleave={() => {
+    hovering = false;
+    resetLook();
+  }}
+  onpointermove={trackLook}
   onwheel={onWheel}
 >
   {#if phase === "meeting"}
@@ -1479,16 +2399,37 @@
         canEvolve={hasEvolution(dexId)}
         onPick={switchTo}
         onAutoSave={setAutoSwitch}
+        onSaveName={async (newName) => {
+          petName = newName;
+          await setMeta("pet_name", newName);
+          say(`✦ Nickname saved — ${newName}!`, 3000);
+        }}
         onClose={() => (panel = "none")}
       />
     {:else if panel === "journey"}
-      <JourneyPanel {petName} onClose={() => (panel = "none")} />
+      <JourneyPanel
+        {petName}
+        {dexId}
+        temperament={petTemperament?.summary ?? ""}
+        onClose={() => (panel = "none")}
+        onChapterClose={(name) => {
+          poke();
+          runDelight("fireworks", 3200);
+          const line = chapterCloseLine(name);
+          say(line, 12000);
+          announce(line);
+        }}
+      />
     {:else if panel === "jar"}
       <GoodThingsJar onClose={() => (panel = "none")} />
     {:else if panel === "note"}
       <LeaveNote {petName} onClose={() => (panel = "none")} />
     {:else if panel === "vault"}
       <VaultPanel {petName} onClose={() => (panel = "none")} />
+    {:else if panel === "future"}
+      <FutureSelf {petName} onClose={() => (panel = "none")} />
+    {:else if panel === "today"}
+      <TodayFelt onPick={onTodayFelt} onClose={() => (panel = "none")} />
     {:else if panel === "code"}
       <CodePanel
         localPath={watchingRepo}
@@ -1501,8 +2442,42 @@
         onSaveToken={setToken}
         onClearToken={clearToken}
         onTest={testReact}
+        onShowcase={() => (panel = "showcase")}
+        onCard={() => generateCard(false)}
         onClose={() => (panel = "none")}
+        {gpuAvailable}
+        {gpu}
+        {trainAware}
+        onToggleTrain={(on) => void setTrainAware(on)}
+        {logPath}
+        {trainStatus}
+        onSetLog={(p) => void setLogPath(p)}
+        onStopLog={() => void stopLog()}
+        onTestTrain={() => trainReact("done")}
+        onTestCrash={() => trainReact("crash")}
       />
+    {/if}
+
+    {#if panel === "wrapped"}
+      <YearInReview {petName} {dexId} shiny={isShiny} onClose={() => (panel = "none")} />
+    {/if}
+
+    {#if panel === "showcase"}
+      <Showcase {petName} {dexId} shiny={isShiny} handle={ghHandle} onClose={() => (panel = "none")} />
+    {/if}
+
+    {#if bondCeremony}
+      <div class="bondceremony" aria-hidden="true">
+        <div class="bc-inner">
+          <div class="bc-spark">✦</div>
+          <div class="bc-label">{bondCeremony}</div>
+          <div class="bc-sub">bond deepened</div>
+        </div>
+      </div>
+    {/if}
+
+    {#if cmdOpen}
+      <CommandBar onRun={runCommand} onClose={() => (cmdOpen = false)} />
     {/if}
 
     {#if isNight}
@@ -1597,6 +2572,34 @@
     {/if}
 
     <div class="stage">
+      {#if habitatOn}
+        <!-- Type Habitat: a Tiny Living Sanctuary chosen by the pet's type -->
+        <div class="roombg" style="opacity: {0.96 * widgetOpacity}" aria-hidden="true">
+          <div class="r-wall" style="background: linear-gradient(180deg, {currentBiome.wall[0]}, {currentBiome.wall[1]})"></div>
+          <!-- the window shows the biome's outside world (shape varies per biome) -->
+          <div class="r-window w-{currentBiome.window}" class:moonlit={isNight} style="--lite: {currentBiome.light}">
+            <div class="r-scene sc-{currentBiome.scene}" style="--lite: {currentBiome.light}"></div>
+            {#if weatherEnabled && weatherKind === "rain"}<div class="r-rain"></div>{/if}
+          </div>
+          <div class="r-floor" style="background: linear-gradient(180deg, {currentBiome.floor[0]}, {currentBiome.floor[1]})"></div>
+          <div class="r-seam"></div>
+          <div class="r-beam" style="--lite: {currentBiome.light}"></div>
+          <!-- lantern: midground identity prop, warmer with bond -->
+          <div class="r-lantern" style="--lite: {currentBiome.light}; opacity: {lanternGlow}"></div>
+          <div class="r-pool" style="--lite: {currentBiome.light}"></div>
+          <!-- ground interaction: water ripples, embers, moss, snow… by type -->
+          <div class="r-ground g-{currentBiome.ground}" style="--g: {currentBiome.groundColor}"></div>
+          <div class="r-shadow"></div>
+          {#each PARTICLES as m (m.i)}
+            <span
+              class="r-mote p-{currentBiome.particle}"
+              style="left: {m.x}%; bottom: {m.y}%; width: {m.s}px; height: {m.s}px; background: {currentBiome.particleColor}; animation-delay: {m.d}s; animation-duration: {m.dur}s"
+            ></span>
+          {/each}
+        </div>
+        <!-- foreground vignette: sits in front of the pet → real depth -->
+        <div class="roomfg" aria-hidden="true"></div>
+      {/if}
       {#if switchFx !== "none"}
         <img
           class="ash"
@@ -1627,7 +2630,8 @@
         class:moving
         class:running
         class:hopping
-        style="transform: translateX({petX}px); transition-duration: {moveDur}s; --dir: {dir}; --psize: {imgSize}px; --atkcolor: {attackMove?.color ?? '#fff'}"
+        class:inroom={habitatOn}
+        style="transform: translateX({petX}px); transition-duration: {moveDur}s; --dir: {dir}; --psize: {imgSize}px; --atkcolor: {attackMove?.color ?? '#fff'}; --rim: {currentBiome.rim || 'transparent'}"
       >
         <Bubble text={bubble} />
         {#if attackMove}
@@ -1642,9 +2646,18 @@
           class:jump={oneShot === "jump"}
           class:spin={oneShot === "spin"}
           class:dust={oneShot === "dust"}
+          class:blink={oneShot === "blink"}
+          class:tilt={oneShot === "tilt"}
+          class:perk={oneShot === "perk"}
           class:stretch={ritualStretch}
           class:eat={eating}
         >
+          {#if birthday}
+            <span class="bday-hat" aria-hidden="true">🎉</span>
+          {/if}
+          {#if dreaming}
+            <span class="dreambubble" aria-hidden="true">💭{dreaming}</span>
+          {/if}
           {#if evoActive}
             <!-- classic evolution: a white silhouette flickering between the two forms -->
             <img
@@ -1667,6 +2680,10 @@
               flip={dir === 1}
               size={imgSize}
               shiny={isShiny}
+              type={curType}
+              {lookX}
+              {lookY}
+              {lookTilt}
               onTap={onPetTap}
               onPet={onPetStroke}
             />
@@ -1733,6 +2750,7 @@
       petSize={imgSize}
       {muted}
       {focusMode}
+      roaming={toddler}
       {companionMode}
       {nightForced}
       {bgStyle}
@@ -1746,11 +2764,14 @@
       onToggleMute={toggleMute}
       onToggleNight={toggleNight}
       onToggleFocus={toggleFocus}
+      onToggleRoam={toggleToddler}
       onCycleMode={cycleMode}
+      onCycleRoom={cycleRoom}
       onCycleBg={cycleBg}
       onCycleWeather={cycleWeatherManual}
       onNudgeScale={nudgeScale}
       onToggleSoundPanel={() => (soundPanel = !soundPanel)}
+      onPushCard={pushCard}
       onQuit={quit}
       onMenuOpen={() => { petState = 'happy'; setTimeout(() => (petState = 'idle'), 800); }}
       onDirHint={onRadialDirHint}
@@ -1827,6 +2848,612 @@
   .draglayer:active {
     cursor: grabbing;
   }
+  /* ---- cozy room: a micro-diorama (light + depth + grounding), not props ---- */
+  .roombg {
+    position: absolute;
+    inset: 14px;
+    border-radius: 20px;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    border: 1px solid rgba(180, 160, 240, 0.12);
+    /* corner vignette: pulls the eye to the centre, sells "a place" */
+    box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.6), inset 0 0 18px rgba(0, 0, 0, 0.4);
+    animation: roomfade 0.6s ease;
+  }
+  @keyframes roomfade {
+    from { opacity: 0 !important; }
+  }
+  .r-wall {
+    position: absolute;
+    inset: 0 0 34% 0; /* top 66% is wall */
+  }
+  .r-floor {
+    position: absolute;
+    inset: 66% 0 0 0; /* bottom 34% is floor */
+  }
+  /* the wall→floor seam: a thin lit baseboard that grounds the whole scene */
+  .r-seam {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 66%;
+    height: 2px;
+    margin-top: -1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+  }
+  /* a big soft window in the upper-left of the wall — the room's light source */
+  .r-window {
+    position: absolute;
+    left: 9%;
+    top: 9%;
+    width: 40%;
+    height: 44%;
+    border-radius: 12px;
+    border: 3px solid rgba(14, 11, 22, 0.82);
+    background: linear-gradient(155deg, var(--lite), rgba(16, 12, 26, 0.96) 80%);
+    box-shadow: 0 0 26px var(--lite), inset 0 0 16px rgba(255, 255, 255, 0.22),
+      0 5px 14px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+  .r-window::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -1px;
+    bottom: -1px;
+    width: 2px;
+    margin-left: -1px;
+    background: rgba(14, 11, 22, 0.7);
+    z-index: 2; /* mullion sits over the scene */
+  }
+  .r-window::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -1px;
+    right: -1px;
+    height: 2px;
+    margin-top: -1px;
+    background: rgba(14, 11, 22, 0.7);
+    z-index: 2;
+  }
+  /* ---- biome-specific window silhouettes (each biome = a different world) ---- */
+  /* wide low ocean opening — landscape, no cross bars */
+  .r-window.w-ocean {
+    left: 8%;
+    top: 11%;
+    width: 56%;
+    height: 33%;
+    border-radius: 12px;
+  }
+  .r-window.w-ocean::before,
+  .r-window.w-ocean::after { display: none; }
+  /* arched forge mouth (fire) — one vertical glazing bar under the crown */
+  .r-window.w-arch {
+    left: 10%;
+    top: 9%;
+    width: 38%;
+    height: 46%;
+    border-radius: 50% 50% 12px 12px / 62% 62% 12px 12px;
+  }
+  .r-window.w-arch::after { display: none; }
+  .r-window.w-arch::before { top: 18%; }
+  /* tall arched greenhouse glass */
+  .r-window.w-greenhouse {
+    left: 11%;
+    top: 7%;
+    width: 36%;
+    height: 50%;
+    border-radius: 50% 50% 6px 6px / 34% 34% 6px 6px;
+    border-color: rgba(70, 92, 50, 0.85);
+  }
+  .r-window.w-greenhouse::before { top: 14%; }
+  /* monitor / light panel (electric) — thin bezel, no mullion */
+  .r-window.w-panel {
+    left: 9%;
+    top: 11%;
+    width: 46%;
+    height: 38%;
+    border-radius: 8px;
+    border-width: 4px;
+    border-color: rgba(30, 40, 58, 0.92);
+    box-shadow: 0 0 22px var(--lite), inset 0 0 18px rgba(120, 220, 255, 0.25),
+      0 5px 14px rgba(0, 0, 0, 0.5);
+  }
+  .r-window.w-panel::before,
+  .r-window.w-panel::after { display: none; }
+  /* organic rock opening (cave) */
+  .r-window.w-cave {
+    left: 9%;
+    top: 10%;
+    width: 42%;
+    height: 44%;
+    border-radius: 58% 42% 52% 48% / 50% 56% 44% 50%;
+    border-color: rgba(40, 30, 18, 0.85);
+  }
+  .r-window.w-cave::before,
+  .r-window.w-cave::after { display: none; }
+  /* porthole / moon window (ghost) */
+  .r-window.w-round {
+    left: 11%;
+    top: 9%;
+    width: 38%;
+    height: 42%;
+    border-radius: 50%;
+    border-width: 4px;
+  }
+  .r-window.w-round::before,
+  .r-window.w-round::after { display: none; }
+  /* frosted cabin pane (ice) */
+  .r-window.w-frost {
+    border-color: rgba(150, 175, 200, 0.7);
+    box-shadow: 0 0 22px #dbeeff, inset 0 0 16px rgba(255, 255, 255, 0.4),
+      0 5px 14px rgba(0, 0, 0, 0.4);
+  }
+  /* pointed mountain-shrine opening (dragon) */
+  .r-window.w-shrine {
+    left: 11%;
+    top: 7%;
+    width: 34%;
+    height: 50%;
+    clip-path: polygon(50% 0, 100% 22%, 100% 100%, 0 100%, 0 22%);
+    border: none;
+    box-shadow: 0 0 22px var(--lite);
+  }
+  .r-window.w-shrine::before,
+  .r-window.w-shrine::after { display: none; }
+  /* observatory dome (psychic) */
+  .r-window.w-dome {
+    left: 10%;
+    top: 8%;
+    width: 40%;
+    height: 46%;
+    border-radius: 50% 50% 10px 10px / 78% 78% 10px 10px;
+  }
+  .r-window.w-dome::after { display: none; }
+  .r-window.w-dome::before { top: 30%; }
+  /* a diagonal shaft of light spilling from the window down onto the floor */
+  .r-beam {
+    position: absolute;
+    left: 9%;
+    top: 16%;
+    width: 64%;
+    height: 74%;
+    background: linear-gradient(138deg, var(--lite), transparent 60%);
+    opacity: 0.24;
+    clip-path: polygon(0 0, 42% 0, 100% 100%, 0 72%);
+    filter: blur(3px);
+  }
+  /* the warm pool where the beam lands on the floor */
+  .r-pool {
+    position: absolute;
+    left: 30%;
+    bottom: 13%;
+    width: 48%;
+    height: 30px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse, var(--lite), transparent 70%);
+    opacity: 0.26;
+    filter: blur(2px);
+  }
+  /* a contact shadow directly under the pet's body — grounding (dark core) */
+  .r-shadow {
+    position: absolute;
+    left: 50%;
+    bottom: 23%;
+    width: 40%;
+    height: 15px;
+    margin-left: -20%;
+    border-radius: 50%;
+    background: radial-gradient(
+      ellipse,
+      rgba(0, 0, 0, 0.62) 0%,
+      rgba(0, 0, 0, 0.42) 38%,
+      transparent 74%
+    );
+    filter: blur(1px);
+  }
+  /* rim-light: the window-side edge of the sprite picks up the room's light */
+  .mover.inroom .petwrap {
+    filter: drop-shadow(-2px -3px 2px var(--rim)) drop-shadow(0 4px 4px rgba(0, 0, 0, 0.35));
+  }
+  /* ---- window scenes: what the outside world looks like per biome ---- */
+  .r-scene {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+  .sc-plain {
+    background: linear-gradient(155deg, var(--lite), transparent 75%);
+    opacity: 0.5;
+  }
+  .sc-ocean {
+    background: linear-gradient(
+      180deg,
+      rgba(70, 100, 150, 0.55) 0%,
+      rgba(24, 46, 78, 0.9) 50%,
+      rgba(46, 86, 128, 0.75) 52%,
+      rgba(10, 26, 46, 0.95) 100%
+    );
+  }
+  .sc-ocean::before {
+    content: "";
+    position: absolute;
+    left: 60%;
+    top: 12%;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #eaf2ff, rgba(200, 220, 255, 0.2) 70%, transparent);
+    box-shadow: 0 0 14px #cfe0ff;
+  }
+  .sc-ocean::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 46%;
+    background: repeating-linear-gradient(180deg, rgba(190, 215, 255, 0.18) 0 1px, transparent 1px 6px);
+    animation: wave 5s linear infinite;
+  }
+  @keyframes wave {
+    from { background-position: 0 0; }
+    to { background-position: 0 6px; }
+  }
+  .sc-forest {
+    background: radial-gradient(120% 90% at 50% 0%, rgba(150, 190, 110, 0.5), transparent 60%),
+      linear-gradient(180deg, rgba(60, 95, 50, 0.85), rgba(24, 40, 20, 0.95));
+  }
+  .sc-forest::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 25% 60%, rgba(120, 170, 90, 0.5), transparent 30%),
+      radial-gradient(circle at 70% 42%, rgba(150, 200, 110, 0.45), transparent 28%);
+  }
+  /* soft diagonal light rays through the greenhouse glass */
+  .sc-forest::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      115deg,
+      transparent 0%,
+      rgba(220, 240, 170, 0.35) 18%,
+      transparent 30%,
+      rgba(220, 240, 170, 0.22) 48%,
+      transparent 62%
+    );
+    animation: rays 7s ease-in-out infinite;
+  }
+  @keyframes rays {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.78; }
+  }
+  /* forge: warm glow rising from below + heat shimmer (fire) */
+  .sc-forge {
+    background: radial-gradient(
+      circle at 50% 78%,
+      rgba(255, 165, 75, 0.7),
+      rgba(120, 42, 16, 0.92) 58%,
+      rgba(40, 16, 8, 0.96)
+    );
+  }
+  .sc-forge::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 90%, rgba(255, 212, 120, 0.6), transparent 46%);
+    animation: heatshimmer 3s ease-in-out infinite;
+  }
+  @keyframes heatshimmer {
+    0%, 100% { transform: translateY(0) scaleY(1); opacity: 0.6; }
+    50% { transform: translateY(-2px) scaleY(1.05); opacity: 0.88; }
+  }
+  .sc-snowfall {
+    background: linear-gradient(180deg, rgba(90, 120, 150, 0.8), rgba(40, 58, 78, 0.95));
+  }
+  .sc-snowfall::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(2px 2px at 20% 10%, #fff, transparent),
+      radial-gradient(2px 2px at 60% 30%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 40% 60%, #fff, transparent),
+      radial-gradient(2px 2px at 82% 50%, #fff, transparent);
+    animation: snowdown 4s linear infinite;
+  }
+  @keyframes snowdown {
+    from { background-position: 0 0, 0 0, 0 0, 0 0; }
+    to { background-position: 0 40px, 0 36px, 0 44px, 0 38px; }
+  }
+  .sc-stars {
+    background: linear-gradient(180deg, rgba(20, 34, 74, 0.95), rgba(6, 12, 30, 0.98));
+  }
+  .sc-stars::before,
+  .sc-cosmos::after,
+  .sc-city::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(1.5px 1.5px at 20% 25%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 55% 15%, #dbe6ff, transparent),
+      radial-gradient(1px 1px at 75% 40%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 35% 55%, #fff, transparent),
+      radial-gradient(1px 1px at 85% 65%, #cde, transparent);
+    animation: twk 3.5s ease-in-out infinite;
+  }
+  @keyframes twk {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .sc-city {
+    background: linear-gradient(180deg, rgba(44, 34, 80, 0.9), rgba(18, 12, 32, 0.97));
+  }
+  .sc-city::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 55%;
+    background: repeating-linear-gradient(
+      90deg,
+      rgba(8, 6, 16, 0.95) 0 9px,
+      transparent 9px 14px,
+      rgba(8, 6, 16, 0.95) 14px 20px,
+      transparent 20px 26px
+    );
+  }
+  .sc-cave {
+    background: radial-gradient(circle at 55% 40%, rgba(150, 110, 60, 0.45), rgba(20, 14, 8, 0.96) 70%);
+  }
+  .sc-cave::after {
+    content: "";
+    position: absolute;
+    left: 30%;
+    top: 52%;
+    width: 8px;
+    height: 8px;
+    background: radial-gradient(circle, #bfe6ff, transparent);
+    box-shadow: 0 0 8px #9fd0ff;
+    animation: twk 3s ease-in-out infinite;
+  }
+  .sc-neon {
+    background: linear-gradient(180deg, rgba(14, 22, 38, 0.95), rgba(6, 10, 20, 0.98));
+  }
+  .sc-neon::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      180deg,
+      transparent 0 8px,
+      rgba(120, 220, 255, 0.35) 8px 9px,
+      transparent 9px 18px,
+      rgba(255, 120, 200, 0.3) 18px 19px,
+      transparent 19px 28px
+    );
+    animation: neon 4s linear infinite;
+  }
+  @keyframes neon {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+  }
+  .sc-cosmos {
+    background: radial-gradient(circle at 42% 35%, rgba(170, 90, 210, 0.55), rgba(18, 10, 40, 0.96) 70%);
+  }
+  /* ---- the lantern: a warm midground identity prop (warmer with bond) ---- */
+  .r-lantern {
+    position: absolute;
+    left: 80%;
+    bottom: 30%;
+    width: 16px;
+    height: 22px;
+    border-radius: 6px;
+    background: radial-gradient(circle at 50% 40%, var(--lite), rgba(40, 28, 16, 0.9));
+    box-shadow: 0 0 18px var(--lite), 0 0 7px var(--lite);
+    animation: lampflick 4s ease-in-out infinite;
+  }
+  @keyframes lampflick {
+    0%, 100% { filter: brightness(1); }
+    45% { filter: brightness(1.12); }
+    70% { filter: brightness(0.95); }
+  }
+  /* ---- ground interaction under the pet, per biome type ---- */
+  .r-ground {
+    position: absolute;
+    left: 50%;
+    bottom: 16%;
+    width: 52%;
+    height: 20px;
+    margin-left: -26%;
+    border-radius: 50%;
+  }
+  .g-warm,
+  .g-moss {
+    background: radial-gradient(ellipse, var(--g), transparent 71%);
+    opacity: 0.5;
+    filter: blur(2px);
+  }
+  .g-stone {
+    background: radial-gradient(ellipse, var(--g), transparent 74%);
+    opacity: 0.4;
+    filter: blur(1.5px);
+  }
+  .g-snow {
+    background: radial-gradient(ellipse, var(--g), transparent 72%);
+    opacity: 0.6;
+    filter: blur(2px);
+  }
+  .g-ember {
+    background: radial-gradient(ellipse, var(--g), transparent 68%);
+    opacity: 0.55;
+    filter: blur(2px);
+    animation: emberflick 3.2s ease-in-out infinite;
+  }
+  .g-cyber {
+    height: 8px;
+    bottom: 18%;
+    border: 1.5px solid var(--g);
+    box-shadow: 0 0 8px var(--g), inset 0 0 6px var(--g);
+    opacity: 0.6;
+    animation: sparkpulse 2.4s ease-in-out infinite;
+  }
+  .g-fog {
+    background: radial-gradient(ellipse, var(--g), transparent 75%);
+    opacity: 0.5;
+    filter: blur(3px);
+    animation: fogdrift 6s ease-in-out infinite;
+  }
+  .g-cosmic {
+    background: radial-gradient(ellipse, var(--g), transparent 70%);
+    opacity: 0.55;
+    filter: blur(1.5px);
+    box-shadow: 0 0 10px var(--g);
+  }
+  /* water: a reflective puddle with slow concentric ripples (gold standard) */
+  .g-water {
+    background: radial-gradient(ellipse at 50% 50%, var(--g), transparent 70%);
+    opacity: 0.6;
+    filter: blur(1px);
+  }
+  .g-water::before,
+  .g-water::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    border: 1.5px solid var(--g);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    animation: ripple 4.4s ease-out infinite;
+  }
+  .g-water::after { animation-delay: 2.2s; }
+  @keyframes ripple {
+    0% { width: 12%; height: 24%; opacity: 0.55; }
+    100% { width: 94%; height: 135%; opacity: 0; }
+  }
+  @keyframes emberflick {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 0.66; }
+  }
+  @keyframes sparkpulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.7; }
+  }
+  @keyframes fogdrift {
+    0%, 100% { transform: translateX(-4px); }
+    50% { transform: translateX(4px); }
+  }
+  /* ---- ambient particles: kind comes from the biome ---- */
+  .r-mote {
+    position: absolute;
+    border-radius: 50%;
+    opacity: 0;
+    filter: blur(0.5px);
+  }
+  .p-dust { animation: pRise linear infinite; }
+  .p-pollen { animation: pRise linear infinite; filter: blur(0.8px); }
+  .p-firefly {
+    animation: pFirefly ease-in-out infinite;
+    box-shadow: 0 0 5px rgba(255, 235, 150, 0.85);
+    filter: blur(0.3px);
+  }
+  .p-ember {
+    animation: pEmber ease-in infinite;
+    box-shadow: 0 0 5px rgba(255, 140, 60, 0.8);
+  }
+  .p-spark {
+    animation: pSpark linear infinite;
+    box-shadow: 0 0 5px rgba(150, 230, 255, 0.9);
+  }
+  .p-snow { animation: pSnow linear infinite; filter: blur(0.4px); }
+  .p-star { animation: pStar ease-in-out infinite; }
+  .p-mist {
+    animation: pMist ease-in-out infinite;
+    filter: blur(2px);
+    border-radius: 40%;
+  }
+  @keyframes pRise {
+    0% { opacity: 0; transform: translateY(0) translateX(0); }
+    15% { opacity: 0.7; }
+    50% { opacity: 0.55; transform: translateY(-24px) translateX(6px); }
+    100% { opacity: 0; transform: translateY(-50px) translateX(-4px); }
+  }
+  @keyframes pFirefly {
+    0%, 100% { opacity: 0; transform: translateY(0); }
+    20% { opacity: 0.95; }
+    40% { opacity: 0.25; }
+    60% { opacity: 0.9; transform: translateY(-16px) translateX(8px); }
+    80% { opacity: 0.3; }
+    95% { opacity: 0.6; transform: translateY(-30px) translateX(-2px); }
+  }
+  @keyframes pEmber {
+    0% { opacity: 0; transform: translateY(0) scale(1); }
+    15% { opacity: 0.9; }
+    70% { opacity: 0.5; }
+    100% { opacity: 0; transform: translateY(-44px) translateX(5px) scale(0.6); }
+  }
+  @keyframes pSpark {
+    0%, 100% { opacity: 0; }
+    10% { opacity: 0.95; }
+    14% { opacity: 0.2; }
+    22% { opacity: 0.85; }
+    60% { opacity: 0; transform: translateY(-6px) translateX(4px); }
+  }
+  @keyframes pSnow {
+    0% { opacity: 0; transform: translateY(-6px) translateX(0); }
+    12% { opacity: 0.85; }
+    100% { opacity: 0; transform: translateY(40px) translateX(8px); }
+  }
+  @keyframes pStar {
+    0%, 100% { opacity: 0.15; }
+    50% { opacity: 0.95; }
+  }
+  @keyframes pMist {
+    0% { opacity: 0; transform: translateX(0); }
+    25% { opacity: 0.5; }
+    75% { opacity: 0.45; }
+    100% { opacity: 0; transform: translateX(26px); }
+  }
+  /* rain streaks inside the window pane (when weather is raining) */
+  .r-rain {
+    position: absolute;
+    inset: 0;
+    background-image: repeating-linear-gradient(
+      76deg,
+      rgba(255, 255, 255, 0.16) 0 1px,
+      transparent 1px 7px
+    );
+    opacity: 0.55;
+    animation: wrain 0.5s linear infinite;
+  }
+  @keyframes wrain {
+    from { background-position: 0 0; }
+    to { background-position: 7px 22px; }
+  }
+  /* cooler moon-tinted pane at night */
+  .r-window.moonlit {
+    box-shadow: 0 0 26px #bcd2ff, inset 0 0 16px rgba(255, 255, 255, 0.28),
+      0 5px 14px rgba(0, 0, 0, 0.45);
+    filter: hue-rotate(8deg) brightness(1.04);
+  }
+  /* foreground vignette in front of the pet → cinematic depth */
+  .roomfg {
+    position: absolute;
+    inset: 14px;
+    border-radius: 20px;
+    z-index: 2;
+    pointer-events: none;
+    box-shadow: inset 0 -34px 44px rgba(0, 0, 0, 0.4),
+      inset 0 0 46px rgba(0, 0, 0, 0.22);
+  }
+
   .stage {
     position: absolute;
     inset: 0;
@@ -1869,7 +3496,11 @@
     align-items: center;
     gap: 8px;
     transition-property: transform;
-    transition-timing-function: linear;
+    /* spring: glide, slight overshoot, settle — motion reads as intent, not a slide */
+    transition-timing-function: cubic-bezier(0.32, 1.28, 0.5, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mover { transition-timing-function: ease-out; }
   }
 
   /* transparency slider along the bottom, revealed on hover */
@@ -2018,6 +3649,129 @@
     55%  { transform: rotate(-4deg); }
     75%  { transform: rotate(3deg); }
     100% { transform: rotate(0deg); }
+  }
+
+  /* ---- ambient micro-fidgets (body language) ---- */
+  .petwrap.blink,
+  .petwrap.tilt {
+    transform-origin: 50% 100%;
+  }
+  .petwrap.blink {
+    animation: blink 0.18s ease;
+  }
+  @keyframes blink {
+    0%, 100% { transform: scaleY(1); }
+    50%      { transform: scaleY(0.8); }
+  }
+  .petwrap.tilt {
+    animation: tilt 0.72s ease-in-out;
+  }
+  @keyframes tilt {
+    0%, 100%  { transform: rotate(0deg); }
+    30%, 70%  { transform: rotate(-5deg); }
+  }
+  .petwrap.perk {
+    animation: perk 0.38s cubic-bezier(0.34, 1.4, 0.6, 1);
+  }
+  @keyframes perk {
+    0%, 100% { transform: translateY(0) scale(1); }
+    45%      { transform: translateY(-3px) scale(1.05); }
+  }
+
+  /* ---- bond-tier ceremony banner ---- */
+  .bondceremony {
+    position: absolute;
+    inset: 0;
+    z-index: 14;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(240, 182, 106, 0.16), transparent 65%);
+    animation: bcfade 5.2s ease both;
+  }
+  .bc-inner {
+    text-align: center;
+    color: #ece6f7;
+    animation: bcpop 0.7s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+  }
+  .bc-spark {
+    font-size: 30px;
+    color: #f0b66a;
+    filter: drop-shadow(0 0 12px rgba(240, 182, 106, 0.7));
+    animation: bcspin 5s ease;
+  }
+  .bc-label {
+    font-size: 21px;
+    font-weight: 800;
+    color: #f0d9a6;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+    margin-top: 2px;
+  }
+  .bc-sub {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #b6acce;
+    margin-top: 3px;
+  }
+  @keyframes bcfade {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    82% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  @keyframes bcpop {
+    from { transform: scale(0.7); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  @keyframes bcspin {
+    0% { transform: rotate(0) scale(1); }
+    100% { transform: rotate(360deg) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bondceremony, .bc-inner, .bc-spark { animation-duration: 0.01s; }
+  }
+
+  /* ---- birthday party hat (day-we-met) ---- */
+  .bday-hat {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 22px;
+    z-index: 6;
+    pointer-events: none;
+    animation: bdaybob 2.2s ease-in-out infinite;
+    filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.4));
+  }
+  @keyframes bdaybob {
+    0%, 100% { transform: translateX(-50%) translateY(0) rotate(-6deg); }
+    50% { transform: translateX(-50%) translateY(-4px) rotate(6deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bday-hat { animation: none; }
+  }
+
+  /* ---- sleep dream bubble ---- */
+  .dreambubble {
+    position: absolute;
+    top: -18px;
+    left: 58%;
+    z-index: 6;
+    font-size: 16px;
+    pointer-events: none;
+    white-space: nowrap;
+    animation: dreamfloat 5.2s ease-in-out both;
+  }
+  @keyframes dreamfloat {
+    0% { opacity: 0; transform: translateY(6px) scale(0.8); }
+    18% { opacity: 0.95; transform: translateY(0) scale(1); }
+    82% { opacity: 0.95; transform: translateY(-6px); }
+    100% { opacity: 0; transform: translateY(-12px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dreambubble { animation: none; opacity: 0.9; }
   }
 
   /* ---- butterfly visitor ---- */

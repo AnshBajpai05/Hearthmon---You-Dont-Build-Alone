@@ -9,6 +9,10 @@
     flip?: boolean;
     size?: number;
     shiny?: boolean;
+    type?: string; // primary type → drives the idle behaviour
+    lookX?: number; // head-tracking offset px
+    lookY?: number;
+    lookTilt?: number; // head-tracking tilt deg
     onTap?: () => void;
     onPet?: () => void;
   }
@@ -19,6 +23,10 @@
     flip = false,
     size = 110,
     shiny = false,
+    type = "normal",
+    lookX = 0,
+    lookY = 0,
+    lookTilt = 0,
     onTap,
     onPet
   }: Props = $props();
@@ -29,6 +37,87 @@
       ? fallbackUrl(dexId, shiny)
       : spriteUrl(dexId, shiny)
   );
+
+  // type-specific idle behaviour (leaf-sway, mane-flicker, neck-sway, …)
+  const fx = $derived.by(() => {
+    switch (type) {
+      case "grass":
+      case "bug":
+        return "grass"; // leaf sway
+      case "fire":
+        return "fire"; // mane flicker
+      case "water":
+        return "water"; // neck sway
+      case "ice":
+        return "ice"; // shiver
+      case "electric":
+      case "steel":
+        return "electric"; // twitch
+      case "psychic":
+      case "fairy":
+        return "psychic"; // levitate
+      case "ghost":
+      case "dark":
+        return "ghost"; // waver
+      case "dragon":
+      case "flying":
+        return "dragon"; // hover
+      default:
+        return ""; // steadfast — just breathing
+    }
+  });
+
+  // Content-fit scale: tiny Pokémon barely fill the sprite frame, so they look
+  // small. Measure the opaque bounding box off-screen and enlarge so every mon
+  // is framed intentionally. Best-effort — the visible sprite is never affected.
+  let contentScale = $state(1);
+  $effect(() => {
+    const url = src; // track
+    let cancelled = false;
+    const probe = new Image();
+    probe.crossOrigin = "anonymous";
+    probe.onload = () => {
+      if (cancelled) return;
+      try {
+        const n = 96;
+        const c = document.createElement("canvas");
+        c.width = c.height = n;
+        const g = c.getContext("2d", { willReadFrequently: true });
+        if (!g) return;
+        g.imageSmoothingEnabled = false;
+        g.drawImage(probe, 0, 0, n, n);
+        const d = g.getImageData(0, 0, n, n).data;
+        let minX = n, minY = n, maxX = 0, maxY = 0, any = false;
+        for (let y = 0; y < n; y++) {
+          for (let x = 0; x < n; x++) {
+            if (d[(y * n + x) * 4 + 3] > 12) {
+              any = true;
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (!any) {
+          contentScale = 1;
+          return;
+        }
+        const frac = Math.max(maxX - minX + 1, maxY - minY + 1) / n;
+        contentScale = Math.min(1.55, Math.max(1, 0.8 / frac));
+      } catch {
+        contentScale = 1; // cross-origin tainted — leave as-is
+      }
+    };
+    probe.onerror = () => {
+      if (!cancelled) contentScale = 1;
+    };
+    probe.src = url;
+    return () => {
+      cancelled = true;
+    };
+  });
+  const drawSize = $derived(Math.round(size * contentScale));
 
   // ---- touch & petting (Talking-Tom style) ----
   // A still click = a tap (bounce). Stroking across the pet = petting (hearts + wiggle).
@@ -102,13 +191,17 @@
   {#each hearts as h (h.id)}
     <span class="heart" style="left: {h.x}%" onanimationend={() => dropHeart(h.id)}>♥</span>
   {/each}
-  <img
-    {src}
-    alt={name}
-    style="width: {size}px; height: {size}px"
-    draggable="false"
-    onerror={() => (failedId = dexId)}
-  />
+  <div class="petlook" style="transform: rotate({lookTilt}deg) translate({lookX}px, {lookY}px)">
+    <div class="petfx" class:fx-grass={fx === "grass"} class:fx-fire={fx === "fire"} class:fx-water={fx === "water"} class:fx-ice={fx === "ice"} class:fx-electric={fx === "electric"} class:fx-psychic={fx === "psychic"} class:fx-ghost={fx === "ghost"} class:fx-dragon={fx === "dragon"}>
+      <img
+        {src}
+        alt={name}
+        style="width: {drawSize}px; height: {drawSize}px"
+        draggable="false"
+        onerror={() => (failedId = dexId)}
+      />
+    </div>
+  </div>
   <div class="shadow" style="width: {Math.round(size * 0.62)}px" aria-hidden="true"></div>
 </div>
 
@@ -164,6 +257,74 @@
   @keyframes breathe {
     0%, 100% { transform: scale(1, 0.96); }
     50% { transform: scale(1.015, 1); }
+  }
+  /* Aliveness: a gentle breath while awake & idle (not while petting). */
+  .pet.idle:not(.petting) img {
+    animation: idlebreath 4.2s ease-in-out infinite;
+    transform-origin: 50% 100%;
+  }
+  @keyframes idlebreath {
+    0%, 100% { transform: scale(1, 1); }
+    50% { transform: scale(1.012, 1.016); }
+  }
+  /* head-tracking: lean toward the cursor; smooth lerp via transition */
+  .petlook {
+    display: block;
+    transform-origin: 50% 90%;
+    transition: transform 0.22s ease-out;
+    will-change: transform;
+  }
+  /* ---- type-specific idle behaviours (composed over the breath on the img) ---- */
+  .petfx {
+    display: block;
+    transform-origin: 50% 92%;
+  }
+  .pet.idle:not(.petting) .fx-grass { animation: leafsway 4.2s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-fire { animation: maneflick 2.6s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-water { animation: necksway 5s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-ice { animation: shiver 0.4s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-electric { animation: twitch 3.4s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-psychic { animation: levitate 4.6s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-ghost { animation: waver 5.2s ease-in-out infinite; }
+  .pet.idle:not(.petting) .fx-dragon { animation: hover 5.4s ease-in-out infinite; }
+  @keyframes leafsway {
+    0%, 100% { transform: rotate(-2deg); }
+    50% { transform: rotate(2deg); }
+  }
+  @keyframes maneflick {
+    0%, 100% { filter: brightness(1); transform: translateY(0); }
+    50% { filter: brightness(1.13); transform: translateY(-1px); }
+  }
+  @keyframes necksway {
+    0%, 100% { transform: rotate(-1.6deg) translateX(-1px); }
+    50% { transform: rotate(1.6deg) translateX(1px); }
+  }
+  @keyframes shiver {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-0.8px); }
+    75% { transform: translateX(0.8px); }
+  }
+  @keyframes twitch {
+    0%, 86%, 100% { transform: translateX(0); }
+    88% { transform: translateX(-2px); }
+    91% { transform: translateX(2px); }
+    94% { transform: translateX(-1px); }
+  }
+  @keyframes levitate {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  @keyframes waver {
+    0%, 100% { transform: translateX(-3px); opacity: 0.85; }
+    50% { transform: translateX(3px); opacity: 1; }
+  }
+  @keyframes hover {
+    0%, 100% { transform: translateY(-1px) rotate(-1deg); }
+    50% { transform: translateY(-5px) rotate(1deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pet.idle:not(.petting) img,
+    .pet.idle:not(.petting) .petfx { animation: none; }
   }
   .happy img {
     animation: bounce 0.45s ease 2;

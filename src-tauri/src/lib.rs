@@ -1,3 +1,4 @@
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{
@@ -117,6 +118,297 @@ fn spawn_git_watcher(handle: tauri::AppHandle) {
     });
 }
 
+// ── Build / Training Awareness ─────────────────────────────────────
+// Poll nvidia-smi so the companion can react to GPU training runs (the
+// recruiter-killer: a Pokémon that knows when you're training a model).
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000; // don't flash a console each poll
+
+#[derive(serde::Serialize, Default)]
+struct GpuStat {
+    available: bool,
+    util: u32,      // GPU utilisation %
+    mem_used: u32,  // MiB
+    mem_total: u32, // MiB
+    temp: u32,      // °C
+    procs: u32,     // running compute processes
+}
+
+fn nvsmi(args: &[&str]) -> Option<String> {
+    let mut c = std::process::Command::new("nvidia-smi");
+    c.args(args);
+    #[cfg(windows)]
+    c.creation_flags(CREATE_NO_WINDOW);
+    let out = c.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Read GPU utilisation + compute-process count. `available:false` when there's
+/// no NVIDIA GPU / nvidia-smi isn't on PATH — the frontend then stops polling
+/// and never nags.
+#[tauri::command]
+fn gpu_stat() -> GpuStat {
+    let mut s = GpuStat::default();
+    let Some(q) = nvsmi(&[
+        "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+        "--format=csv,noheader,nounits",
+    ]) else {
+        return s;
+    };
+    if let Some(line) = q.lines().next() {
+        let p: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+        if p.len() >= 4 {
+            s.util = p[0].parse().unwrap_or(0);
+            s.mem_used = p[1].parse().unwrap_or(0);
+            s.mem_total = p[2].parse().unwrap_or(0);
+            s.temp = p[3].parse().unwrap_or(0);
+            s.available = true;
+        }
+    }
+    // count rows whose first column is a real PID (ignores "No running processes")
+    if let Some(apps) = nvsmi(&["--query-compute-apps=pid", "--format=csv,noheader"]) {
+        s.procs = apps
+            .lines()
+            .filter(|l| {
+                l.trim()
+                    .split(',')
+                    .next()
+                    .and_then(|x| x.trim().parse::<u32>().ok())
+                    .is_some()
+            })
+            .count() as u32;
+    }
+    s
+}
+
+// ── Training Awareness via log-watch ───────────────────────────────
+// The user points us at a training log file OR a folder (we follow the
+// newest file in it). We tail appended lines and emit `train-log` for each;
+// the frontend matches epoch/loss/done/crash patterns. Works no matter where
+// the compute actually runs (this laptop, a lab box, Colab synced to a dir).
+#[derive(Default)]
+struct LogWatch {
+    path: Option<PathBuf>, // file or directory the user chose
+    file: Option<PathBuf>, // the concrete file currently being followed
+    pos: u64,              // byte offset already emitted
+}
+
+fn newest_log(dir: &PathBuf) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+}
+
+fn resolve_target(path: &PathBuf) -> Option<PathBuf> {
+    if path.is_dir() {
+        newest_log(path)
+    } else if path.is_file() {
+        Some(path.clone())
+    } else {
+        None
+    }
+}
+
+/// Read bytes appended to `file` since `pos`; returns (text, new_len). Resets to
+/// the start if the file was truncated/rotated under us.
+fn read_from(file: &PathBuf, pos: u64) -> Option<(String, u64)> {
+    let mut f = std::fs::File::open(file).ok()?;
+    let len = f.metadata().ok()?.len();
+    let start = if pos > len { 0 } else { pos };
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).ok()?;
+    Some((String::from_utf8_lossy(&bytes).to_string(), len))
+}
+
+#[tauri::command]
+fn log_set_path(state: tauri::State<'_, Mutex<LogWatch>>, path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err("That path doesn't exist.".into());
+    }
+    let mut g = state.lock().map_err(|_| "watch state poisoned".to_string())?;
+    let target = resolve_target(&p);
+    // attach at the END of the current newest file so we never replay an old run
+    g.pos = target
+        .as_ref()
+        .and_then(|t| std::fs::metadata(t).ok())
+        .map(|m| m.len())
+        .unwrap_or(0);
+    g.file = target;
+    g.path = Some(p);
+    Ok(())
+}
+
+#[tauri::command]
+fn log_clear(state: tauri::State<'_, Mutex<LogWatch>>) {
+    if let Ok(mut g) = state.lock() {
+        g.path = None;
+        g.file = None;
+        g.pos = 0;
+    }
+}
+
+/// Poll the watched log every 2s; emit `train-newfile` when a fresh run file
+/// appears and `train-log` for each newly-appended line.
+fn spawn_log_watcher(handle: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let (path, file, pos) = match handle.state::<Mutex<LogWatch>>().lock() {
+            Ok(g) => (g.path.clone(), g.file.clone(), g.pos),
+            Err(_) => continue,
+        };
+        let Some(path) = path else { continue };
+        let Some(target) = resolve_target(&path) else { continue };
+
+        let new_file = file.as_ref() != Some(&target);
+        let start_pos = if new_file { 0 } else { pos };
+        let Some((chunk, len)) = read_from(&target, start_pos) else { continue };
+
+        if new_file {
+            let name = target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let _ = handle.emit("train-newfile", name);
+        }
+        for line in chunk.lines() {
+            let t = line.trim();
+            if !t.is_empty() {
+                let _ = handle.emit("train-log", t.to_string());
+            }
+        }
+
+        if let Ok(mut g) = handle.state::<Mutex<LogWatch>>().lock() {
+            g.file = Some(target);
+            g.pos = len;
+        }
+    });
+}
+
+/// Write a generated README card (SVG) to disk — used by the "Living Companion"
+/// feature so the user can commit a live status card into their repo.
+#[tauri::command]
+fn write_card(path: String, svg: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir); // ensure assets/ exists
+    }
+    std::fs::write(p, svg).map_err(|e| e.to_string())
+}
+
+/// Automatically push the README card to GitHub.
+/// Also rewrites the static companion text block in README.md so it stays in sync.
+#[tauri::command]
+fn push_card(path: String, companion: String, mood: String, status: String) -> Result<(), String> {
+    let repo_path = std::path::Path::new(&path);
+    
+    let readme_path = repo_path.join("README.md");
+    if let Ok(content) = std::fs::read_to_string(&readme_path) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        
+        // 1) Cache-bust the SVG src
+        let mut new_content = String::new();
+        let mut rest = content.as_str();
+        while let Some(idx) = rest.find("hearthmon-status.svg") {
+            new_content.push_str(&rest[..idx + "hearthmon-status.svg".len()]);
+            rest = &rest[idx + "hearthmon-status.svg".len()..];
+            if rest.starts_with("?v=") {
+                let digits_len = rest[3..].find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len() - 3);
+                rest = &rest[3 + digits_len..];
+            }
+            new_content.push_str(&format!("?v={}", ts));
+        }
+        new_content.push_str(rest);
+
+        // 2) Rewrite the "Current Companion / Mood / Status" lines
+        let re_companion = format!("**Current Companion:** {}<br/>", companion);
+        let re_mood = format!("**Mood:** {}<br/>", mood);
+        let re_status = format!("**Status:** *\"{}\"*<br/>", status);
+
+        let updated = new_content
+            .lines()
+            .map(|line| {
+                if line.starts_with("**Current Companion:**") {
+                    re_companion.clone()
+                } else if line.starts_with("**Mood:**") {
+                    re_mood.clone()
+                } else if line.starts_with("**Status:**") {
+                    re_status.clone()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let _ = std::fs::write(&readme_path, updated);
+    }
+    
+    // git add
+    let add_status = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(["add", "assets/hearthmon-status.svg", "README.md"])
+        .status()
+        .map_err(|e| e.to_string())?;
+        
+    if !add_status.success() {
+        return Err("Failed to 'git add' the card.".into());
+    }
+
+    // To keep the profile clean, AMEND our own rolling card commit instead of
+    // stacking a new commit every push — unless a real commit landed since.
+    const MSG: &str = "chore: Hearthmon status card";
+    let last = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "-1", "--pretty=%s"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let amend = last == MSG;
+
+    let commit_args: Vec<&str> = if amend {
+        vec!["commit", "--amend", "--no-edit"]
+    } else {
+        vec!["commit", "-m", MSG]
+    };
+    let _ = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(&commit_args)
+        .status();
+
+    let push_args: &[&str] = if amend {
+        &["push", "--force-with-lease"]
+    } else {
+        &["push", "-u", "origin", "HEAD"]
+    };
+    let push_status = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0") // fail fast instead of hanging on auth
+        .args(push_args)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if !push_status.success() {
+        return Err("Failed to 'git push' to GitHub.".into());
+    }
+
+    Ok(())
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -126,11 +418,15 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Mutex::new(GitWatch::default()))
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo])
+        .manage(Mutex::new(LogWatch::default()))
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());
+            // Training Awareness: start the background log watcher.
+            spawn_log_watcher(app.handle().clone());
             // Tray: the companion rests here instead of quitting — it never truly leaves.
             let show = MenuItem::with_id(app, "show", "Show Hearthmon", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Hide to tray", true, None::<&str>)?;

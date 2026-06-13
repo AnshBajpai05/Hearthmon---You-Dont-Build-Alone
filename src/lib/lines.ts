@@ -93,6 +93,63 @@ export const fixQuips = [
   "Nice fix.",
   "That bug's gone now."
 ];
+// ---- Build / Training awareness (nvidia-smi) ----
+export const trainStartLines = [
+  "That one looks heavy. I'll stay nearby.",
+  "Big run starting — I've got the watch.",
+  "Tensors are flowing. I'll keep you company.",
+  "Here we go. I'll sit with you through this one."
+];
+export const trainHeavyLines = [
+  "GPU's pinned. You've got this — I'll keep watch.",
+  "It's working hard. So are you. Breathe.",
+  "Still cooking. I'm right here.",
+  "That's a lot of heat. Steady — I'm with you."
+];
+// outcome-agnostic on purpose — we can't tell success from a crash via nvidia-smi,
+// so we honour the effort, not the result (soul: presence > outcome).
+export const trainDoneLines = [
+  "Training's done — and it finished clean. Proud of that.",
+  "Run complete. Look what you trained.",
+  "It's done! Go stretch — that was a real session.",
+  "Finished. The work paid off — nice one."
+];
+export const trainProgressLines = [
+  "It's learning — the loss is dropping.",
+  "Steady progress. Keep going.",
+  "Numbers are moving the right way.",
+  "Look at it go."
+];
+// a crash/error: sympathy, never blame (soul: never guilt). "we", not "you".
+export const trainCrashLines = [
+  "Oof — that one hurt. Want to look at it together?",
+  "It stopped early. Bugs happen — we'll get it.",
+  "Hit an error. Take a breath; we'll sort it out.",
+  "That one broke. Not your fault — let's see why."
+];
+
+// ---- "Alongside you": quiet long-term awareness of the project you keep
+// returning to. Escalates with the number of days you've worked on it.
+export const ALONGSIDE_STAGES = [3, 7, 14, 30, 60, 100];
+export function alongsideLine(stage: number, project: string): string {
+  switch (stage) {
+    case 3: return `Still working on ${project}, huh?`;
+    case 7: return `Feels like ${project} matters to you.`;
+    case 14: return `${project} — you've really stayed with this one.`;
+    case 30: return `A month with ${project}. Quietly impressed.`;
+    case 60: return `${project} has been with us a long while now.`;
+    default: return `Still here, still on ${project}. I like that about you.`;
+  }
+}
+// fired once when you move on from a project you stuck with — honours the effort.
+export function projectStayedLine(project: string): string {
+  const bank = [
+    `You stayed with ${project} all the way. We saw it through.`,
+    `${project} — that chapter's behind us now. You showed up for it.`,
+    `We gave ${project} what it needed. Onto the next, together.`
+  ];
+  return bank[Math.floor(Math.random() * bank.length)];
+}
 export const prQuips = [
   "Pull request merged. You shipped it.",
   "Merged it. Clean.",
@@ -128,6 +185,57 @@ export const softFailLines = [
   "Something hiccuped on my end. Still here, though.",
   "One moment — something slipped. We're okay."
 ];
+
+// Persona-flavored ambient murmurs — keyed by the emergent personality label
+// (see lib/personality.ts). Used occasionally in place of generic ambient lines.
+export const personaAmbient: Record<string, string[]> = {
+  "Night Owl": ["The quiet hours suit you.", "Us and the dark again. I like this.", "Late, but you're in the zone."],
+  "Chaotic Goblin": ["Chaos — but it's working.", "Wild run today. I'm here for it.", "No plan, all momentum. Respect."],
+  "Early Bird": ["You and the morning. Good combo.", "Early start, calm hours.", "Fresh light, fresh page."],
+  "Thoughtful Nerd": ["You really chew on things. I notice.", "Another thing understood, quietly.", "You go deep. It suits you."],
+  "Steady Soul": ["Steady as ever — that's rare.", "You just keep showing up. It counts.", "Quiet consistency. I see it."],
+  "Quiet Builder": ["Heads down, building. I'll keep watch.", "Bit by bit. That's how things get made.", "Less talk, more made."],
+  "Still Becoming": ["Still finding our rhythm. No rush.", "Early days for us. I'm curious.", "We're just getting started."]
+};
+
+// Life-event callback — the pet remembers a specific old moment, months later.
+export function lifeCallbackLine(when: string, text: string): string {
+  return pick([
+    `Remember ${when}? "${text}". You figured that out.`,
+    `Back in ${when} — "${text}". Look how that turned out.`,
+    `I still think about ${when}: "${text}". That was all you.`
+  ]);
+}
+
+// Tiny-wins auto-capture — a coding streak quietly noticed. Never a nag, never
+// a "don't break it" guilt-trip; just warmth for showing up.
+export function streakLine(days: number): string {
+  return pick([
+    `${days} days in a row. Quietly proud of you.`,
+    `That's ${days} days you kept showing up. It adds up.`,
+    `${days} days running. No pressure to keep it — just noticing.`,
+    `${days} days together at this. Steady.`
+  ]);
+}
+
+// Chapter closed — a period of life, sealed. Warm, a little proud.
+export function chapterCloseLine(name: string): string {
+  return pick([
+    `"${name}" — that chapter's closed. We lived it.`,
+    `End of "${name}". You carried it the whole way.`,
+    `"${name}", done. Onto whatever's next.`
+  ]);
+}
+
+// Bond tier deepened — a quiet, earned milestone (never triumphant).
+export function bondUpLine(stage: string): string {
+  return pick([
+    `Something shifted. We're ${stage} now.`,
+    `${stage}. I feel it too.`,
+    `We crossed into ${stage}. Quietly big.`,
+    `${stage} — it took real time to get here.`
+  ]);
+}
 
 // Energy sensitivity — after a very long session, the pet softens its pace.
 // Warmth, never a nag to stop. Said once, then it just gets quieter.
