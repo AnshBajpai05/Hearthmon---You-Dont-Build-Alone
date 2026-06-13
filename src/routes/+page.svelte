@@ -27,6 +27,7 @@
     getVolumes,
     type Channel
   } from "$lib/sound";
+  import { enable, disable, isEnabled } from "@tauri-apps/plugin-autostart";
   import {
     getMeta,
     setMeta,
@@ -332,6 +333,7 @@
       setSoundEnabled(!muted);
       focusMode = (await getMeta("focus_mode")) === "1";
       setFocus(focusMode);
+      refreshAutostart();
       for (const ch of ["voice", "cry", "fx"] as Channel[]) {
         const saved = await getMeta(`vol_${ch}`);
         if (saved !== null) {
@@ -634,9 +636,30 @@
     say(pick(bank), 8000);
   }
 
+  // ✕ tucks the companion into the system tray — it never truly leaves.
+  // (Quit-for-real lives in the tray menu.) Soul: presence, "welcome back".
   async function quit() {
     playVoiceClip("see-you-later", 0.85);
-    setTimeout(() => getCurrentWindow().close(), 1000);
+    setTimeout(() => getCurrentWindow().hide(), 900);
+  }
+
+  // ---- launch on startup ----
+  let autostartOn = $state(false);
+  async function refreshAutostart() {
+    try {
+      autostartOn = await isEnabled();
+    } catch {
+      autostartOn = false;
+    }
+  }
+  async function toggleAutostart() {
+    try {
+      if (autostartOn) await disable();
+      else await enable();
+    } catch {
+      // plugin unavailable (e.g. web preview) — ignore
+    }
+    await refreshAutostart();
   }
 </script>
 
@@ -841,6 +864,10 @@
             />
           </label>
         {/each}
+        <label class="mute startup">
+          <input type="checkbox" checked={autostartOn} onchange={toggleAutostart} />
+          launch at startup
+        </label>
       </div>
     {/if}
 
@@ -1290,6 +1317,13 @@
   }
   .soundpanel .mute input {
     accent-color: #f0b66a;
+  }
+  .soundpanel .startup {
+    margin-top: 2px;
+    padding-top: 7px;
+    border-top: 1px solid rgba(120, 108, 160, 0.22);
+    font-weight: 500;
+    color: #9d92bd;
   }
   .soundpanel .vol {
     display: flex;

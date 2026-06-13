@@ -172,6 +172,40 @@ Everything below is **live** in the current build:
 
 ---
 
+## 🌟 Emotional Genius Systems (brainstorm 2026-06-13 — the "taste is the moat" set)
+> Small, rare, high-ROI systems users remember years later. Soul-aligned, not feature bloat.
+> **If only 5:** Memory Capsules · Someone Believed In You · Comfort Mode · Constellation of Growth · SOUL.md
+
+- [ ] **SOUL.md** ⭐ (highest ROI) — a philosophy file: what Hearthmon IS, what it must NEVER
+      become, tone rules, notification philosophy, warmth + "less is more" guidelines.
+      Protects the soul as features grow. *Do this first — taste is the moat.*
+- [ ] **Memory Capsules** ⭐ — "open in 3 months": seal a feeling now, pet surfaces it later
+      ("You left something for future you."). Extends the letter system with a release date.
+- [ ] **"Someone Believed In You" archive** ⭐ — save compliments / recognition / kind words;
+      on bad days: "Want to read something? — Things People Saw In You." (new memory kind `praise`)
+- [ ] **Comfort Mode** ⭐ — when moods trend low, the pet self-softens: calmer animations,
+      warmer ambience, gentler lines, offers the Good Things Jar instead of celebrating.
+- [ ] **Constellation of Growth** ⭐ — the iconic visual: memories/wins/survivals as stars,
+      connected over time. Not stats — your life as a night sky. (could replace/augment Journey)
+- [ ] **"I noticed this about you…"** — very rare (every 2–3 wks), high-confidence-only gentle
+      pattern observation ("You're kinder to yourself lately."). Creepy if low-confidence — gate hard.
+- [ ] **Tiny Wins auto-capture** — silently log invisible progress (coded N days straight, worked
+      through a low mood, late-night effort) → occasional "Quietly proud of this week."
+- [ ] **"Today felt like…" reflection** — at night, one-tap emotional word (heavy/hopeful/messy/
+      good/strange/peaceful/hard). Builds an emotional timeline, lighter than the mood check-in.
+- [ ] **Emotional Search** — "when did I last feel like this?" → surfaces similar past memories
+      ("You felt overwhelmed before that research breakthrough."). Extends findFamiliar.
+- [ ] **"Quiet Proud" moments** — no confetti, just a rare (every 2–3 wks) "Quietly proud of you
+      today." Rarity is the whole point — lands hard because it's scarce.
+- [ ] **The Vault (emergency comfort)** — one action when "I feel terrible": bundles forgotten
+      wins + compliments + hard things survived + jar + past-self notes into one comfort pack.
+- [ ] **"This reminds me of…"** — pet forms associations (rain ↔ research phase, late nights ↔
+      a project) and recalls them months later. Feels alive.
+- [ ] **Emotional milestones (not badges)** — Stayed Anyway · Brave Beginning · Soft Recovery ·
+      Quiet Consistency · Asked For Help. Emotionally intelligent framings of real moments.
+
+---
+
 ## 🚫 Anti-Features — Never Add (from the doc)
 > Listed here so they stay front-of-mind as the project grows.
 
