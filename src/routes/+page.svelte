@@ -417,7 +417,18 @@
     if (e.button !== 0) return;
     poke();
     try {
-      await getCurrentWindow().startDragging();
+      const win = getCurrentWindow();
+      await win.startDragging();
+      // Save position after the drag ends (pointerup on window)
+      const savePos = async () => {
+        try {
+          const pos = await win.outerPosition();
+          await setMeta("win_x", String(pos.x));
+          await setMeta("win_y", String(pos.y));
+        } catch { /* ignore */ }
+        window.removeEventListener("pointerup", savePos);
+      };
+      window.addEventListener("pointerup", savePos, { once: true });
     } catch {
       // dragging unavailable in web preview
     }
@@ -516,8 +527,15 @@
   onMount(() => {
     (async () => {
       scale = Number((await getMeta("pet_scale")) ?? 0) || 1.5;
-      // size the window for the pet and settle near the bottom-right
+      // size the window for the pet, then restore saved position (or settle bottom-right)
       await fitWindow(true);
+      const savedX = await getMeta("win_x");
+      const savedY = await getMeta("win_y");
+      if (savedX !== null && savedY !== null) {
+        try {
+          await getCurrentWindow().setPosition(new PhysicalPosition(Number(savedX), Number(savedY)));
+        } catch { /* outside monitor bounds — keep default */ }
+      }
 
       // drag-resize: when the window is resized by the corner grip, scale the pet to follow.
       // We ignore resizes that match what we set ourselves (fitWindow), so the two don't fight.
@@ -1112,7 +1130,7 @@
     {/if}
 
     <!-- background drag handle: grabbing the empty box moves the window -->
-    <div class="draglayer" onpointerdown={startWinDrag}></div>
+    <div class="draglayer" role="presentation" aria-label="Drag to move widget" onpointerdown={startWinDrag}></div>
 
     {#if bgStyle !== "off" && switchFx === "none"}
       {#if bgStyle === "orb"}

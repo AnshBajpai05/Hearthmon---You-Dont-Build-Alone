@@ -348,8 +348,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 1;
-    pointer-events: all;
+    opacity: 0;
+    pointer-events: none;
     transition: opacity 0.22s, border-color 0.18s, background 0.18s;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
@@ -366,7 +366,7 @@
   /* ── ✦ Trigger ─────────────────────────────────────────── */
   .trigger {
     position: absolute;
-    top: 50%;
+    top: calc(50% + 20px);
     left: 50%;
     z-index: 10;
     width: 32px;

@@ -39,6 +39,7 @@ Everything below is **live** in the current build:
 - [x] **Natural weather effects 🌦️** — wind (streaks + leaves), rain (38 drops, slanted), snow (32 flakes w/ swing), thunderstorm (double flash + ⚡ bolt); auto-fires every 8–18 min for 20–30 sec; manual trigger via syscluster button; stop-on-tap
 - [x] **Background style cycle 🌿** — three modes: orb (glossy sphere), ground (flat elliptical platform at pet's feet, glowing), off; persisted; single 🌿 button cycles through
 - [x] **Opacity slider dims background** — reducing the bar now fades both the pet layer AND the orb/ground proportionally (inline calc, not a CSS var fallback)
+- [x] **Radial Menu UI** ⭐ — One ✦ trigger expands into 5 blooming categories (Memory, Care, Play, System, Atmos). Sub-fans for each, hover "whispers", and pet reacts by facing the menu. Removed old rail buttons for a cleaner layout.
 
 ---
 
@@ -50,8 +51,9 @@ Everything below is **live** in the current build:
       `torch==2.1.2 torchaudio==2.1.2 transformers==4.40.2 coqui-tts==0.24.*` (predates the
       torchcodec requirement). Until then, the in-app TTS ("Charizard…" → real "I choose you!"
       clip) is the working fallback, and supplied real clips already play.
-- [ ] Battle effectiveness uses **primary type only** (dual-types not yet considered).
-- [ ] A few Svelte `state_referenced_locally` warnings (cosmetic, not bugs).
+- [ ] Battle effectiveness uses **primary type only** (dual-types not yet considered — pokedex stores single type only, needs data rewrite).
+- [ ] A few Svelte `state_referenced_locally` warnings — **fixed 2026-06-13** ✅ (0 errors, 1 harmless tsconfig warn).
+- [x] **Radial Menu Polish** — trigger repositioned below pet feet, close animation improved, backdrop fixed to `position:absolute`.
 
 ---
 
@@ -174,9 +176,9 @@ Everything below is **live** in the current build:
 - [ ] **Rare legendary visit trigger** — 10% chance after logging a major win
 
 ### Quality of Life
-- [ ] **Export memories** — download journey as `.txt` / `.json` (local only)
+- [x] **Export memories** — ⬇ export button in Journey panel downloads full journey as a dated `.txt` file (local only). ✅ shipped 2026-06-13
 - [ ] **Import / restore** — drag in a backup on a new machine
-- [ ] **Window position memory** — remember last position between sessions
+- [x] **Window position memory** — position saved to SQLite meta after every drag; restored on next launch. ✅ shipped 2026-06-13
 - [ ] **Multi-monitor awareness** — anchor to primary or last-used monitor
 - [ ] **"Presence without app open"** — VS Code extension writes sentinel file; app reacts on next launch
 - [ ] **Notification-free "peek"** — bond level visible in a corner icon; tap to expand
@@ -226,6 +228,64 @@ Everything below is **live** in the current build:
       a project) and recalls them months later. Feels alive.
 - [ ] **Emotional milestones (not badges)** — Stayed Anyway · Brave Beginning · Soft Recovery ·
       Quiet Consistency · Asked For Help. Emotionally intelligent framings of real moments.
+
+---
+
+## 🧠 Competitor-Learned Genius Patterns (The Moat)
+> Deep, emotional retention mechanics stolen from the best (Finch, Animal Crossing, Nintendo, VSCode).
+
+### 1. "Return Without Shame" System ⭐⭐⭐⭐⭐ (P1)
+- [ ] **No-guilt return ritual** — If the user disappears for days/weeks/months, never mention a broken streak. The pet just says, "Hey. It's good to see you again. No worries, I kept things warm here." Add a tiny dust-off animation. Compassion over engagement addiction.
+
+### 2. Quiet Presence Mode ⭐⭐⭐⭐⭐ (P1)
+- [ ] **Ambient idle behaviors** — When coding, the pet shouldn't just wait for clicks. It should occasionally look at the cursor, watch typing, do a small sleepy stretch, draw a tiny star, or walk off-screen and return with a leaf. Attention mirroring.
+
+### 3. Ritual Design Layer ⭐⭐⭐⭐⭐ (P1)
+- [ ] **First coding session of the day** — Pet stretches: "Ready? Let's see what today becomes." Tiny coffee particle.
+- [ ] **End-of-night ritual** — Instead of just quitting: "Good work today. I'll be here tomorrow." Pet sleeps, moon glows.
+
+### 4. Delight Randomness Engine ⭐⭐⭐⭐⭐ (P1)
+- [ ] **Meaningful rarity** — 1/500 chance the pet brings a tiny flower ("Thought this felt like today."). Rare midnight meteor showers with a special line. Unexpected warmth after a difficult week ("Quietly proud of you lately.").
+
+### 5. Friction Removal Layer ⭐⭐⭐⭐⭐ (P1)
+- [ ] **1-second interactions** — `Alt+H` summons the widget. `J` opens the Jar, `N` opens Notes, `M` opens Mood. Power-user comfort means huge retention.
+- [ ] **"Return Home" Whistle** — A global hotkey (e.g., `Alt+W` or similar) that instantly recalls the pet. If it has wandered off-screen in Toddler Mode or gotten lost, it whistles and smoothly slides back to the primary monitor center.
+
+### 6. "Life Events" System ⭐⭐⭐⭐ (P2)
+- [ ] **Long-term memory callbacks** — Pet remembers the internship, the research breakthrough, or the bad exam week. Months later: "Remember when we were struggling with Docker? You figured that out."
+
+### 7. Companion Imperfection ⭐⭐⭐⭐ (P2)
+- [ ] **Personality quirks** — The pet is too flawless. Needs quirks based on its personality (e.g., loves late-night coding, hates Mondays, collects stars). Imperfection creates attachment.
+
+### 8. "Tiny Ownership" System ⭐⭐⭐⭐ (P2)
+- [ ] **Lightweight personalization** — Let the user slowly personalize a blanket, a room object, a favorite place, or a tiny badge. No complex Sims mechanics, just "this is mine."
+
+---
+
+## 🛡️ Governance & Emotional Systems (The Boundaries)
+> Hard structural rules that stop Hearthmon from becoming noisy, clingy, manipulative, or bloated.
+
+### 1. "Energy Sensitivity" System ⭐⭐⭐⭐⭐ (P1)
+- [ ] **Mood ≠ Energy** — If the user coded for 6 hours, the pet should naturally become quieter, slower, and warmer. E.g., "We can keep it light tonight." Prevents emotional mismatch (happy but exhausted shouldn't trigger zoomies).
+
+### 2. "Presence > Interruption" Rule Engine ⭐⭐⭐⭐⭐ (SOUL RULE)
+- [ ] **Interaction Budget** — Hard system rule: Max 1 proactive interaction per 45 min, max 1 emotional interaction per day, max 1 deep reflection per week. The companion must never feel like it's "always talking."
+
+### 3. "Trust Escalation" System ⭐⭐⭐⭐ (P1)
+- [ ] **Unlock emotional depth** — Interactions should unlock emotionally based on bond depth. Stranger = light encouragement. Familiar = small memories. Trusted Friend = deeper callbacks. Companion = vulnerable moments. High bond: "You've survived hard seasons before. I remember."
+
+### 4. "Soft Failure Recovery" ⭐⭐⭐⭐ (P2)
+- [ ] **Graceful degradation** — When a system fails (Git watcher, weather bug, missing voice clip), the pet should handle it with warm UX instead of an error message: "Hmm… something feels a little off. Give me a sec?"
+
+### 5. "Emotional Safety Boundaries" ⭐⭐⭐⭐⭐ (P1)
+- [x] **Explicit emotional rules** — `docs/EMOTIONAL_SAFETY.md` created: banned phrases table, 5 non-negotiables, interaction budget, emotional territory map, litmus test. ✅ shipped 2026-06-13
+
+### 6. "Sacred Rare Moments" System ⭐⭐⭐⭐⭐ (P2)
+- [ ] **Protected rarity** — Certain interactions should be restricted to once a year, once a chapter, or once a lifetime. Example: After a brutal semester: "You changed this season." Never repeated. Overexposure kills the magic.
+
+### 7. "Companionship Modes" (User-Controlled Presence) ⭐⭐⭐⭐ (P2)
+- [ ] **Interaction limiters** — Let the user explicitly set a mode that restricts the pet's interaction frequency while keeping actions available. E.g., "Just There Mode" (silent presence, zero proactive lines), "Fun Mode" (more frequent banter and zoomies), or "Default" (uses the standard interaction budget).
+- [ ] **Toddler Mode (OS-Level Roaming)** — A special fun mode where the pet freely roams your entire monitor. It moves the actual transparent OS window continuously, making random short shuffles and occasional long walks across the screen.
 
 ---
 

@@ -39,8 +39,11 @@
   let phase = $state<"setup" | "battle" | "over">("setup");
   let qL = $state("");
   let qR = $state("");
-  let selL = $state<DexEntry | null>(dexEntry(currentDexId) ?? null);
+  // Use $derived for initial value to avoid state_referenced_locally warning
+  const defaultSelL = $derived(dexEntry(currentDexId) ?? null);
+  let selL = $state<DexEntry | null>(null);
   let selR = $state<DexEntry | null>(null);
+  $effect(() => { if (selL === null) selL = defaultSelL; });
   let maxL = $state(100);
   let maxR = $state(100);
   let hpL = $state(100);

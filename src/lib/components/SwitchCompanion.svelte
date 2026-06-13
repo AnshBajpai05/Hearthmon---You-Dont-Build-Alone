@@ -32,13 +32,20 @@
     onClose
   }: Props = $props();
 
-  let name = $state(currentName);
+  let name = $state("");
   let query = $state("");
   let selType = $state("");
   let selGen = $state(0);
-  let autoOn = $state(autoMinutes > 0);
-  let autoMins = $state(autoMinutes > 0 ? autoMinutes : 60);
-  let mode = $state<"random" | "evolve">(autoMode);
+  let autoOn = $state(false);
+  let autoMins = $state(60);
+  let mode = $state<"random" | "evolve">("random");
+  // Sync local state from props on mount (avoids state_referenced_locally warnings)
+  $effect(() => {
+    name = currentName;
+    autoOn = autoMinutes > 0;
+    autoMins = autoMinutes > 0 ? autoMinutes : 60;
+    mode = autoMode;
+  });
 
   const suggested: DexEntry[] = STARTERS.map(
     (s) => POKEDEX.find((e) => e.id === s.dexId)!

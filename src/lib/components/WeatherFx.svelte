@@ -151,7 +151,6 @@
   }
 
   /* ---- RAIN ---- */
-  .rain-root {}
   .raindrop {
     position: absolute;
     top: -18px;
@@ -174,7 +173,6 @@
   }
 
   /* ---- SNOW ---- */
-  .snow-root {}
   .snowflake {
     position: absolute;
     top: -20px;
@@ -191,7 +189,6 @@
   }
 
   /* ---- WIND ---- */
-  .wind-root {}
   .windline {
     position: absolute;
     left: -10%;

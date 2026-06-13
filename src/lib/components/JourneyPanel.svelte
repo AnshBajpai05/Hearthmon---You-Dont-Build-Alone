@@ -67,12 +67,46 @@
     stage = bondStage(days, interactions).label;
     loaded = true;
   });
+  /** Export all memories as a plain-text file — local only, no cloud. */
+  function exportTxt() {
+    const lines: string[] = [
+      `Hearthmon — ${petName}'s Journey`,
+      `Exported: ${new Date().toLocaleDateString()}`,
+      `Days together: ${days} · Bond: ${stage}`,
+      "",
+      "=".repeat(48),
+      ""
+    ];
+    for (const g of groups) {
+      lines.push(`── ${g.month} ──`);
+      for (const m of g.items) {
+        const icon = iconFor(m);
+        const txt  = textFor(m);
+        const date = shortDate(m.created_at);
+        lines.push(`  ${icon}  [${date}]  ${txt}`);
+      }
+      lines.push("");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement("a"), {
+      href: url,
+      download: `hearthmon-journey-${new Date().toISOString().slice(0,10)}.txt`
+    });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 </script>
 
 <div class="panel">
   <div class="head">
     <span>Our journey</span>
-    <button class="x" onclick={onClose}>✕</button>
+    <div class="head-actions">
+      <button class="export-btn" onclick={exportTxt} title="Export memories as .txt">⬇ export</button>
+      <button class="x" onclick={onClose}>✕</button>
+    </div>
   </div>
   <p class="sub">
     {petName} & you — {days}
@@ -148,6 +182,25 @@
     font-size: 12px;
   }
   .x:hover { color: #f0b66a; }
+  .head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .export-btn {
+    background: none;
+    border: 1px solid rgba(120, 108, 160, 0.35);
+    border-radius: 6px;
+    color: #9d92bd;
+    cursor: pointer;
+    font-size: 9.5px;
+    padding: 2px 7px;
+    transition: color 0.18s, border-color 0.18s;
+  }
+  .export-btn:hover {
+    color: #f0b66a;
+    border-color: rgba(240, 182, 106, 0.5);
+  }
   .sub {
     margin: 0;
     font-size: 11px;
