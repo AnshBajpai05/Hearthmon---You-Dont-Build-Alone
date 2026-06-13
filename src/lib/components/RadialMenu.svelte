@@ -325,13 +325,13 @@
 <style>
   /* ── Shared: all radial elements are absolutely centered ── */
   .menu-backdrop {
-    position: fixed;
+    position: absolute;
     inset: 0;
     z-index: 8;
     cursor: default;
   }
 
-  /* ── Mute safety pill ──────────────────────────────────── */
+  /* Mute pill — always shown (safety action) */
   .mute-pill {
     position: absolute;
     top: 8px;
@@ -348,13 +348,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0;
+    opacity: 1;
+    pointer-events: all;
     transition: opacity 0.22s, border-color 0.18s, background 0.18s;
     box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   }
-  .widget:hover .mute-pill,
-  .mute-pill.active { opacity: 1; }
-  .mute-pill:hover  {
+  :global(.widget:hover) .mute-pill,
+  .mute-pill.active {
+    opacity: 1;
+    pointer-events: all;
+  }
+  .mute-pill:hover {
     border-color: #f0b66a;
     background: rgba(50, 40, 72, 0.96);
   }
@@ -387,8 +391,8 @@
     opacity: 0;
     pointer-events: none;
   }
-  /* show on hover */
-  .widget:hover .trigger {
+  /* show on widget hover — :global required since .widget is in a parent component */
+  :global(.widget:hover) .trigger {
     opacity: 1;
     pointer-events: all;
     color: rgba(220, 205, 255, 0.85);

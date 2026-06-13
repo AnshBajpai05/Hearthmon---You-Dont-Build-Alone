@@ -1433,6 +1433,37 @@
   }
 
   /* transparency slider along the bottom, revealed on hover */
+  .opacitybar {
+    position: absolute;
+    bottom: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: rgba(33, 28, 48, 0.92);
+    border: 1px solid rgba(120, 108, 160, 0.45);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: 6;
+  }
+  .widget:hover .opacitybar {
+    opacity: 1;
+  }
+  .opacitybar input {
+    width: 104px;
+    accent-color: #f0b66a;
+    cursor: pointer;
+  }
+  .opicon {
+    font-size: 11px;
+    color: #9d92bd;
+  }
+
+  /* corner resize grip — grab to scale the whole companion */
   .resizeGrip {
     position: absolute;
     right: 2px;
