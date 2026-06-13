@@ -91,8 +91,15 @@
   let isShiny = $state(false);
   let muted = $state(false);
   let focusMode = $state(false);
-  let isNight = $state(false);
+  let nightAuto = $state(false); // true 00–05h
+  let nightForced = $state(false); // manual moon toggle, persisted
+  const isNight = $derived(nightAuto || nightForced); // night ambience on if either
   let moodGlow = $state(""); // emotional weather: tint after a check-in
+
+  async function toggleNight() {
+    nightForced = !nightForced;
+    await setMeta("night_forced", nightForced ? "1" : "0");
+  }
   let delight = $state<"none" | "star" | "rain" | "fireworks">("none");
   let delightTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -207,10 +214,30 @@
   let winW = $state(360);
   const imgSize = $derived(Math.round(110 * scale));
   let scaleTimer: ReturnType<typeof setTimeout> | undefined;
+  let winSf = 1; // device pixel ratio, cached
+  let lastSetW = 360; // last logical width WE set — to ignore our own resizes
+  let resizeUnlisten: (() => void) | undefined;
 
   function targetDims() {
     const img = Math.round(110 * scale);
-    return { w: Math.max(320, img + 200), h: Math.max(380, img + 240) };
+    // hug the pet vertically; the floor only keeps panels (which scroll) usable
+    return { w: Math.max(320, img + 200), h: Math.max(340, img + 150) };
+  }
+
+  /** Inverse of targetDims width → pet scale (drag-resize maps window back to pet). */
+  function scaleFromW(w: number): number {
+    return Math.min(3, Math.max(0.5, Math.round(((w - 200) / 110) * 100) / 100));
+  }
+
+  /** Grab the corner grip → native edge resize; the pet scales to follow (see onResized). */
+  async function beginResize(e: PointerEvent) {
+    if (e.button !== 0 || phase !== "home" || battleOpen) return;
+    e.preventDefault();
+    try {
+      await getCurrentWindow().startResizeDragging("SouthEast");
+    } catch {
+      // resize-dragging unavailable (e.g. web preview) — buttons/scroll still work
+    }
   }
 
   /** Resize the window to fit the pet; keep it visually anchored. */
@@ -244,6 +271,7 @@
         );
       }
       winW = w;
+      lastSetW = w;
     } catch {
       // sizing is cosmetic; never break the app over it
     }
@@ -319,6 +347,23 @@
       // size the window for the pet and settle near the bottom-right
       await fitWindow(true);
 
+      // drag-resize: when the window is resized by the corner grip, scale the pet to follow.
+      // We ignore resizes that match what we set ourselves (fitWindow), so the two don't fight.
+      try {
+        const win = getCurrentWindow();
+        winSf = await win.scaleFactor();
+        resizeUnlisten = await win.onResized(({ payload }) => {
+          const w = payload.width / winSf;
+          if (Math.abs(w - lastSetW) < 6) return; // our own programmatic resize — skip
+          scale = scaleFromW(w);
+          lastSetW = w;
+          clearTimeout(scaleTimer);
+          scaleTimer = setTimeout(() => setMeta("pet_scale", String(scale)), 400);
+        });
+      } catch {
+        // no window resize events available — fine
+      }
+
       autoMinutes = Number((await getMeta("auto_switch_minutes")) ?? 0) || 0;
 
       const dex = await getMeta("dex_id");
@@ -333,6 +378,7 @@
       setSoundEnabled(!muted);
       focusMode = (await getMeta("focus_mode")) === "1";
       setFocus(focusMode);
+      nightForced = (await getMeta("night_forced")) === "1";
       refreshAutostart();
       for (const ch of ["voice", "cry", "fx"] as Channel[]) {
         const saved = await getMeta(`vol_${ch}`);
@@ -388,7 +434,7 @@
     // Lonely Night Mode — the room dims after midnight
     const checkNight = () => {
       const h = new Date().getHours();
-      isNight = h >= 0 && h < 5;
+      nightAuto = h >= 0 && h < 5;
     };
     checkNight();
     const nightTimer = setInterval(checkNight, 5 * 60_000);
@@ -396,6 +442,7 @@
       clearInterval(wanderTimer);
       clearInterval(autoTimer);
       clearInterval(nightTimer);
+      resizeUnlisten?.();
     };
   });
 
@@ -818,13 +865,18 @@
       {#if isShiny}<span class="shinytag">✨</span>{/if}
     </div>
 
-    <div class="sidebar">
+    <!-- left rail: memory & feelings (the soul) -->
+    <div class="rail railLeft">
       <button title="How are we doing?" onclick={() => togglePanel("mood")}>🙂</button>
-      <button title="For the record…" onclick={() => togglePanel("log")}>✦</button>
       <button title="Remind me who I am" onclick={() => togglePanel("remind")}>🔥</button>
       <button title="Our journey" onclick={() => togglePanel("journey")}>📖</button>
       <button title="Good Things Jar" onclick={() => togglePanel("jar")}>🫙</button>
       <button title="Leave a note for tomorrow" onclick={() => togglePanel("note")}>✉️</button>
+    </div>
+
+    <!-- right rail: companion & play -->
+    <div class="rail railRight">
+      <button title="For the record…" onclick={() => togglePanel("log")}>✦</button>
       <button title="Switch form" onclick={() => togglePanel("switch")}>
         <span class="miniball"></span>
       </button>
@@ -835,6 +887,11 @@
     </div>
 
     <div class="syscluster">
+      <button
+        title={nightForced ? "Night mode on — tap for daytime" : "Night mode"}
+        class:active={nightForced}
+        onclick={toggleNight}>🌙</button
+      >
       <button
         title={focusMode ? "Focus mode on — I'll stay quiet" : "Focus mode"}
         class:active={focusMode}
@@ -871,6 +928,16 @@
       </div>
     {/if}
 
+    <!-- drag this corner to resize the whole companion -->
+    <div
+      class="resizeGrip"
+      role="button"
+      tabindex="-1"
+      aria-label="Drag to resize"
+      title="Drag to resize"
+      onpointerdown={beginResize}
+    ></div>
+
     {#if battleOpen}
       <BattleScene currentDexId={dexId} onClose={closeBattle} />
     {/if}
@@ -886,12 +953,13 @@
   }
   .stage {
     position: absolute;
-    bottom: 40px;
-    left: 0;
-    right: 0;
+    inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
+    /* nudge slightly below true center so the bubble/callout have headroom */
+    padding-top: 18px;
   }
   .mover {
     position: relative;
@@ -902,10 +970,9 @@
     transition-property: transform;
     transition-timing-function: linear;
   }
-  /* action rail: vertical, right edge — uses the tall empty space */
-  .sidebar {
+  /* two vertical rails, one per edge — keeps the pet centered, not boxed in */
+  .rail {
     position: absolute;
-    right: 8px;
     top: 50%;
     transform: translateY(-50%);
     display: flex;
@@ -915,7 +982,13 @@
     transition: opacity 0.25s ease;
     z-index: 6;
   }
-  /* system cluster: top-right corner — mute, size, close */
+  .railLeft {
+    left: 8px;
+  }
+  .railRight {
+    right: 8px;
+  }
+  /* system cluster: top-right corner — focus, sound, size, close */
   .syscluster {
     position: absolute;
     top: 8px;
@@ -926,11 +999,11 @@
     transition: opacity 0.25s ease;
     z-index: 6;
   }
-  .widget:hover .sidebar,
+  .widget:hover .rail,
   .widget:hover .syscluster {
     opacity: 1;
   }
-  .sidebar button,
+  .rail button,
   .syscluster button {
     width: 30px;
     height: 30px;
@@ -954,10 +1027,31 @@
     border-color: #f0b66a;
     background: rgba(240, 182, 106, 0.22);
   }
-  .sidebar button:hover,
+  .rail button:hover,
   .syscluster button:hover {
     border-color: #f0b66a;
     background: rgba(53, 44, 74, 0.96);
+  }
+
+  /* corner resize grip — grab to scale the whole companion */
+  .resizeGrip {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 16px;
+    height: 16px;
+    z-index: 7;
+    cursor: nwse-resize;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    background:
+      linear-gradient(135deg, transparent 0 50%, #8d82ab 50% 60%, transparent 60% 70%, #8d82ab 70% 80%, transparent 80%);
+  }
+  .widget:hover .resizeGrip {
+    opacity: 0.75;
+  }
+  .resizeGrip:hover {
+    opacity: 1;
   }
 
   /* ---- walking / running / hopping ---- */
