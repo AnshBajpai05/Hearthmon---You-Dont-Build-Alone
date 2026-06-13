@@ -1121,13 +1121,13 @@
           {/each}
         </div>
       {:else if bgStyle === "ground"}
-        <!-- Curved ground platform — lower half only, no sphere -->
+        <!-- Flat ground platform at the pet's feet -->
         <div
           class="typebg typebg-ground"
-          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; background: {backgroundFor(
+          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; --psize: {imgSize}px; background: {backgroundFor(
             curType,
             dexId
-          )}; width: {imgSize + 100}px; opacity: calc(0.72 * {widgetOpacity})"
+          )}; width: {imgSize + 110}px; opacity: calc(0.72 * {widgetOpacity})"
           aria-hidden="true"
         >
           {#each Array(3) as _, i (i)}
@@ -2035,23 +2035,25 @@
     opacity: 0.18;
   }
 
-  /* Ground: curved elliptical platform at the pet's feet — lower 40% only */
+  /* Ground: flat elliptical platform sitting at the pet's feet */
   .typebg-ground {
-    bottom: calc(50% - var(--psize, 110px) * 0.12);
+    /* stage center ≈ 52% (padding-top shifts it slightly); feet = center + ~46% of psize */
+    top: calc(52% + var(--psize, 110px) * 0.36);
     transform: translateX(-50%);
-    height: calc(var(--psize, 110px) * 0.45);
-    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;  /* wide ellipse at top, flat at bottom */
+    /* flat ellipse — wide and shallow like a proper ground disc */
+    height: calc(var(--psize, 110px) * 0.28);
+    border-radius: 50%;
     box-shadow:
-      0 -4px 28px 4px color-mix(in srgb, var(--tc) 55%, transparent),
+      0 -6px 32px 6px color-mix(in srgb, var(--tc) 60%, transparent),
       inset 0 6px 18px rgba(255,255,255,0.18),
-      inset 0 -6px 14px rgba(0,0,0,0.3);
+      inset 0 -6px 14px rgba(0,0,0,0.28);
   }
   .typebg-ground::before {
     content: "";
     position: absolute;
-    top: 4%; left: 15%; width: 70%; height: 42%;
+    top: 8%; left: 18%; width: 64%; height: 48%;
     border-radius: 50%;
-    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.45), transparent 70%);
+    background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.4), transparent 70%);
     filter: blur(2px);
   }
 
