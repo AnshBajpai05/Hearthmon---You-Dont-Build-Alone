@@ -77,23 +77,48 @@ export const deepBondLines = [
   "Whatever today holds — we've held harder. Together."
 ];
 
-// Coding awareness — the pet quietly notices your commits. Mostly wordless;
-// these are the rare spoken acknowledgements (presence > chatter).
-export const commitLines = [
-  "Saved. Another step.",
-  "Commit landed. Tidy.",
-  "Progress, logged.",
-  "Mm — forward motion.",
-  "That's in the history now."
+// Coding awareness — short, spoken-aloud quips (Microsoft TTS) the pet says when
+// it notices git activity. Casual and warm; shown in the bubble AND spoken.
+export const commitQuips = [
+  "That's a commit.",
+  "Saved.",
+  "Nice, that's in.",
+  "Mm, progress.",
+  "Another one down."
 ];
-// Bug-fix celebration — a little warmer, because those are hard-won.
-export const bugFixLines = [
-  "Got it. That bug never stood a chance.",
-  "Fixed. I watched you wrestle that one.",
-  "Squashed. Nice.",
-  "There it goes — hard-won.",
-  "You out-stubborned it. Respect."
+export const fixQuips = [
+  "Hmm — fixed a bug.",
+  "Bug squashed.",
+  "Ha, got it.",
+  "Nice fix.",
+  "That bug's gone now."
 ];
+export const prQuips = [
+  "Pull request merged. You shipped it.",
+  "Merged it. Clean.",
+  "PR's in — nice work.",
+  "That's a big one. Merged."
+];
+export const releaseQuips = [
+  "New release — you shipped it.",
+  "It's live. Look at that.",
+  "Tagged a release. Proud of this one.",
+  "A release is out. Huge."
+];
+export const newRepoQuips = [
+  "New repo? You're just cooking now.",
+  "Fresh repo — a new adventure.",
+  "Ooh, a new project.",
+  "Starting something new. I'm in."
+];
+/** Commit-count milestone — spoken with the number. */
+export function milestoneQuip(n: number): string {
+  return pick([
+    `${n} commits together. Look how far we've come.`,
+    `${n} commits. We've built a lot, quietly.`,
+    `That's ${n} commits side by side.`
+  ]);
+}
 
 // Soft failure recovery — when something genuinely breaks, the pet notices
 // warmly instead of showing an error. Never blames the user; hard rate-limited.

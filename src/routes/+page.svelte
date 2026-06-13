@@ -29,6 +29,14 @@
     voiceCry,
     announceGo,
     playVoiceClip,
+    commitChime,
+    fixFanfare,
+    shipFanfare,
+    newRepoChime,
+    milestoneFanfare,
+    announce,
+    previewSfx,
+    previewSpeak,
     setSoundEnabled,
     setVolume,
     getVolumes,
@@ -73,8 +81,12 @@
     endOfNightLines,
     modeLines,
     softFailLines,
-    commitLines,
-    bugFixLines
+    commitQuips,
+    fixQuips,
+    prQuips,
+    releaseQuips,
+    newRepoQuips,
+    milestoneQuip
   } from "$lib/lines";
   import type { CompanionMode } from "$lib/lines";
   import {
@@ -560,27 +572,41 @@
   let watchingRepo = $state("");     // local folder path
   let watchingRemote = $state("");   // github url
   const FIX_RE = /\b(fix(e[sd])?|bug|hotfix|patch|resolve[sd]?|close[sd]?|squash)\b/i;
+  const MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
+  type GitKind = "commit" | "fix" | "pr" | "release" | "repo" | "milestone";
   let lastCommitReact = 0;
-  function onCommit(message: string) {
+
+  // One place that turns a git activity into a reaction: a quick bob, a cue
+  // sound, a matching visual, AND the pet speaks a short quip aloud (TTS).
+  function reactGit(kind: GitKind, spoken = "") {
     poke();
-    // a small, always-silent acknowledgement bob — the pet noticed
     if (petState === "idle") {
       petState = "happy";
       setTimeout(() => (petState = "idle"), 900);
     }
-    void bumpCounter("commits");
     if (focusMode || companionMode === "just_there") return; // stay quiet
-    // throttle spoken reactions so a rebase/squash burst can't turn into spam
+    // throttle so a burst (rebase / many events) can't spam
     if (Date.now() - lastCommitReact < 15_000) return;
     lastCommitReact = Date.now();
-    if (FIX_RE.test(message)) {
-      runDelight("star", 2400);
-      say(pick(bugFixLines), 7000);
-      playVoiceClip(["awesome", "that-was-awesome", "congrats"], 0.8, 0.6);
-    } else if (Math.random() < 0.4) {
-      // mostly wordless — only sometimes a word (presence > chatter)
-      say(pick(commitLines), 5000);
+
+    let line = spoken;
+    switch (kind) {
+      case "fix":       line ||= pick(fixQuips);       runDelight("star", 2400);     fixFanfare();        break;
+      case "pr":        line ||= pick(prQuips);        runDelight("fireworks", 2800); shipFanfare();       break;
+      case "release":   line ||= pick(releaseQuips);   runDelight("fireworks", 3200); shipFanfare();       break;
+      case "repo":      line ||= pick(newRepoQuips);   runDelight("star", 2600);     newRepoChime();      break;
+      case "milestone": line ||= "Look how far we've come."; runDelight("fireworks", 3200); milestoneFanfare(); break;
+      default:          line ||= pick(commitQuips);                                   commitChime();       break;
     }
+    say(line, 6000);  // show in the bubble
+    announce(line);   // and speak it aloud (Microsoft voice)
+  }
+
+  // A detected commit (local reflog or a remote push). Counts toward milestones.
+  async function onCommit(message: string) {
+    const n = await bumpCounter("commits");
+    if (MILESTONES.includes(n)) reactGit("milestone", milestoneQuip(n));
+    else reactGit(FIX_RE.test(message) ? "fix" : "commit");
   }
 
   // ---- GitHub remote polling: a single repo, OR a whole account ----
@@ -640,17 +666,45 @@
     if (newestId === last) return;
     await setMeta("git_remote_evt", newestId);
     if (initial || !last) return; // seed only — don't replay old activity
-    // react once to the most recent *new* push (any repo); messages drive fix-detection
+    // collect the new events (newest first) and react to the newest recognized one
     const fresh: any[] = [];
     for (const ev of events) {
       if (ev.id === last) break;
       fresh.push(ev);
     }
-    const push = fresh.find((e) => e.type === "PushEvent");
-    if (push) {
-      const commits = push.payload?.commits ?? [];
-      onCommit(commits.length ? commits[commits.length - 1].message : "");
+    for (const ev of fresh) {
+      if (reactToEvent(ev)) break;
     }
+  }
+
+  // Map a GitHub event to a reaction. Returns true if it was something we react to.
+  function reactToEvent(ev: any): boolean {
+    switch (ev?.type) {
+      case "PushEvent": {
+        const commits = ev.payload?.commits ?? [];
+        void onCommit(commits.length ? commits[commits.length - 1].message : "");
+        return true;
+      }
+      case "PullRequestEvent":
+        if (ev.payload?.action === "closed" && ev.payload?.pull_request?.merged) {
+          reactGit("pr");
+          return true;
+        }
+        return false;
+      case "ReleaseEvent":
+        if (ev.payload?.action === "published") {
+          reactGit("release");
+          return true;
+        }
+        return false;
+      case "CreateEvent":
+        if (ev.payload?.ref_type === "repository") {
+          reactGit("repo");
+          return true;
+        }
+        return false;
+    }
+    return false;
   }
 
   async function pollRemoteOnce(initial = false) {
@@ -677,82 +731,92 @@
     remoteId = "";
   }
 
-  // ---- set / stop the watched source (auto-detects folder vs GitHub URL) ----
-  async function setRepo(input: string) {
-    const p = input.trim();
+  // ---- LOCAL folder watcher (instant, via the Rust reflog poll) ----
+  async function setLocal(path: string) {
+    const p = path.trim();
     if (!p) return;
-    const looksRemote =
-      /^(https?:\/\/|git@|ssh:\/\/)/i.test(p) || /github\.com/i.test(p) || p.endsWith(".git");
-
-    if (looksRemote) {
-      const t = parseGitHub(p);
-      if (!t) {
-        say("That doesn't look like a GitHub URL.", 6000);
-        return;
-      }
-      // confirm it's reachable & public before committing to it
-      try {
-        const api = t.kind === "repo"
-          ? `https://api.github.com/repos/${t.id}`
-          : `https://api.github.com/users/${t.id}`;
-        const res = await fetch(api, { headers: ghHeaders() });
-        if (!res.ok) {
-          say(res.status === 404
-            ? (ghToken ? "Can't find that — check the URL?" : "Can't find that — is it public, or add a token?")
-            : "GitHub wouldn't show me that — check the URL or token?", 6500);
-          return;
-        }
-      } catch {
-        say("Couldn't reach GitHub just now. Try again in a moment?", 5500);
-        return;
-      }
-      // switch off the local watcher — one source at a time
-      try { await invoke("git_clear_repo"); } catch { /* already clear */ }
-      watchingRepo = "";
-      await setMeta("git_repo", "");
-      watchingRemote = p;
-      await setMeta("git_remote", p);
-      await setMeta("git_remote_sha", ""); // fresh baselines
-      await setMeta("git_remote_evt", "");
-      startRemotePoll(p);
-      say(t.kind === "user"
-        ? "Tracking your whole GitHub. I'll notice pushes across all your repos."
-        : "Tracking that repo on GitHub. I'll notice new pushes.", 6500);
-      panel = "none";
+    if (/github\.com/i.test(p) || /^(https?:\/\/|git@|ssh:\/\/)/i.test(p)) {
+      say("That's a link — put GitHub URLs in the GitHub box below.", 6000);
       return;
     }
-
-    // local folder
     try {
       await invoke("git_set_repo", { path: p });
-      stopRemotePoll();
-      watchingRemote = "";
-      await setMeta("git_remote", "");
       watchingRepo = p;
       await setMeta("git_repo", p);
-      say("Watching your repo now. I'll cheer the wins.", 5000);
-      panel = "none";
+      say("Watching your folder now — instant reactions.", 5000);
     } catch {
       say("Hmm — I couldn't find a git repo there. Check the folder path?", 5500);
-      // keep the panel open so the path can be corrected
     }
   }
-
-  async function stopWatch() {
+  async function stopLocal() {
     try { await invoke("git_clear_repo"); } catch { /* already clear */ }
-    stopRemotePoll();
     watchingRepo = "";
-    watchingRemote = "";
     await setMeta("git_repo", "");
-    await setMeta("git_remote", "");
-    panel = "none";
   }
 
-  // ---- dev helper: fire a fake commit to preview the reaction instantly ----
-  // (bypasses the 15s throttle so you can hammer it while tuning)
-  function testCommit(message: string) {
-    lastCommitReact = 0;
-    onCommit(message);
+  // ---- REMOTE watcher: a GitHub repo URL or a whole account (polled) ----
+  async function setRemote(url: string) {
+    const p = url.trim();
+    if (!p) return;
+    const t = parseGitHub(p);
+    if (!t) {
+      say("That doesn't look like a GitHub repo or profile URL.", 6000);
+      return;
+    }
+    try {
+      const api = t.kind === "repo"
+        ? `https://api.github.com/repos/${t.id}`
+        : `https://api.github.com/users/${t.id}`;
+      const res = await fetch(api, { headers: ghHeaders() });
+      if (!res.ok) {
+        say(res.status === 404
+          ? (ghToken ? "Can't find that — check the URL?" : "Can't find that — is it public, or add a token?")
+          : "GitHub wouldn't show me that — check the URL or token?", 6500);
+        return;
+      }
+    } catch {
+      say("Couldn't reach GitHub just now. Try again in a moment?", 5500);
+      return;
+    }
+    watchingRemote = p;
+    await setMeta("git_remote", p);
+    await setMeta("git_remote_sha", ""); // fresh baselines — never replay history
+    await setMeta("git_remote_evt", "");
+    startRemotePoll(p);
+    say(t.kind === "user"
+      ? "Tracking your whole GitHub too — I'll notice pushes across all your repos."
+      : "Tracking that repo on GitHub too — I'll notice new pushes.", 6500);
+  }
+  async function stopRemote() {
+    stopRemotePoll();
+    watchingRemote = "";
+    await setMeta("git_remote", "");
+  }
+
+  // ---- dev helper: preview a reaction instantly ----
+  // True smoke test: bypasses mode / mute / throttle and plays at full volume,
+  // speaking via the same TTS path used for Pokémon names. So clicking a test
+  // ALWAYS shows + sounds, even in Just-There mode or with the fx channel muted.
+  const TEST_CUES: Record<GitKind, { quip: () => string; cue: string; fx: "star" | "fireworks" | null }> = {
+    commit:    { quip: () => pick(commitQuips),  cue: "/sfx/commit.mp3",    fx: null },
+    fix:       { quip: () => pick(fixQuips),      cue: "/sfx/bugfix.mp3",    fx: "star" },
+    pr:        { quip: () => pick(prQuips),       cue: "/sfx/ship.mp3",      fx: "fireworks" },
+    release:   { quip: () => pick(releaseQuips),  cue: "/sfx/ship.mp3",      fx: "fireworks" },
+    repo:      { quip: () => pick(newRepoQuips),  cue: "/sfx/newrepo.mp3",   fx: "star" },
+    milestone: { quip: () => milestoneQuip(50),   cue: "/sfx/milestone.mp3", fx: "fireworks" }
+  };
+  function testReact(kind: GitKind) {
+    const t = TEST_CUES[kind];
+    const line = t.quip();
+    poke();
+    if (petState === "idle") {
+      petState = "happy";
+      setTimeout(() => (petState = "idle"), 900);
+    }
+    if (t.fx) runDelight(t.fx, t.fx === "fireworks" ? 3000 : 2400);
+    say(line, 6000);
+    previewSfx(t.cue);    // cue sound at full volume, ignores mute/fx slider
+    previewSpeak(line);   // spoken aloud (same voice path as Pokémon names)
   }
 
   // ---- GitHub token (private-repo access) — local only, never leaves the box ----
@@ -1427,14 +1491,16 @@
       <VaultPanel {petName} onClose={() => (panel = "none")} />
     {:else if panel === "code"}
       <CodePanel
-        current={watchingRemote || watchingRepo}
-        isRemote={!!watchingRemote}
+        localPath={watchingRepo}
+        remoteUrl={watchingRemote}
         {hasToken}
-        onSave={setRepo}
-        onStop={stopWatch}
+        onSetLocal={setLocal}
+        onStopLocal={stopLocal}
+        onSetRemote={setRemote}
+        onStopRemote={stopRemote}
         onSaveToken={setToken}
         onClearToken={clearToken}
-        onTest={testCommit}
+        onTest={testReact}
         onClose={() => (panel = "none")}
       />
     {/if}

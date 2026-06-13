@@ -63,12 +63,16 @@ Everything below is **live** in the current build:
 ## 🔴 P1 — Soul-Critical (from vision doc, not yet built)
 
 ### Coding Awareness ✅ shipped 2026-06-13 (git layer)
-- [x] **Git integration** — three watch sources, pick one in the **Code** panel (radial System ring; `CodePanel`, saved to SQLite meta, resumes on launch; reacts only outside Focus / Just-There; one spoken reaction / 15s throttle):
+- [x] **Git integration** — **Code** panel (radial System ring) runs a LOCAL folder watcher and a GitHub watcher **independently and at the same time** (mix & match); both saved to SQLite meta, resume on launch; reactions are gated to outside Focus / Just-There and a shared one-spoken-reaction-per-15s throttle (so local+remote seeing the same commit only reacts once):
   1. **Local folder** (instant) — Rust backend polls `.git/logs/HEAD` reflog every 3s, emits `git-commit` per new commit (backend fs access, no capability/IDE extension).
   2. **Single GitHub repo URL** — frontend polls `api.github.com/repos/{o}/{r}/commits` every 3 min, diffs the head SHA.
   3. **Whole GitHub account** (`github.com/<user>`) — polls `/users/{user}/events/public`, reacts to the newest `PushEvent` across *any* repo. (CSP is `null`, so the webview fetches GitHub directly — no http plugin.) Reaction reuses the same bob/celebrate path. Never replays history (seeds baseline SHA/event-id on first sight).
   - 🔑 **Private repos** — optional fine-grained PAT entered in the Code panel (collapsible, `type=password`, never pre-filled), stored in SQLite meta `git_token`, sent as `Authorization: Bearer` on all GitHub fetches. With a token, account mode switches to the authenticated `/users/{user}/events` feed (includes private activity). Token is local-only, never logged. Recommend read-only Contents+Metadata scope.
-- [x] **Bug-fix celebration** — commit messages matched against `/\b(fix|bug|hotfix|patch|resolve|close|squash)\b/i` → a ✦ star delight + warmer `bugFixLines` ("Got it. That bug never stood a chance.") + a celebratory voice clip.
+- [x] **Bug-fix celebration** — commit messages matched against `/\b(fix|bug|hotfix|patch|resolve|close|squash)\b/i` → ✦ star + `fixQuips`.
+- [x] **Spoken reactions (Microsoft TTS)** ✅ 2026-06-13 — every git activity now goes through one `reactGit(kind)` dispatcher: a bob + a per-kind cue sound (`static/sfx/*.mp3`) + the pet **speaks a short quip aloud** via `announce()` (system neural voice) and shows it in the bubble. (TTS uses the voice channel, so it's audible even if the fx chimes are muted.)
+- [x] **More activities** ✅ 2026-06-13 — account events feed now reacts to: **PushEvent** (commit/fix), **PullRequestEvent** merged → "pr" (ship fanfare + fireworks), **ReleaseEvent** published → "release", **CreateEvent** repository → "repo" ("you're just cooking now"). Reacts to the newest recognized event per poll.
+- [x] **Commit milestones** ✅ 2026-06-13 — `commits` counter triggers a grand reaction at 10/25/50/100/250/500/1000 (`milestoneQuip(n)`). *(Caveat: with both local + remote watchers on, the same commit can bump the counter twice — milestones are intentionally loose/celebratory, not exact.)*
+- 🧪 Code panel has per-kind test buttons (Commit · Bug-fix · PR · Release · New repo · Milestone) that fire the real reaction (throttle bypassed).
 - [ ] **Long-session tracker** — presence has it but no IDE signal; VS Code extension or file watcher
 - [ ] **Build / deploy detector** — watch for terminal output patterns or a sentinel file
 - 💡 **Commit counter** — `commits` meta now bumps per commit; ready to feed a future "100 commits together" badge / milestone callbacks.

@@ -1,37 +1,53 @@
 <script lang="ts">
-  // Coding Awareness config: point the pet at a git repo, and it quietly
-  // reacts to your commits (and cheers the bug-fixes). Local-only; the path
-  // is read by the Rust backend, nothing leaves this machine.
+  // Coding Awareness config. Two independent watchers can run at once:
+  //   • a LOCAL folder  → instant reactions (Rust reflog watcher)
+  //   • a GitHub URL    → repo or whole account, polled every few minutes
+  // Plus an optional read-only token (private repos) and instant test buttons.
   import { untrack } from "svelte";
 
   interface Props {
-    current: string;                 // currently-watched source ("" = none)
-    isRemote: boolean;               // true = a GitHub URL, false = a local folder
-    hasToken: boolean;               // a private-access token is saved
-    onSave: (path: string) => void;
-    onStop: () => void;
+    localPath: string;   // currently-watched local folder ("" = off)
+    remoteUrl: string;   // currently-tracked GitHub url   ("" = off)
+    hasToken: boolean;
+    onSetLocal: (path: string) => void;
+    onStopLocal: () => void;
+    onSetRemote: (url: string) => void;
+    onStopRemote: () => void;
     onSaveToken: (token: string) => void;
     onClearToken: () => void;
-    onTest: (message: string) => void;   // fire a fake commit to preview the reaction
+    onTest: (kind: "commit" | "fix" | "pr" | "release" | "repo" | "milestone") => void;
     onClose: () => void;
   }
   let {
-    current, isRemote, hasToken,
-    onSave, onStop, onSaveToken, onClearToken, onTest, onClose
+    localPath, remoteUrl, hasToken,
+    onSetLocal, onStopLocal, onSetRemote, onStopRemote,
+    onSaveToken, onClearToken, onTest, onClose
   }: Props = $props();
 
-  // seed the input from the current path once (intentionally just the initial value)
-  let path = $state(untrack(() => current));
-  const dirty = $derived(path.trim() !== "" && path.trim() !== current);
+  // seed inputs from current values once (initial value only — intentional)
+  let local = $state(untrack(() => localPath));
+  let remote = $state(untrack(() => remoteUrl));
+  const localDirty = $derived(local.trim() !== "" && local.trim() !== localPath);
+  const remoteDirty = $derived(remote.trim() !== "" && remote.trim() !== remoteUrl);
 
-  let showToken = $state(false);     // reveal the token field on demand
-  let token = $state("");            // write-only; never pre-filled with the saved value
+  let showToken = $state(false);
+  let token = $state(""); // write-only; never pre-filled
 
-  // fire a test, then duck the panel out of the way so the reaction is visible
+  type Kind = "commit" | "fix" | "pr" | "release" | "repo" | "milestone";
+  const tests: { kind: Kind; label: string }[] = [
+    { kind: "commit", label: "Commit" },
+    { kind: "fix", label: "Bug-fix" },
+    { kind: "pr", label: "PR merged" },
+    { kind: "release", label: "Release" },
+    { kind: "repo", label: "New repo" },
+    { kind: "milestone", label: "Milestone" }
+  ];
+
+  // fire a test, then duck the panel so the reaction is visible
   let peeking = $state(false);
   let peekTimer: ReturnType<typeof setTimeout>;
-  function fireTest(message: string) {
-    onTest(message);
+  function fireTest(kind: Kind) {
+    onTest(kind);
     peeking = true;
     clearTimeout(peekTimer);
     peekTimer = setTimeout(() => (peeking = false), 4200);
@@ -45,61 +61,69 @@
   </div>
 
   <p class="blurb">
-    Watch a project and I'll quietly notice commits — and cheer the bug-fixes.
-    Give me a <strong>local folder</strong> (instant), a <strong>repo URL</strong>,
-    or your whole <strong>GitHub account</strong> (catches pushes everywhere).
+    I'll quietly notice commits — and cheer the bug-fixes. Use either or
+    <strong>both</strong>: a local folder for instant reactions, a GitHub link for pushes.
   </p>
 
-  {#if current && isRemote}
-    <div class="status">🌐 Tracking <code>{current}</code></div>
-  {:else if current}
-    <div class="status">👀 Watching <code>{current}</code></div>
-  {:else}
-    <div class="status off">Not watching anything yet.</div>
+  <!-- ─── LOCAL folder (instant) ─── -->
+  <h3>Local folder · instant</h3>
+  {#if localPath}
+    <div class="status">👀 <code>{localPath}</code></div>
   {/if}
-
   <input
     class="path"
     type="text"
     spellcheck="false"
-    placeholder="C:\\path\\to\\repo  ·  or  github.com/you  ·  or  github.com/you/repo"
-    bind:value={path}
-    onkeydown={(e) => e.key === "Enter" && dirty && onSave(path)}
+    placeholder="C:\\path\\to\\repo  (the folder with .git)"
+    bind:value={local}
+    onkeydown={(e) => e.key === "Enter" && localDirty && onSetLocal(local)}
   />
-
   <div class="row">
-    <button class="save" disabled={!dirty} onclick={() => onSave(path)}>
-      {current ? "Update" : "Watch this repo"}
+    <button class="save" disabled={!localDirty} onclick={() => onSetLocal(local)}>
+      {localPath ? "Update" : "Watch folder"}
     </button>
-    {#if current}
-      <button class="stop" onclick={onStop}>Stop watching</button>
+    {#if localPath}
+      <button class="stop" onclick={onStopLocal}>Stop</button>
     {/if}
   </div>
 
-  <p class="hint">
-    Local folder = the one with <code>.git</code> (reacts instantly). GitHub links
-    are checked every few minutes.
-  </p>
-
-  <!-- ─── try the reaction now (no real commit needed) ─── -->
-  <div class="testrow">
-    <span class="testlbl">🧪 Try it</span>
-    <button class="test" onclick={() => fireTest("tidy up the layout")}>Commit</button>
-    <button class="test fix" onclick={() => fireTest("fix: squash the off-by-one bug")}>Bug-fix</button>
+  <!-- ─── GitHub (repo or account) ─── -->
+  <h3>GitHub · every few min</h3>
+  {#if remoteUrl}
+    <div class="status">🌐 <code>{remoteUrl}</code></div>
+  {/if}
+  <input
+    class="path"
+    type="text"
+    spellcheck="false"
+    placeholder="github.com/you   ·   or   github.com/you/repo"
+    bind:value={remote}
+    onkeydown={(e) => e.key === "Enter" && remoteDirty && onSetRemote(remote)}
+  />
+  <div class="row">
+    <button class="save" disabled={!remoteDirty} onclick={() => onSetRemote(remote)}>
+      {remoteUrl ? "Update" : "Track GitHub"}
+    </button>
+    {#if remoteUrl}
+      <button class="stop" onclick={onStopRemote}>Stop</button>
+    {/if}
   </div>
 
-  <!-- ─── private-repo access (optional token) ─── -->
+  <!-- ─── try each reaction now (pet speaks + sound + visual) ─── -->
+  <div class="testrow">
+    <span class="testlbl">🧪 Try</span>
+    {#each tests as t (t.kind)}
+      <button class="test" class:fix={t.kind === "fix"} onclick={() => fireTest(t.kind)}>{t.label}</button>
+    {/each}
+  </div>
+
+  <!-- ─── private-repo access (optional token, applies to GitHub) ─── -->
   <div class="tokrow">
-    <button
-      class="toklink"
-      onclick={() => (showToken = !showToken)}
-      aria-expanded={showToken}
-    >
+    <button class="toklink" onclick={() => (showToken = !showToken)} aria-expanded={showToken}>
       {hasToken ? "🔑 token saved" : "🔒 private repos?"}
       <span class="chev">{showToken ? "▾" : "▸"}</span>
     </button>
   </div>
-
   {#if showToken}
     <input
       class="path"
@@ -108,7 +132,7 @@
       spellcheck="false"
       placeholder={hasToken ? "•••••• (saved) — paste a new one to replace" : "ghp_… / github_pat_…"}
       bind:value={token}
-      onkeydown={(e) => e.key === "Enter" && token.trim() && onSaveToken(token)}
+      onkeydown={(e) => e.key === "Enter" && token.trim() && (onSaveToken(token), (token = ""))}
     />
     <div class="row">
       <button class="save" disabled={!token.trim()} onclick={() => { onSaveToken(token); token = ""; }}>
@@ -129,8 +153,11 @@
   .panel {
     position: absolute;
     top: 10px;
+    bottom: 10px;        /* anchor to the window so it never spills off-screen */
     left: 10px;
     right: 10px;
+    overflow-y: auto;    /* taller content scrolls inside the window */
+    overscroll-behavior: contain;
     padding: 12px;
     border-radius: 16px;
     background: rgba(33, 28, 48, 0.96);
@@ -139,7 +166,7 @@
     color: #ece6f7;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 7px;
     z-index: 5;
     transition: opacity 0.18s ease;
   }
@@ -168,20 +195,23 @@
     color: #b6acce;
     margin: 0;
   }
+  h3 {
+    margin: 6px 0 1px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #9d92bd;
+  }
   .status {
     font-size: 11px;
     color: #c9bff0;
     background: rgba(120, 100, 180, 0.16);
     border-radius: 8px;
-    padding: 5px 8px;
+    padding: 4px 8px;
     word-break: break-all;
   }
-  .status.off {
-    color: #8d82ab;
-    background: rgba(120, 108, 160, 0.1);
-  }
-  .status code,
-  .hint code {
+  .status code {
     color: #f0cfa0;
     font-size: 10.5px;
   }
@@ -207,7 +237,7 @@
   .save,
   .stop {
     flex: 1;
-    padding: 7px 10px;
+    padding: 6px 10px;
     border-radius: 9px;
     border: 1px solid rgba(120, 108, 160, 0.45);
     background: rgba(48, 38, 68, 0.92);
@@ -230,15 +260,12 @@
     flex: 0 0 auto;
     color: #d9a0a0;
   }
-  .hint {
-    font-size: 10px;
-    color: #8d82ab;
-    margin: 0;
-  }
   .testrow {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
+    margin-top: 4px;
   }
   .testlbl {
     font-size: 10.5px;
@@ -285,5 +312,10 @@
   .chev {
     font-size: 8px;
     opacity: 0.8;
+  }
+  .hint {
+    font-size: 10px;
+    color: #8d82ab;
+    margin: 0;
   }
 </style>
