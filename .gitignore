@@ -14,3 +14,10 @@ vite.config.ts.timestamp-*
 /static/voice/*.wav
 /ash_all_voices.mp3
 /tools/.venv-voice
+
+# kaggle voice-clone kit: ship the scripts, never the IP audio or the zip
+/kaggle_voice_clone/reference_clips/*.mp3
+/kaggle_voice_clone/reference_clips/*.wav
+/kaggle_voice_clone/results/*.mp3
+/kaggle_voice_clone/results/*.wav
+/hearthmon_kaggle_voice_clone.zip

@@ -1,0 +1,24 @@
+# Species to generate throw lines for. One per line.
+#   pikachu              -> results/go-pikachu.mp3   "Pikachu! I choose you!"
+#   tapu koko            -> results/go-tapu-koko.mp3 "Tapu Koko! I choose you!"
+#   pikachu | Go get 'em, Pikachu!   -> custom line, same go-<slug>.mp3
+# Lines starting with # are ignored. Add as many as you like.
+
+pikachu
+charizard
+gengar
+eevee
+rowlet
+snorlax
+mudkip
+bulbasaur
+squirtle
+gardevoir
+lucario
+greninja
+garchomp
+tyranitar
+dragonite
+mimikyu
+toxtricity
+tapu koko

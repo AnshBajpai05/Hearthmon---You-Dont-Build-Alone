@@ -1,0 +1,17 @@
+# Hearthmon voice cloning — Kaggle / Linux GPU.
+# This combo predates the torchcodec requirement that blocks newer coqui-tts,
+# so it installs and runs cleanly on Kaggle's images.
+#
+# Kaggle already ships a CUDA torch; do NOT reinstall torch/torchaudio there.
+# Install just these on top:
+#
+#     pip install -q "coqui-tts==0.24.3" "transformers==4.40.2"
+#
+# (ffmpeg is preinstalled on Kaggle. If running elsewhere: apt-get install -y ffmpeg)
+
+coqui-tts==0.24.3
+transformers==4.40.2
+
+# If your environment has NO torch at all (rare on Kaggle), also install a
+# compatible CPU/GPU build, e.g.:
+#   torch==2.3.1 torchaudio==2.3.1
