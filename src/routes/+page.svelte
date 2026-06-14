@@ -1527,21 +1527,61 @@
       return "";
     }
   }
+  // README card content — product-forward + observational, varies card to card.
+  const CARD_OBSERVATIONS = [
+    "quietly learning how to stay beside builders",
+    "watching hard work turn into something real",
+    "learning the shape of how you build",
+    "here for the long, quiet stretches",
+    "noticing how hard you've been trying"
+  ];
+  const CARD_SUBTITLES = [
+    "an emotionally-aware coding companion",
+    "a quiet companion for people building hard things"
+  ];
+  const CARD_TAGLINES = [
+    "the companion that quietly stays while you build hard things",
+    "it stays beside you while you build hard things",
+    "quietly here while you make hard things"
+  ];
+
+  // observational chips drawn from real signals — short, never RPG metadata
+  async function cardChips(days: number): Promise<{ icon: string; label: string }[]> {
+    const today = new Date().toISOString().slice(0, 10);
+    const slug = activeProject ? projSlug(activeProject) : "";
+    const projDays = slug ? Number((await getMeta(`proj_${slug}_days`)) ?? 0) : 0;
+    const streak = Number((await getMeta("streak")) ?? 0);
+    const nightS = Number((await getMeta("sess_night")) ?? 0);
+    const dayS = Number((await getMeta("sess_day")) ?? 0);
+    const effPts = (await getMeta("effort_day")) === today ? Number((await getMeta("effort_pts")) ?? 0) : 0;
+
+    const chips: { icon: string; label: string }[] = [];
+    if (effPts >= 60) chips.push({ icon: "⚡", label: "deep work day" });
+    else if (lastFrictionCue > 0 && Date.now() - lastFrictionCue < 36 * 3600_000)
+      chips.push({ icon: "🌧", label: "stubborn problem" });
+    if (isNight || nightS > dayS) chips.push({ icon: "🌙", label: "night builder" });
+    if (projDays >= 3) chips.push({ icon: "🫖", label: "still at it" });
+    if (streak >= 3) chips.push({ icon: "🔥", label: `${streak}-day streak` });
+    if (days <= 7) chips.push({ icon: "✨", label: "first chapter" });
+    if (chips.length === 0 && petPersona) chips.push({ icon: petPersona.icon, label: petPersona.label.toLowerCase() });
+    if (chips.length === 0) chips.push({ icon: "🌱", label: "just beginning" });
+    return chips.slice(0, 3);
+  }
+
   async function generateCard(silent = false) {
     const fm = await getMeta("first_met");
     const days = daysTogether(fm);
-    const interactions = Number((await getMeta("interactions")) ?? 0) || 0;
     const commits = Number((await getMeta("commits")) ?? 0) || 0;
-    const speciesName = displayName(dexEntry(dexId)?.name ?? petName);
+    const footer =
+      days <= 14
+        ? `${commits} commits · quietly becoming real`
+        : pick([`${commits} commits · quietly becoming real`, `${commits} commits · ${days} days together`]);
     const svg = buildCard({
-      name: petName,
-      species: speciesName,
-      bond: BOND_STAGES[bondStageIndex(days, interactions)]?.label ?? "Stranger",
-      personaIcon: petPersona?.icon ?? "",
-      personaLabel: petPersona?.label ?? "",
-      status: cardStatusLine(),
-      commits,
-      days,
+      observation: pick(CARD_OBSERVATIONS),
+      subtitle: pick(CARD_SUBTITLES),
+      tagline: pick(CARD_TAGLINES),
+      chips: await cardChips(days),
+      footer,
       night: isNight,
       sprite: await spriteDataUri()
     });

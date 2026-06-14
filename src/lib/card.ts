@@ -4,25 +4,32 @@
 // external refs: the sprite is embedded as a base64 data-URI.
 
 export interface CardState {
-  name: string;
-  species: string;
-  bond: string;
-  personaIcon: string;
-  personaLabel: string;
-  status: string; // the spoken quip in the bubble
-  commits: number;
-  days: number;
+  observation: string; // bubble — what Hearthmon is quietly doing/learning
+  subtitle: string; // under the title, e.g. "an emotionally-aware coding companion"
+  tagline: string; // the money line — wraps to two lines if long
+  chips: { icon: string; label: string }[]; // observational chips (dynamic)
+  footer: string; // e.g. "86 commits · quietly becoming real"
   night: boolean;
   sprite?: string; // base64 PNG data-URI of the companion (optional)
+  title?: string; // defaults to "Hearthmon"
 }
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** Split a line into at most two lines near `max` chars, breaking on a space. */
+function wrap2(text: string, max = 34): [string, string] {
+  if (text.length <= max) return [text, ""];
+  const at = text.lastIndexOf(" ", max);
+  const cut = at > 8 ? at : max;
+  return [text.slice(0, cut).trim(), text.slice(cut).trim()];
+}
+
 /** Build the animated README status card as an SVG string. */
 export function buildCard(s: CardState): string {
   const W = 480;
-  const H = 172;
+  const H = 188;
+  const title = s.title ?? "Hearthmon";
 
   // Night mode shifts palette toward cooler purples; day is warmer indigo
   const bg1       = s.night ? "#0d0b18" : "#1a1530";
@@ -37,24 +44,24 @@ export function buildCard(s: CardState): string {
   const textDim   = "#8d82ab";
   const bubbleBg  = "#160f24";
 
-  // ── Chips ──────────────────────────────────────────────────────────────────
-  const chips = [s.bond, s.personaLabel ? `${s.personaIcon} ${s.personaLabel}`.trim() : ""]
-    .filter(Boolean)
-    .map(esc);
+  // ── Observational chips ("what it noticed") — width-aware single row ─────────
+  const CHIP_Y = 104;
   let chipX = 168;
-  const chipSvg = chips
+  const chipSvg = s.chips
     .map((c, i) => {
-      const w = 16 + c.length * 7;
+      const label = esc(c.label);
+      const w = 26 + (c.icon ? 13 : 0) + label.length * 6.1;
+      if (chipX + w > W - 14) return ""; // ran out of room — drop the overflow
       const x = chipX;
-      chipX += w + 8;
-      const delay = `${i * 0.6}s`;
-      return `<g class="chip" style="animation-delay:${delay}">` +
-        `<rect x="${x}" y="98" rx="9" width="${w.toFixed(0)}" height="20" ` +
-        `fill="${accent}" fill-opacity="0.12" stroke="${accent}" stroke-opacity="0.5"/>` +
-        `<rect x="${x}" y="98" rx="9" width="${w.toFixed(0)}" height="20" ` +
+      chipX += w + 7;
+      const inner = `${c.icon ? c.icon + " " : ""}${label}`;
+      return `<g class="chip" style="animation-delay:${i * 0.6}s">` +
+        `<rect x="${x}" y="${CHIP_Y}" rx="10" width="${w.toFixed(0)}" height="21" ` +
+        `fill="${accent}" fill-opacity="0.1" stroke="${accent}" stroke-opacity="0.45"/>` +
+        `<rect x="${x}" y="${CHIP_Y}" rx="10" width="${w.toFixed(0)}" height="21" ` +
         `fill="url(#chipGlint)" fill-opacity="0" class="chipshine"/>` +
-        `<text x="${(x + w / 2).toFixed(0)}" y="112" font-size="11" fill="${accent}" ` +
-        `text-anchor="middle">${c}</text>` +
+        `<text x="${(x + w / 2).toFixed(0)}" y="${CHIP_Y + 14}" font-size="11" fill="${accent}" ` +
+        `text-anchor="middle">${inner}</text>` +
         `</g>`;
     })
     .join("");
@@ -80,14 +87,15 @@ export function buildCard(s: CardState): string {
   // ── Sprite ─────────────────────────────────────────────────────────────────
   const innerSprite = s.sprite
     ? `<image class="mon" href="${s.sprite}" x="0" y="0" width="96" height="96" preserveAspectRatio="xMidYMax meet"/>`
-    : `<text class="mon" x="48" y="72" font-size="54" text-anchor="middle">${s.personaIcon || "🐾"}</text>`;
-
-  const spriteEl = `<g class="monWrap" style="transform-origin:74px 144px">${innerSprite}</g>`;
+    : `<text class="mon" x="48" y="72" font-size="54" text-anchor="middle">🐾</text>`;
 
   // ── Speech bubble ──────────────────────────────────────────────────────────
-  const bubW = Math.min(340, 36 + s.status.length * 6.8);
+  const bubW = Math.min(340, 36 + s.observation.length * 6.8);
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hearthmon — ${esc(s.name)}, ${esc(s.status)}">
+  // ── Money line (wraps to two lines if long) ─────────────────────────────────
+  const [tagA, tagB] = wrap2(s.tagline, 36);
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hearthmon — ${esc(s.observation)}">
   <defs>
     <!-- Background gradient -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -316,23 +324,24 @@ export function buildCard(s: CardState): string {
     <rect x="122" y="18" rx="6"  width="${(bubW-8).toFixed(0)}" height="6"
           fill="white" fill-opacity="0.04"/>
     <path d="M128 44 l-10 11 l14 -5 z" fill="${bubbleBg}" fill-opacity="0.94"/>
-    <text x="132" y="35" font-size="12" fill="#e9e2fb">${esc(s.status)}</text>
+    <text x="132" y="35" font-size="12" fill="#e9e2fb">${esc(s.observation)}</text>
   </g>
 
-  <!-- Hearthmon label -->
-  <text class="label" x="168" y="62" font-size="14" font-weight="700" fill="${accent}">${s.night ? "🌙" : "✦"} Hearthmon</text>
+  <!-- Title: the PRODUCT, not the nickname -->
+  <text class="nameShimmer" x="168" y="74" font-size="23" font-weight="800">${s.night ? "🌙" : "✦"} ${esc(title)}</text>
 
-  <!-- Companion name -->
-  <text class="nameShimmer" x="168" y="86" font-size="20" font-weight="800">${esc(s.name)}</text>
+  <!-- Subtitle -->
+  <text class="label" x="170" y="92" font-size="11.5" fill="${textSub}">${esc(s.subtitle)}</text>
 
-  <!-- Chips -->
+  <!-- Observational chips -->
   ${chipSvg}
 
-  <!-- Tagline -->
-  <text x="168" y="142" font-size="12" fill="${textSub}">${s.night ? "🌙 coding by moonlight" : "✦ building, quietly"}</text>
+  <!-- Money line (1–2 lines) -->
+  <text x="168" y="${tagB ? 146 : 150}" font-size="12.5" fill="${accent}" font-weight="600">${esc(tagA)}</text>
+  ${tagB ? `<text x="168" y="162" font-size="12.5" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
 
   <!-- Footer -->
-  <text class="footer" x="${W-18}" y="160" font-size="10" fill="${textDim}" text-anchor="end">${s.commits} commits · ${s.days} day${s.days !== 1 ? "s" : ""} together</text>
+  <text class="footer" x="${W - 18}" y="${H - 10}" font-size="10" fill="${textDim}" text-anchor="end">${esc(s.footer)}</text>
 
 </svg>`;
 }
