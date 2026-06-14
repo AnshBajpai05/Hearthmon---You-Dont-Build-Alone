@@ -1,9 +1,11 @@
 <script lang="ts">
-  // V2 Phase 0 — the beachhead. Prove a Pokémon can LIVE in Pixi without losing
-  // interaction quality: breathing, lean, idle hop, drag (with weight), petting,
-  // tap. No sanctuary, no shaders, no FSM yet — just parity + the spring feel.
+  // V2 Phase 1 — the motion language. The pet is a MeshPlane whose VERTICES are
+  // deformed each frame (squash/stretch, a jelly belly bulge, a travelling
+  // jiggle, a lean shear) — "soft toy with weight", no per-mon rig, scales to all
+  // 1025 sprites. Everything is driven by the Spring engine; a tiny state seed
+  // (idle / drag / pet) gates behaviour. Interaction parity carried over from P0.
   import { onMount } from "svelte";
-  import { Application, Sprite, Assets, Text, Container, type Texture } from "pixi.js";
+  import { Application, Assets, MeshPlane, Graphics, Text, Container, Rectangle, type Texture } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl } from "$lib/sprites";
 
@@ -31,7 +33,6 @@
       app = a;
       host.appendChild(a.canvas);
 
-      // crisp pixel art
       let tex: Texture;
       try {
         tex = await Assets.load(spriteUrl(dexId, shiny));
@@ -41,50 +42,77 @@
       if (destroyed) return;
       tex.source.scaleMode = "nearest";
 
-      const pet = new Sprite(tex);
-      pet.anchor.set(0.5, 1); // feet at the bottom → hop/squash pivot from the ground
-      pet.eventMode = "static";
-      pet.cursor = "grab";
-      const baseScale = size / Math.max(tex.width, tex.height);
-      a.stage.addChild(pet);
+      // ── deformable mesh ────────────────────────────────────────────────────
+      const GX = 7;
+      const GY = 8;
+      const mesh = new MeshPlane({ texture: tex, verticesX: GX, verticesY: GY });
+      const posBuf = mesh.geometry.getBuffer("aPosition");
+      const base = Float32Array.from(posBuf.data as Float32Array);
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let i = 0; i < base.length; i += 2) {
+        minX = Math.min(minX, base[i]);
+        maxX = Math.max(maxX, base[i]);
+        minY = Math.min(minY, base[i + 1]);
+        maxY = Math.max(maxY, base[i + 1]);
+      }
+      const width = maxX - minX || 1;
+      const height = maxY - minY || 1;
+      const cx = (minX + maxX) / 2;
+      const uv = new Float32Array(base.length); // normalized (u,v) per vertex from base
+      for (let i = 0; i < base.length; i += 2) {
+        uv[i] = (base[i] - minX) / width;
+        uv[i + 1] = (base[i + 1] - minY) / height;
+      }
+      const baseScale = size / Math.max(width, height);
+      mesh.pivot.set(cx, maxY); // pivot at the feet → squash/scale from the ground
+      mesh.scale.set(baseScale);
+      mesh.eventMode = "static";
+      mesh.cursor = "grab";
+      mesh.hitArea = new Rectangle(minX, minY, width, height); // stable hit box despite warping
 
+      // contact shadow (grounds the pet; reacts to squash + hop height)
+      const shadow = new Graphics();
+      shadow.ellipse(0, 0, width * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
+      a.stage.addChild(shadow);
+      a.stage.addChild(mesh);
       const hearts = new Container();
       a.stage.addChild(hearts);
 
-      const baseY = () => a.screen.height * 0.82;
+      const baseY = () => a.screen.height * 0.8;
       const centerX = () => a.screen.width / 2;
 
-      // motion springs
+      // springs
       const posX = new Spring(centerX(), 120, 16);
       const posY = new Spring(baseY(), 150, 14);
       const lean = new Spring(0, 90, 12);
-      const squash = new Spring(0, 220, 16); // + = wider & shorter (landing/petting)
+      const squash = new Spring(0, 220, 16); // + = squashed (shorter + belly bulge)
+      let jiggle = 0; // decaying wobble energy (base px)
 
-      // interaction state (mirrors V1 Pet.svelte: drag vs stroke vs tap)
-      let dragging = false;
+      // tiny state seed (Phase-1 FSM): idle | drag | pet
+      let mode: "idle" | "drag" | "pet" = "idle";
       let downAt: { x: number; y: number; t: number } | null = null;
-      let last: { x: number; y: number } | null = null;
+      let lastPt: { x: number; y: number } | null = null;
       let strokeDist = 0;
       let petFrames = 0;
       let airborne = false;
-      let t = 0;
+      let clock = 0;
       let nextHop = 3 + Math.random() * 5;
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
         const h = new Text({ text: "♥", style: { fill: 0xff8fb0, fontSize: 16 } });
         h.anchor.set(0.5);
-        h.x = pet.x + (Math.random() * 40 - 20);
-        h.y = pet.y - size * 0.6;
+        h.x = posX.value + (Math.random() * 40 - 20);
+        h.y = posY.value - size * 0.6;
         (h as unknown as { _life: number })._life = 1;
         hearts.addChild(h);
       }
 
-      pet.on("pointerdown", (e) => {
+      mesh.on("pointerdown", (e) => {
         downAt = { x: e.global.x, y: e.global.y, t: performance.now() };
-        last = { x: e.global.x, y: e.global.y };
+        lastPt = { x: e.global.x, y: e.global.y };
         strokeDist = 0;
-        pet.cursor = "grabbing";
+        mesh.cursor = "grabbing";
       });
 
       a.stage.eventMode = "static";
@@ -92,52 +120,56 @@
       a.stage.on("pointermove", (e) => {
         const gx = e.global.x;
         const gy = e.global.y;
-        if (!dragging) lean.target = Math.max(-0.14, Math.min(0.14, (gx - pet.x) / a.screen.width));
-        if (downAt) {
-          const moved = Math.hypot(gx - downAt.x, gy - downAt.y);
-          if (moved > 6) dragging = true;
-        }
-        if (dragging) {
+        if (mode !== "drag") lean.target = Math.max(-0.16, Math.min(0.16, (gx - posX.value) / a.screen.width));
+        if (downAt && Math.hypot(gx - downAt.x, gy - downAt.y) > 6) mode = "drag";
+        if (mode === "drag") {
           posX.target = gx;
-          posY.target = gy; // sprite lags the cursor via the spring → weight
-        } else if (last) {
+          posY.target = gy; // mesh lags the cursor via the spring → weight
+        } else if (lastPt) {
           const within =
-            Math.abs(gx - pet.x) < size * 0.5 && Math.abs(gy - (pet.y - size * 0.4)) < size * 0.5;
+            Math.abs(gx - posX.value) < size * 0.5 && Math.abs(gy - (posY.value - size * 0.4)) < size * 0.5;
           if (within) {
-            strokeDist += Math.hypot(gx - last.x, gy - last.y);
+            strokeDist += Math.hypot(gx - lastPt.x, gy - lastPt.y);
             if (strokeDist > 46) {
               strokeDist = 0;
               spawnHeart();
-              petFrames = 26;
-              squash.nudge(2);
+              mode = "pet";
+              petFrames = 30;
+              squash.nudge(1.6);
+              jiggle = Math.min(14, jiggle + 4);
             }
           }
         }
-        last = { x: gx, y: gy };
+        lastPt = { x: gx, y: gy };
       });
 
       const release = (tap: boolean) => {
-        if (tap && downAt && !dragging) {
-          const moved = last ? Math.hypot(last.x - downAt.x, last.y - downAt.y) : 0;
-          if (moved < 6 && performance.now() - downAt.t < 400) hop(360); // a tap → a little jump
+        if (tap && downAt && mode !== "drag") {
+          const moved = lastPt ? Math.hypot(lastPt.x - downAt.x, lastPt.y - downAt.y) : 0;
+          if (moved < 6 && performance.now() - downAt.t < 400) {
+            hop(360);
+            jiggle = Math.min(14, jiggle + 5);
+          }
         }
-        if (dragging) {
-          dragging = false;
+        if (mode === "drag") {
           posX.target = centerX();
-          posY.target = baseY(); // drift home with an overshoot settle
+          posY.target = baseY();
+          jiggle = Math.min(14, jiggle + 6); // a wobble when you let go
         }
+        mode = "idle";
         downAt = null;
-        last = null;
-        pet.cursor = "grab";
+        lastPt = null;
+        mesh.cursor = "grab";
       };
       a.stage.on("pointerup", () => release(true));
       a.stage.on("pointerupoutside", () => release(false));
 
+      const data = posBuf.data as Float32Array;
       const tick = (ticker: { deltaMS: number }) => {
         const dt = Math.min(0.05, ticker.deltaMS / 1000);
-        t += dt;
+        clock += dt;
 
-        if (!dragging) {
+        if (mode === "idle") {
           nextHop -= dt;
           if (nextHop <= 0) {
             nextHop = 5 + Math.random() * 6;
@@ -149,28 +181,53 @@
         posY.step(dt);
         lean.step(dt);
         squash.step(dt);
+        jiggle *= Math.exp(-dt / 0.16); // decay the wobble
+        if (jiggle < 0.05) jiggle = 0;
+        if (petFrames > 0) petFrames--;
 
-        // landing squash: detect crossing the baseline downward after a hop
-        if (!dragging) {
+        // landing squash: crossing the baseline downward after a hop
+        if (mode !== "drag") {
           if (posY.value < baseY() - 8) airborne = true;
           else if (airborne && posY.value >= baseY() - 2) {
             airborne = false;
             squash.nudge(3.2);
+            jiggle = Math.min(16, jiggle + 8);
           }
         }
 
-        const breathe = 1 + 0.025 * Math.sin(t * 1.7); // continuous breath
-        const wig = petFrames > 0 ? Math.sin(t * 30) * 0.05 : 0;
-        if (petFrames > 0) petFrames--;
+        // ── per-vertex deform ────────────────────────────────────────────────
+        const sq = squash.value;
+        const breathe = 0.022 * Math.sin(clock * 1.7) + (petFrames > 0 ? 0.02 * Math.sin(clock * 26) : 0);
+        const shear = lean.value * width * 0.22;
+        for (let i = 0; i < base.length; i += 2) {
+          const bx = base[i];
+          const by = base[i + 1];
+          const v = uv[i + 1];
+          const belly = Math.sin(v * Math.PI); // 0 at head/feet, 1 mid-body
+          const sy = 1 + breathe - sq * 0.16; // taller/shorter, anchored at the feet
+          const sx = 1 + sq * 0.16 * belly; // squash → belly bulges out
+          const ny = maxY - (maxY - by) * sy;
+          const wob = jiggle * Math.sin(v * 6 + clock * 14) * (0.4 + 0.6 * belly);
+          const nx = cx + (bx - cx) * sx + wob + (1 - v) * shear;
+          data[i] = nx;
+          data[i + 1] = ny;
+        }
+        posBuf.update();
 
-        pet.x = posX.value;
-        pet.y = posY.value;
-        const sQ = squash.value * 0.06;
-        pet.scale.set(baseScale * (1 + sQ), baseScale * (breathe - sQ));
-        pet.rotation = lean.value * 0.5 + wig;
+        mesh.x = posX.value;
+        mesh.y = posY.value;
+
+        // shadow tracks the ground; shrinks/fades with hop height, widens on squash
+        const ground = baseY();
+        const lift = Math.max(0, ground - posY.value);
+        shadow.x = posX.value;
+        shadow.y = ground + 3;
+        const k = baseScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1);
+        shadow.scale.set(k, k);
+        shadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160));
 
         for (const child of [...hearts.children]) {
-          const h = child as unknown as { _life: number } & { y: number; alpha: number; destroy: () => void };
+          const h = child as unknown as { _life: number; y: number; alpha: number; destroy: () => void };
           h._life -= dt * 0.9;
           h.y -= dt * 40;
           h.alpha = Math.max(0, h._life);
@@ -179,7 +236,6 @@
       };
       a.ticker.add(tick);
 
-      // always-on hygiene: pause the loop when the window/tab is hidden
       const onVis = () => (document.hidden ? a.ticker.stop() : a.ticker.start());
       document.addEventListener("visibilitychange", onVis);
       cleanup = () => document.removeEventListener("visibilitychange", onVis);
