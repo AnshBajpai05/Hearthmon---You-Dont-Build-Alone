@@ -659,6 +659,26 @@
   let bondCeremony = $state<string | null>(null);
   let birthday = $state(false); // party hat for the day-we-met anniversary
 
+  // bridge every pet-attached FX into the Alive (Pixi) renderer — one brain, two skins
+  const aliveFx = $derived({
+    switchFx,
+    attacking,
+    atkKind,
+    atkColor: attackMove?.color ?? "#ffffff",
+    atkEmoji: attackMove?.emoji ?? "✨",
+    atkName: attackMove?.name ?? "",
+    atkCls: (attackMove?.cls ?? 2) as 1 | 2 | 3,
+    dir,
+    evoActive,
+    evoFlash,
+    visitorId: visitor?.entry.id ?? null,
+    visitorShiny: visitor?.shiny ?? false,
+    visitorX: visitor?.x ?? 0,
+    visitorFlip: visitor?.flip ?? false,
+    eating,
+    birthday
+  });
+
   // ---- command palette (global Alt+Space): Raycast-for-emotions ----
   let cmdOpen = $state(false);
   const CMD_KINDS: Record<string, MemoryKind> = {
@@ -3081,6 +3101,7 @@
             onTap={onPetTap}
             onStroke={onPetStroke}
             onBackgroundDown={beginWindowDrag}
+            fx={aliveFx}
           />
         {/key}
       </div>

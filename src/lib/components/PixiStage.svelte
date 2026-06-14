@@ -6,7 +6,7 @@
   // real widget.
   import { onMount } from "svelte";
   import {
-    Application, Container, Graphics, MeshPlane, Text, Rectangle, Texture
+    Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl, dexEntry } from "$lib/sprites";
@@ -26,7 +26,32 @@
     onTap?: () => void; // bridge to the shared brain (parity with Classic)
     onStroke?: () => void;
     onBackgroundDown?: () => void; // empty-space press → drag the window
+    fx?: AliveFx; // pet-attached FX bridged from the shared brain (parity with Classic)
   }
+  // every FX signal Classic renders on its DOM pet, bridged for the Pixi body
+  export interface AliveFx {
+    switchFx: "none" | "recall" | "ballout" | "gap" | "throw" | "release";
+    attacking: boolean;
+    atkKind: "beam" | "orb" | "stream" | "slash" | "bolt" | "quake" | "status" | null;
+    atkColor: string;
+    atkEmoji: string;
+    atkName: string;
+    atkCls: 1 | 2 | 3;
+    dir: 1 | -1;
+    evoActive: boolean;
+    evoFlash: boolean;
+    visitorId: number | null;
+    visitorShiny: boolean;
+    visitorX: number;
+    visitorFlip: boolean;
+    eating: boolean;
+    birthday: boolean;
+  }
+  const NO_FX: AliveFx = {
+    switchFx: "none", attacking: false, atkKind: null, atkColor: "#ffffff", atkEmoji: "✨",
+    atkName: "", atkCls: 2, dir: -1, evoActive: false, evoFlash: false, visitorId: null,
+    visitorShiny: false, visitorX: 0, visitorFlip: false, eating: false, birthday: false
+  };
   let {
     dexId,
     shiny = false,
@@ -40,7 +65,8 @@
     opacity = 1,
     onTap,
     onStroke,
-    onBackgroundDown
+    onBackgroundDown,
+    fx = NO_FX
   }: Props = $props();
 
   let host: HTMLDivElement;
@@ -60,7 +86,8 @@
 
     (async () => {
       const a = new Application();
-      const biome = biomeForType(dexEntry(dexId)?.type ?? "normal");
+      const petType = dexEntry(dexId)?.type ?? "normal"; // drives type-specific idles
+      const biome = biomeForType(petType);
       const sky0 = hexNum(biome.wall[0]);
       const sky1 = hexNum(biome.wall[1]);
       const grd0 = hexNum(biome.floor[0]);
@@ -91,7 +118,7 @@
           const gR = Math.min(w, h) * 0.42;
           return h * 0.46 - gR + gR * 2 * 0.6; // globe horizon
         }
-        return h * (habitat ? 0.82 : 0.56);
+        return h * (habitat ? 0.82 : 0.82);
       };
 
       // ════ SCENE LAYERS ════
@@ -138,23 +165,23 @@
       // ════ PET (mesh-warp) ════
       // Showdown sprites are GIFs (no Pixi loader) — load via <img> like the DOM
       // pet does, then wrap with Texture.from (static first frame; we animate it).
-      const loadTex = (url: string): Promise<Texture | null> =>
+      const loadImg = (url: string): Promise<HTMLImageElement | null> =>
         new Promise((resolve) => {
           const img = new Image();
           img.crossOrigin = "anonymous";
-          img.onload = () => {
-            try {
-              resolve(Texture.from(img));
-            } catch {
-              resolve(null);
-            }
-          };
+          img.onload = () => resolve(img);
           img.onerror = () => resolve(null);
           img.src = url;
         });
-      const tex = (await loadTex(spriteUrl(dexId, shiny))) ?? (await loadTex(fallbackUrl(dexId, shiny)));
+      const sprImg = (await loadImg(spriteUrl(dexId, shiny))) ?? (await loadImg(fallbackUrl(dexId, shiny)));
       if (destroyed) return;
-      if (!tex) throw new Error("sprite load failed for dex " + dexId);
+      if (!sprImg) throw new Error("sprite load failed for dex " + dexId);
+      let tex: Texture;
+      try {
+        tex = Texture.from(sprImg);
+      } catch {
+        throw new Error("texture create failed for dex " + dexId);
+      }
       if (tex.source) tex.source.scaleMode = "nearest";
 
       const GX = 7;
@@ -166,6 +193,45 @@
       const ph = texH;
       const pcx = texW / 2;
       const maxY = texH; // plane spans 0..texW, 0..texH
+
+      // opaque content bbox in texture space — centers the orb/square on the VISIBLE
+      // pet, not the sprite's padded frame (frames have uneven transparent margins).
+      // Falls back to the full frame if the canvas is CORS-tainted.
+      let visCX = pcx;
+      let visCY = ph / 2;
+      let contentW = pw;
+      let contentH = ph;
+      try {
+        const cv = document.createElement("canvas");
+        cv.width = sprImg.naturalWidth || pw;
+        cv.height = sprImg.naturalHeight || ph;
+        const g2 = cv.getContext("2d", { willReadFrequently: true });
+        if (g2) {
+          g2.drawImage(sprImg, 0, 0);
+          const dd = g2.getImageData(0, 0, cv.width, cv.height).data;
+          let top = cv.height, bot = -1, left = cv.width, right = -1;
+          for (let y = 0; y < cv.height; y++) {
+            for (let x = 0; x < cv.width; x++) {
+              if (dd[(y * cv.width + x) * 4 + 3] > 20) {
+                if (y < top) top = y;
+                if (y > bot) bot = y;
+                if (x < left) left = x;
+                if (x > right) right = x;
+              }
+            }
+          }
+          if (bot > top && right > left) {
+            const sh = ph / cv.height;
+            const sw = pw / cv.width;
+            visCX = ((left + right) / 2) * sw;
+            visCY = ((top + bot) / 2) * sh;
+            contentW = (right - left) * sw;
+            contentH = (bot - top) * sh;
+          }
+        }
+      } catch {
+        /* tainted canvas (no CORS) — keep the full-frame fallback */
+      }
       const petScale = size / Math.max(pw, ph);
       mesh.pivot.set(pcx, maxY); // feet at the bottom
       mesh.scale.set(petScale);
@@ -210,14 +276,46 @@
       bubbleC.addChild(bubbleBg, bubbleTxt);
       bubbleC.visible = false;
 
+      // ════ PET-ATTACHED FX (parity with everything Classic draws in .stage) ════
+      const visitorSprite = new Sprite(); // wild visitor wandering through (behind pet)
+      visitorSprite.anchor.set(0.5, 1);
+      visitorSprite.visible = false;
+      let visitorTexId = -1; // which dex sprite is currently loaded for the visitor
+      const visX = new Spring(0, 90, 16); // smooth walk-in / walk-off
+
+      const ball = new Graphics(); // Pokéball for the switch ceremony
+      ball.visible = false;
+      const burst = new Graphics(); // release flash + ring
+      burst.visible = false;
+      const evoGlow = new Graphics(); // evolution white pulse around the pet
+      evoGlow.visible = false;
+
+      const fxC = new Container(); // attack beams/orbs/slash/aura + sparks (pet-anchored)
+      const beamG = new Graphics();
+      const proj = new Text({ text: "", style: { fontSize: 24 } });
+      proj.anchor.set(0.5);
+      proj.visible = false;
+      const callout = new Text({
+        text: "", style: { fill: 0xffffff, fontSize: 13, fontFamily: "system-ui, sans-serif", fontWeight: "700" }
+      });
+      callout.anchor.set(0.5);
+      callout.visible = false;
+      const sparks = new Container();
+      fxC.addChild(beamG, sparks, proj, callout);
+
+      const hat = new Graphics(); // birthday party hat
+      hat.visible = false;
+
       // biome scene grouped so it can be CLIPPED to the backdrop (habitat-in-sphere).
       // The mask is a CHILD of scene → Pixi uses it as a clip and never draws it
       // (adding it to the stage was what rendered the stray white square).
       const scene = new Container();
       const biomeMask = new Graphics();
       scene.addChild(back, orb, reflect, waves, lantern, flies, biomeMask);
-      // order: scene (maskable) → backdrop → shadow → pet → hearts/zzz → bubble (top)
-      a.stage.addChild(scene, platform, petShadow, mesh, hearts, zzz, bubbleC);
+      // order: scene → backdrop → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
+      a.stage.addChild(
+        scene, platform, visitorSprite, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+      );
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
       function drawPlatform(br: number) {
@@ -229,7 +327,57 @@
           platform.roundRect(-br, -br, br * 2, br * 2, 22).fill({ color: lightCol, alpha: 0.1 });
           platform.roundRect(-br * 0.72, -br * 0.72, br * 1.44, br * 1.44, 16).fill({ color: lightCol, alpha: 0.07 });
         } else if (bgStyle === "ground") {
-          platform.ellipse(0, 0, size * 0.5, size * 0.13).fill({ color: lightCol, alpha: 0.14 });
+          // ONE flat ground disc at the feet (Classic typebg-ground parity): type-tinted
+          // rim + a soft dark contact center so the pet reads as standing ON it — no
+          // separate shadow ellipse (that doubling read as "two grounds")
+          platform.ellipse(0, 0, br * 1.2, br * 0.34).fill({ color: lightCol, alpha: 0.16 });
+          platform.ellipse(0, 0, br * 0.85, br * 0.24).fill({ color: lightCol, alpha: 0.1 });
+          platform.ellipse(0, 0, br * 0.5, br * 0.13).fill({ color: 0x000000, alpha: 0.22 });
+        }
+      }
+
+      // a clean Pokéball for the switch ceremony (arc fills avoid square corners)
+      function drawBall(g: Graphics, r: number) {
+        g.clear();
+        g.moveTo(-r, 0).arc(0, 0, r, Math.PI, 0, true).fill({ color: 0xee4a45 }); // top red
+        g.moveTo(-r, 0).arc(0, 0, r, Math.PI, 0, false).fill({ color: 0xf4f4f4 }); // bottom white
+        g.rect(-r, -r * 0.15, r * 2, r * 0.3).fill({ color: 0x202024 }); // band
+        g.circle(0, 0, r * 0.32).fill({ color: 0x202024 });
+        g.circle(0, 0, r * 0.2).fill({ color: 0xf4f4f4 });
+      }
+      // a small party hat (cone + pompom), base centered on the head top
+      function drawHat(g: Graphics, s: number) {
+        g.clear();
+        g.moveTo(-s * 0.5, 0).lineTo(s * 0.5, 0).lineTo(0, -s * 1.15).fill({ color: 0xff5aa0 });
+        g.moveTo(-s * 0.34, -s * 0.28).lineTo(s * 0.22, -s * 0.34).stroke({ color: 0xffe08a, width: 2 });
+        g.moveTo(-s * 0.18, -s * 0.62).lineTo(s * 0.12, -s * 0.66).stroke({ color: 0xffe08a, width: 2 });
+        g.circle(0, -s * 1.15, s * 0.16).fill({ color: 0xffe08a }); // pompom
+      }
+      // lazily load a wild-visitor sprite when one appears (separate from the pet)
+      const loadVisitor = async (id: number, sh: boolean) => {
+        const img = (await loadImg(spriteUrl(id, sh))) ?? (await loadImg(fallbackUrl(id, sh)));
+        if (!img || destroyed) return;
+        try {
+          const vt = Texture.from(img);
+          if (vt.source) vt.source.scaleMode = "nearest";
+          visitorSprite.texture = vt;
+          visitorTexId = id;
+        } catch { /* ignore a bad visitor sprite */ }
+      };
+      // a burst of energy motes for an attack (radial for status, directional otherwise)
+      const sparkList: { g: Graphics; vx: number; vy: number; life: number }[] = [];
+      function spawnSparks(color: string, kind: string, dir: number) {
+        const col = hexNum(color);
+        const n = kind === "status" || kind === "quake" ? 12 : 16;
+        for (let i = 0; i < n; i++) {
+          const g = new Graphics().circle(0, 0, 1.5 + Math.random() * 3).fill({ color: col, alpha: 0.95 });
+          const ang =
+            kind === "status" || kind === "quake"
+              ? Math.random() * Math.PI * 2
+              : (dir > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 1.1;
+          const sp = 70 + Math.random() * 150;
+          sparks.addChild(g);
+          sparkList.push({ g, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30, life: 0.45 + Math.random() * 0.45 });
         }
       }
 
@@ -248,13 +396,24 @@
       let nextHop = 3 + Math.random() * 5;
       let prevState = petState; // brain bridge: detect happy/sleep transitions
       let prevBubble = ""; // redraw the bubble bg only when the text changes
+      let bubbleH = 0; // current bubble height (for on-screen clamping)
+      let petPxRef = size; // rendered pet height (shrinks to fit the globe)
+      // ── FX bookkeeping (rising-edge detection for the bridged brain signals) ──
+      let prevAttacking = false;
+      let atkT = 0; // seconds into the current attack
+      let prevSwitch = "none"; // last switchFx value
+      let ceremonyT = 0; // seconds into the current ceremony phase
+      let prevVisitorId: number | null = null;
+      let evoT = 0; // evolution flicker clock
+      let prevEating = false;
+      let face = -1; // pet facing: -1 default (sprite faces left), +1 flipped
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
         const t = new Text({ text: "♥", style: { fill: 0xff8fb0, fontSize: 16 } });
         t.anchor.set(0.5);
         t.x = posX.value + (Math.random() * 40 - 20);
-        t.y = posY.value - size * 0.6;
+        t.y = posY.value - petPxRef * 0.6;
         (t as unknown as { _life: number })._life = 1;
         hearts.addChild(t);
       }
@@ -281,7 +440,7 @@
           posY.target = gy;
         } else if (lastPt) {
           const within =
-            Math.abs(gx - posX.value) < size * 0.5 && Math.abs(gy - (posY.value - size * 0.4)) < size * 0.5;
+            Math.abs(gx - posX.value) < petPxRef * 0.5 && Math.abs(gy - (posY.value - petPxRef * 0.4)) < petPxRef * 0.5;
           if (within) {
             strokeDist += Math.hypot(gx - lastPt.x, gy - lastPt.y);
             if (strokeDist > 46) {
@@ -356,17 +515,31 @@
         const vpBottom = vpy + vph;
         const skyH = HZ - vpy;
 
+        // pet render scale: full screen → fixed size; globe → shrink to fit the sphere
+        // (clamp height to the room above the shoreline AND width to the sphere — keeps the head in)
+        const curScale = globe ? Math.min((gR * 1.1) / ph, (gR * 1.7) / pw) : petScale;
+        const petPx = curScale * ph; // rendered pet height (drives every vertical offset)
+        petPxRef = petPx;
+
         // opacity · biome visibility · translucency
         a.stage.alpha = opacity;
         scene.visible = habitat;
         scene.alpha = 0.9;
 
         // backdrop: ALWAYS the pet's pad (independent of the habitat globe)
-        drawPlatform(size * 0.52);
         platform.visible = bgStyle !== "off";
-        platform.x = posX.value;
-        platform.y = bgStyle === "ground" ? groundY() + 4 : posY.value - size * 0.3;
-        petShadow.visible = bgStyle !== "off" || habitat;
+        if (bgStyle === "ground") {
+          drawPlatform(petPx * 0.6);
+          platform.x = posX.value;
+          platform.y = groundY() + 4;
+        } else {
+          // orb/square centered on the VISIBLE content box → equal top/bottom gap
+          drawPlatform(0.5 * Math.hypot(contentW, contentH) * curScale * 1.08);
+          platform.x = posX.value + (visCX - pcx) * curScale;
+          platform.y = posY.value - (maxY - visCY) * curScale;
+        }
+        // ground bg bakes its own contact shadow into the disc → no separate shadow there
+        petShadow.visible = (bgStyle === "orb" || bgStyle === "square" || habitat) && bgStyle !== "ground";
 
         // clip the biome to the habitat SHAPE — full vista INSIDE the globe
         biomeMask.clear();
@@ -449,6 +622,7 @@
         lantern.scale.set((globe ? 0.7 : 1) * (1 + Math.sin(t * 7) * 0.015));
 
         // ---- pet ----
+        const F = fx ?? NO_FX;
         const sleeping = petState === "sleeping";
         // brain bridge: a fresh "happy" → a joyful hop
         if (petState === "happy" && prevState !== "happy") {
@@ -457,8 +631,12 @@
           jiggle = Math.min(14, jiggle + 5);
         }
         prevState = petState;
-        // idle hops — but not while sleeping or settled (comfort/flow)
-        if (mode === "idle" && !sleeping && !calm) {
+        face = F.dir === 1 ? -1 : 1; // facing follows the brain (parity with Classic flip)
+        if (F.eating && !prevEating) squash.nudge(2.4); // a bite → quick chomp
+        prevEating = F.eating;
+        // idle hops — but not while sleeping, settled, or mid-ceremony/attack
+        const busyFx = F.switchFx !== "none" || F.evoActive || F.attacking;
+        if (mode === "idle" && !sleeping && !calm && !busyFx) {
           nextHop -= dt;
           if (nextHop <= 0) {
             nextHop = 5 + Math.random() * 6;
@@ -481,38 +659,112 @@
           }
         }
         const sq = squash.value;
+        const chomp = F.eating ? 0.07 * Math.abs(Math.sin(t * 18)) : 0; // mouth open/close
         // sleeping → slower, deeper breath
         const breathe =
           (sleeping ? 0.032 * Math.sin(t * 1.0) : 0.022 * Math.sin(t * 1.7)) +
           (petFrames > 0 ? 0.02 * Math.sin(t * 26) : 0);
         const shear = lean.value * pw * 0.22;
+
+        // type-specific idle flavor (parity with Classic's per-type idles)
+        const isSway = petType === "grass" || petType === "bug" || petType === "water" || petType === "ice";
+        const swayAmp = petType === "grass" || petType === "bug" ? 0.05 : petType === "water" || petType === "ice" ? 0.03 : 0;
+        const swaySpd = petType === "water" || petType === "ice" ? 1.1 : 1.6;
+        const isFire = petType === "fire";
+        const fireFlick = isFire ? 0.92 + 0.05 * Math.sin(t * 30) + 0.03 * Math.sin(t * 53) : 1;
+        const isFloat = petType === "ghost" || petType === "psychic" || petType === "flying" || petType === "dragon" || petType === "fairy";
+        const floatBob = isFloat ? Math.sin(t * 1.4) * petPx * 0.04 : 0;
+        const elJit = petType === "electric" && Math.sin(t * 1.7) > 0.94 ? (Math.random() - 0.5) * pw * 0.03 : 0;
+
         if (deformable && posBuf) {
           for (let i = 0; i < baseV.length; i += 2) {
             const bx = baseV[i];
             const by = baseV[i + 1];
             const v = uv[i + 1];
             const belly = Math.sin(v * Math.PI);
-            const sy = 1 + breathe - sq * 0.16;
-            const sx = 1 + sq * 0.16 * belly;
-            data[i] = pcx + (bx - pcx) * sx + jiggle * Math.sin(v * 6 + t * 14) * (0.4 + 0.6 * belly) + (1 - v) * shear;
+            const sy = 1 + breathe - sq * 0.16 - chomp;
+            const sx = 1 + sq * 0.16 * belly + chomp * 0.5;
+            const sway = isSway ? (1 - v) * swayAmp * Math.sin(t * swaySpd) * pw : 0;
+            data[i] =
+              pcx + (bx - pcx) * sx + jiggle * Math.sin(v * 6 + t * 14) * (0.4 + 0.6 * belly) + (1 - v) * shear + sway + elJit;
             data[i + 1] = maxY - (maxY - by) * sy;
           }
           posBuf.update();
           mesh.rotation = 0;
         } else {
-          // no vertex access — breathe/squash/lean via transform only
-          mesh.scale.set(petScale * (1 + sq * 0.16), petScale * (1 + breathe - sq * 0.16));
           mesh.rotation = lean.value * 0.4;
         }
+
+        // ── ceremony / evolution: scale · tint · visibility layered on the body ──
+        let petScaleMul = 1;
+        let tint = 0xffffff;
+        let petVisible = true;
+        const bodyCY = posY.value - (maxY - visCY) * curScale; // visible-content center
+        ball.visible = false;
+        burst.visible = false;
+        evoGlow.visible = false;
+
+        const sw = F.switchFx;
+        if (sw !== prevSwitch) { prevSwitch = sw; ceremonyT = 0; }
+        if (sw !== "none") ceremonyT += dt;
+        if (sw === "recall") {
+          const p = Math.min(1, ceremonyT / 0.48);
+          petScaleMul = 1 - p * 0.85;
+          tint = 0xff5a4d;
+          mesh.alpha = 1 - p * 0.55;
+        } else if (sw === "ballout" || sw === "gap" || sw === "throw") {
+          petVisible = false;
+          if (sw !== "gap") {
+            drawBall(ball, size * 0.16);
+            const arc = sw === "ballout" ? Math.min(1, ceremonyT / 0.44) : Math.min(1, ceremonyT / 0.68);
+            ball.x = sw === "ballout" ? posX.value - arc * (w * 0.7) : posX.value + (1 - arc) * (w * 0.7);
+            ball.y = sw === "ballout" ? bodyCY + arc * arc * 50 : bodyCY - Math.sin(arc * Math.PI) * 80;
+            ball.rotation = arc * (sw === "ballout" ? 9 : 15);
+            ball.visible = true;
+          }
+        } else if (sw === "release") {
+          const p = Math.min(1, ceremonyT / 0.62);
+          petScaleMul = Math.min(1, p * 1.5); // new form grows out
+          if (p < 0.55) {
+            const rr = size * (0.2 + p);
+            burst.clear();
+            burst.circle(0, 0, rr).stroke({ color: lightCol, width: 4, alpha: Math.max(0, 0.6 - p) });
+            burst.circle(0, 0, rr * 0.55).fill({ color: 0xffffff, alpha: Math.max(0, 0.5 - p) });
+            burst.x = posX.value;
+            burst.y = bodyCY;
+            burst.visible = true;
+          }
+        }
+        // evolution: a white silhouette pulse (the form itself swaps at the end via remount)
+        if (F.evoActive) {
+          evoT += dt;
+          const fl = 0.5 + 0.5 * Math.sin(evoT * 22);
+          tint = lerpCol(0xc9beff, 0xffffff, fl);
+          petScaleMul *= 1 + 0.05 * Math.sin(evoT * 22);
+          evoGlow.clear();
+          evoGlow.circle(0, 0, petPx * 0.62).fill({ color: 0xffffff, alpha: 0.12 + 0.22 * fl });
+          evoGlow.x = posX.value;
+          evoGlow.y = bodyCY;
+          evoGlow.visible = true;
+        } else {
+          evoT = 0;
+        }
+        if (isFire) tint = lerpCol(tint, 0xffcf8a, 0.25); // warm flicker tint
+
+        const fScale = curScale * petScaleMul;
+        if (deformable && posBuf) mesh.scale.set(fScale * face, fScale);
+        else mesh.scale.set(fScale * (1 + sq * 0.16) * face, fScale * (1 + breathe - sq * 0.16));
+        mesh.tint = tint;
+        mesh.visible = petVisible;
         mesh.x = posX.value;
-        mesh.y = posY.value;
-        mesh.alpha = sleeping ? 0.84 : 1; // dim a touch while asleep
+        mesh.y = posY.value + floatBob;
+        if (sw !== "recall") mesh.alpha = F.evoActive ? 1 : (sleeping ? 0.84 : 1) * fireFlick;
 
         // zzz while sleeping
         if (sleeping) {
           zzz.visible = true;
-          zzz.x = posX.value + size * 0.24;
-          zzz.y = posY.value - size * 0.72 + Math.sin(t * 2) * 3;
+          zzz.x = posX.value + petPx * 0.24;
+          zzz.y = posY.value - petPx * 0.72 + Math.sin(t * 2) * 3;
           zzz.alpha = 0.45 + 0.45 * Math.sin(t * 1.4);
         } else {
           zzz.visible = false;
@@ -527,6 +779,7 @@
             const pad = 9;
             const bw = Math.min(bubbleTxt.width, 200) + pad * 2;
             const bh = bubbleTxt.height + pad * 2;
+            bubbleH = bh;
             bubbleBg.clear();
             bubbleBg
               .roundRect(-bw / 2, -bh, bw, bh, 10)
@@ -536,8 +789,9 @@
             bubbleTxt.y = -bh + pad;
           }
           bubbleC.visible = true;
-          bubbleC.x = posX.value;
-          bubbleC.y = posY.value - size - 6 + Math.sin(t * 2) * 1.5; // float above the head
+          bubbleC.x = Math.max(bubbleH, Math.min(w - bubbleH, posX.value));
+          // above the head, but clamped fully on-screen (big pets pushed it off the top)
+          bubbleC.y = Math.max(bubbleH + 10, posY.value - petPx * 0.95) + Math.sin(t * 2) * 1.5;
         } else {
           bubbleC.visible = false;
           prevBubble = "";
@@ -546,7 +800,7 @@
         const lift = Math.max(0, groundY() - posY.value);
         petShadow.x = posX.value;
         petShadow.y = groundY() + 3;
-        const k = petScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1);
+        const k = curScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1);
         petShadow.scale.set(k, k);
         petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160));
 
@@ -556,6 +810,102 @@
           hh.y -= dt * 40;
           hh.alpha = Math.max(0, hh._life);
           if (hh._life <= 0) hh.destroy();
+        }
+
+        // ════ pet-attached FX: attacks · move callout · birthday hat · visitor ════
+        fxC.x = posX.value;
+        fxC.y = bodyCY;
+        const dirx = F.dir > 0 ? 1 : -1;
+
+        // attack: rising edge → spawn directional/burst sparks; render the move archetype
+        if (F.attacking && !prevAttacking) {
+          atkT = 0;
+          spawnSparks(F.atkColor, F.atkKind ?? "stream", dirx);
+        }
+        prevAttacking = F.attacking;
+        if (F.attacking) atkT += dt;
+
+        beamG.clear();
+        proj.visible = false;
+        callout.visible = false;
+        if (F.attacking) {
+          const col = hexNum(F.atkColor);
+          const k = F.atkKind;
+          if (k === "beam") {
+            const len = size * 1.1;
+            const x0 = dirx > 0 ? size * 0.3 : -size * 0.3 - len;
+            beamG.roundRect(x0, -6, len, 12, 6).fill({ color: col, alpha: 0.55 + Math.random() * 0.3 });
+            beamG.roundRect(x0, -2.5, len, 5, 2.5).fill({ color: 0xffffff, alpha: 0.7 });
+          } else if (k === "bolt") {
+            const seg = (size * 1.0) / 5;
+            beamG.moveTo(dirx * size * 0.3, 0);
+            for (let i = 1; i <= 5; i++) beamG.lineTo(dirx * (size * 0.3 + seg * i), (Math.random() - 0.5) * 22);
+            beamG.stroke({ color: col, width: 3, alpha: 0.9 });
+          } else if (k === "slash") {
+            beamG.arc(dirx * size * 0.2, 0, size * 0.5, -0.9, 0.9).stroke({ color: col, width: 5, alpha: 0.85 });
+            beamG.arc(dirx * size * 0.2, 0, size * 0.5, -0.6, 0.6).stroke({ color: 0xffffff, width: 2, alpha: 0.7 });
+          } else if (k === "status" || k === "quake") {
+            const rr = size * (0.42 + 0.12 * Math.sin(atkT * 12));
+            beamG.circle(0, -size * 0.1, rr).stroke({ color: col, width: 3, alpha: 0.5 });
+            beamG.circle(0, -size * 0.1, rr * 0.66).stroke({ color: col, width: 2, alpha: 0.35 });
+          } else {
+            // orb / stream → a flying projectile emoji
+            proj.visible = true;
+            proj.text = F.atkEmoji;
+            const p = Math.min(1, atkT * 2.4);
+            proj.x = dirx * size * (0.2 + p * 0.9);
+            proj.y = -Math.sin(p * Math.PI) * 26 - size * 0.1;
+          }
+          if (F.atkName) {
+            callout.visible = true;
+            callout.text = F.atkName + "!";
+            callout.style.fill = col;
+            callout.x = 0;
+            callout.y = -petPx * 0.95;
+          }
+        }
+        // advance + cull attack sparks
+        for (const s of [...sparkList]) {
+          s.life -= dt;
+          s.g.x += s.vx * dt;
+          s.g.y += s.vy * dt;
+          s.vy += 140 * dt;
+          s.g.alpha = Math.max(0, s.life * 1.6);
+          if (s.life <= 0) {
+            s.g.destroy();
+            sparkList.splice(sparkList.indexOf(s), 1);
+          }
+        }
+
+        // birthday hat perched on the head (parity with Classic's 🎉)
+        hat.visible = F.birthday && petVisible && sw === "none" && !F.evoActive;
+        if (hat.visible) {
+          drawHat(hat, petPx * 0.3);
+          hat.x = posX.value + (visCX - pcx) * curScale + dirx * petPx * 0.12;
+          hat.y = bodyCY - contentH * 0.5 * curScale + petPx * 0.06;
+        }
+
+        // wild visitor wandering through (own sprite, walks via a spring)
+        const vid = F.visitorId;
+        if (vid !== prevVisitorId) {
+          prevVisitorId = vid;
+          if (vid != null) {
+            visX.set(F.visitorX);
+            void loadVisitor(vid, F.visitorShiny);
+          }
+        }
+        if (vid != null && vid === visitorTexId) {
+          visitorSprite.visible = true;
+          visX.target = F.visitorX;
+          visX.step(dt);
+          visitorSprite.x = w / 2 + visX.value;
+          visitorSprite.y = groundY() + 6;
+          const vt = visitorSprite.texture;
+          const vScale = (size * 0.8) / Math.max(vt.width || 1, vt.height || 1);
+          visitorSprite.scale.set((F.visitorFlip ? -1 : 1) * vScale, vScale);
+          visitorSprite.alpha = 0.96;
+        } else {
+          visitorSprite.visible = false;
         }
       };
       a.ticker.add(tick);

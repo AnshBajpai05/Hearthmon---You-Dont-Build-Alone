@@ -34,10 +34,20 @@ Classic is NOT replaced. Hearthmon ships **two renderers over one shared brain**
 ### Parity checklist (Alive must reach Classic)
 - [x] biome by type · pet body · breathing/idle/hop · sleep/happy/calm state
 - [x] interaction: tap → `onPetTap`, stroke → `onPetStroke`, empty-space → window drag
-- [ ] pet-attached FX: speech bubble · attack beams · Ash throw · evolution flash · visitor · treat · birthday
-- [ ] type-specific idles in the mesh (leaf-sway/fire-flicker/…)
-- [ ] weather (rain/snow/wind/thunder) in the Pixi scene
-- [ ] window scenes / light beam richness to match the Classic biome
+- [x] pet-attached FX: speech bubble · attack beams/bolts/orbs/slash/aura + sparks + move callout ·
+      Ash throw ceremony (recall→ball→gap→throw→release burst) · evolution white-pulse + glow ·
+      wild visitor walk-through · treat chomp · birthday hat — all bridged via the `fx={aliveFx}` prop
+- [x] type-specific idles in the mesh (grass/bug+water/ice sway · fire flicker · ghost/psychic/flying
+      /dragon/fairy float-bob · electric jitter) + facing-flip by `dir`
+- [x] weather (rain/snow/wind/thunder) — shared `WeatherFx` DOM overlay sits above the Pixi canvas
+      (`z-index:4` > pixilayer `1`), so it already renders in BOTH skins (true one-brain parity)
+- [ ] window scenes / light beam richness to match the Classic biome (Pixi has orb+lantern+beam-lite;
+      could deepen later — optional polish, not a feature gap)
+
+**Bridge:** `+page` builds a `$derived` `aliveFx` (switchFx · attacking · atkKind/color/emoji/name/cls ·
+dir · evoActive/Flash · visitor{id,shiny,x,flip} · eating · birthday) → `PixiStage.fx`. The Pixi tick
+reads it live each frame. Ceremony/evolution survive the `{#key dexId}` remount because the form swap
+coincides with a covered moment (ball on-screen / DOM evo-flash).
 
 ## The locked stack
 
