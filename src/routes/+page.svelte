@@ -3072,6 +3072,7 @@
             shiny={isShiny}
             size={imgSize}
             {petState}
+            {bubble}
             calm={comfortMode || deepWork()}
             habitat={habitatOn}
             {habitatShape}

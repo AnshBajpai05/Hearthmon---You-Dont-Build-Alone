@@ -17,6 +17,7 @@
     shiny?: boolean;
     size?: number;
     petState?: string; // brain bridge: "idle" | "sleeping" | "happy" | …
+    bubble?: string; // the spoken line (speech bubble), parity with Classic
     calm?: boolean; // comfort / deep-flow → settle (no zoomies)
     habitat?: boolean; // biome scene on/off (Classic's habitat toggle)
     habitatShape?: "full" | "sphere" | "square"; // biome SHAPE — independent of backdrop
@@ -31,6 +32,7 @@
     shiny = false,
     size = 230,
     petState = "idle",
+    bubble = "",
     calm = false,
     habitat = false,
     habitatShape = "full",
@@ -197,14 +199,25 @@
       zzz.anchor.set(0.5);
       zzz.visible = false;
 
+      // speech bubble (parity with Classic's <Bubble>)
+      const bubbleC = new Container();
+      const bubbleBg = new Graphics();
+      const bubbleTxt = new Text({
+        text: "",
+        style: { fill: 0xece6f7, fontSize: 12.5, fontFamily: "system-ui, sans-serif", wordWrap: true, wordWrapWidth: 200, align: "center" }
+      });
+      bubbleTxt.anchor.set(0.5, 0);
+      bubbleC.addChild(bubbleBg, bubbleTxt);
+      bubbleC.visible = false;
+
       // biome scene grouped so it can be CLIPPED to the backdrop (habitat-in-sphere).
       // The mask is a CHILD of scene → Pixi uses it as a clip and never draws it
       // (adding it to the stage was what rendered the stray white square).
       const scene = new Container();
       const biomeMask = new Graphics();
       scene.addChild(back, orb, reflect, waves, lantern, flies, biomeMask);
-      // order: scene (maskable) → backdrop → shadow → pet → hearts/zzz
-      a.stage.addChild(scene, platform, petShadow, mesh, hearts, zzz);
+      // order: scene (maskable) → backdrop → shadow → pet → hearts/zzz → bubble (top)
+      a.stage.addChild(scene, platform, petShadow, mesh, hearts, zzz, bubbleC);
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
       function drawPlatform(br: number) {
@@ -234,6 +247,7 @@
       let airborne = false;
       let nextHop = 3 + Math.random() * 5;
       let prevState = petState; // brain bridge: detect happy/sleep transitions
+      let prevBubble = ""; // redraw the bubble bg only when the text changes
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -502,6 +516,31 @@
           zzz.alpha = 0.45 + 0.45 * Math.sin(t * 1.4);
         } else {
           zzz.visible = false;
+        }
+
+        // speech bubble above the head
+        const bub = (bubble || "").trim();
+        if (bub) {
+          if (bub !== prevBubble) {
+            prevBubble = bub;
+            bubbleTxt.text = bub;
+            const pad = 9;
+            const bw = Math.min(bubbleTxt.width, 200) + pad * 2;
+            const bh = bubbleTxt.height + pad * 2;
+            bubbleBg.clear();
+            bubbleBg
+              .roundRect(-bw / 2, -bh, bw, bh, 10)
+              .fill({ color: 0x160f24, alpha: 0.95 })
+              .stroke({ color: lightCol, width: 1, alpha: 0.5 });
+            bubbleBg.moveTo(-6, -1).lineTo(0, 8).lineTo(6, -1).fill({ color: 0x160f24, alpha: 0.95 });
+            bubbleTxt.y = -bh + pad;
+          }
+          bubbleC.visible = true;
+          bubbleC.x = posX.value;
+          bubbleC.y = posY.value - size - 6 + Math.sin(t * 2) * 1.5; // float above the head
+        } else {
+          bubbleC.visible = false;
+          prevBubble = "";
         }
 
         const lift = Math.max(0, groundY() - posY.value);
