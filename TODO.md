@@ -5,12 +5,22 @@
 ---
 
 ## 🚀 V2 — Premium Body (branch `v2`, started 2026-06-14)
-> V1 is sealed on `main` (world-class brain, but the body "moves like a website"). V2 mission: **keep the soul, give it a body** — replace the CSS/DOM render+motion layer with a real one. Architecture LOCKED in `docs/V2-PLAN.md`.
+> V1 is sealed on `main` (world-class brain, but the body "moves like a website"). V2 mission: **keep the soul, give it a body**. **Decided 2026-06-14: keep BOTH renderers — one shared brain, two skins** (`ClassicRenderer` CSS · `AliveRenderer` Pixi), STRICT feature parity, never two apps. Architecture LOCKED in `docs/V2-PLAN.md`.
 
 - [x] **V2 architecture locked** ✅ 2026-06-14 — `docs/V2-PLAN.md`: PixiJS v8 render core + custom spring + **whole-sprite mesh-warp** (scales to all 1025, no rig) + Showdown sprites as BASE texture + lightweight FSM + shader lighting + Verlet (environment only). **Rejected as foundation:** Rive/Spine (per-character rig, impossible at 1025) and Motion One/Popmotion (DOM clock vs. the Pixi rAF clock). Keep all `lib/*.ts` brain + SQLite + Rust watchers untouched.
 - [x] **Phase 0 — Pixi interaction-parity beachhead** ✅ 2026-06-14 (gated, non-negotiable) — isolated `/pixi` sandbox + `PixiPet.svelte` + `lib/pixi/spring.ts` (critically-damped spring). Pet lives in Pixi with breathing · cursor-lean · idle hop · **weighted drag** (lags cursor + overshoot settle) · petting (rising hearts) · tap-hop. rAF loop pauses when the tab is hidden (always-on hygiene). Proves the riskiest migration (drag/petting/tap hit-testing DOM→Pixi). View: `localhost:1420/pixi`.
 - [x] **Phase 1 — mesh-warp motion language** ✅ 2026-06-14 — `PixiPet` upgraded Sprite→**MeshPlane** (7×8); per-vertex deform each frame: squash/stretch anchored at the feet, jelly belly bulge, decaying jiggle (on land/tap/release), lean shear → "soft toy with weight," no rig. Contact shadow reacts to squash + hop height; tiny idle/drag/pet state seed.
-- [ ] **Phase 2 — environment proof (Moonlit Shore)** — one biome in Pixi: lantern flicker, water-reflection shader, parallax moon, moving water, fireflies, responsive contact shadow. The "holy shit it's beautiful" validation before porting the rest of `biomes.ts`.
+- [x] **Phase 2 — environment proof (Moonlit Shore)** ✅ 2026-06-14 — layered Pixi scene: gradient sky/sea, parallax glowing moon, shimmering moon-reflection, rolling waves, drifting fireflies, lantern flicker. Validated → ported the rest.
+- [x] **Data-driven biomes** ✅ 2026-06-14 — scene derived from `biomeForType(curType)`: sky/ground gradients (wall/floor), light orb tinted by `biome.light`, water-only waves+reflection, particles by kind (firefly/ember/snow/star/spark/pollen/dust/mist). Every type → its biome.
+- [x] **Unified PixiStage** ✅ 2026-06-14 — `PixiStage.svelte`: ONE Pixi Application holds the biome scene + the mesh-warp pet in one ticker (replaced the two stacked sandbox canvases). `PixiPet.svelte`/`MoonlitShore.svelte` retired. Sprite loaded via `<img>`+`Texture.from` (Showdown sprites are `.gif` → Pixi `Assets.load` returns null); mesh deform guarded with a scale-only fallback; init errors surface on-screen.
+
+### Dual renderer — Classic + Alive (one brain, two skins)
+- [x] **Renderer toggle** ✅ 2026-06-14 — `render_mode` meta (`classic`|`alive`), key **V**. Classic = CSS `.stage`; Alive = `PixiStage` overlay. Both draw the same `+page` brain.
+- [x] **Interaction parity** ✅ 2026-06-14 — Alive bridges to the shared brain: tap → `onPetTap`, stroke → `onPetStroke`, empty-space press → window-drag (`beginWindowDrag`). Pixi layer `z-index:1` so radial/panels stay clickable.
+- [x] **Brain → Pixi state** ✅ 2026-06-14 — `petState`/`calm` props: sleeping (dim + slower breath + zzz, no hops), happy (joyful hop), comfort/flow (settles).
+- [x] **Background parity** ✅ 2026-06-14 — transparent canvas (no longer blocks the desktop), backdrop cycle **orb/square/ground/off** (square added to Classic too), respects the opacity slider, pet centered when no biome (low/standing when full habitat on).
+- [x] **Habitat shape (decoupled from backdrop)** ✅ 2026-06-14 — 🏞️ cycles **none → full → sphere → square** (its own shape); 🌿 backdrop stays the pet pad. Alive renders the biome into a **viewport** so the FULL vista lives inside the sphere/square (snow-globe, pet on the shoreline) — not a clipped slice. Mask is a child of `scene` (fixed a stray white square). Classic mirrors via `roombg` radius. `room="on"` migrates to `"full"`.
+- [ ] **Remaining Alive parity (checklist in V2-PLAN):** pet-attached FX (speech bubble · attack beams · Ash throw · evolution flash · visitor · treat · birthday) · type-specific mesh idles · weather (rain/snow) in the Pixi scene · window-scene/beam richness.
 - [ ] **Phase 3 — optional flex** — Rive bespoke rigs for a small curated hero set only.
 
 ### README living-card — V2 polish ✅ 2026-06-14
@@ -355,4 +365,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: 2026-06-14 — V1 sealed on `main` (soul + fun + coding/training/flow awareness + companion engines, all live). V2 in progress on branch `v2`: architecture locked (`docs/V2-PLAN.md`), Pixi Phase 0 (parity) + Phase 1 (mesh-warp motion) shipped; README living-card redesigned to a single product-forward artifact. Next: Phase 2 — Moonlit Shore in Pixi.*
+*Last updated: 2026-06-14 — V1 sealed on `main`. V2 on branch `v2`: **dual renderer (Classic + Alive), one brain two skins**. Shipped: Pixi mesh-warp pet, data-driven biomes, unified `PixiStage`, renderer toggle (V), interaction + brain-state parity, transparent canvas + 4 backdrops, decoupled habitat shape (full/sphere/square snow-globe). Next: Alive FX parity (bubble/throw/battle/evolution), weather in Pixi, type idles.*
