@@ -48,7 +48,7 @@ export function buildCard(s: CardState): string {
   const [tagA, tagB] = wrap2(s.tagline, 34);
 
   // ── Narrative aliveness chips — width-aware single row ───────────────────────
-  const CHIP_Y = tagB ? 122 : 112;
+  const CHIP_Y = tagB ? 126 : 114;
   let chipX = 168;
   const chipSvg = s.chips
     .map((c, i) => {
@@ -319,7 +319,7 @@ export function buildCard(s: CardState): string {
   </g>
 
   <!-- Current partner, labelled right under the companion -->
-  <text x="78" y="170" font-size="10.5" text-anchor="middle" fill="${textDim}">current partner · <tspan fill="${accent}" font-weight="700">${esc(s.partner)}</tspan></text>
+  <text x="78" y="170" font-size="10.5" text-anchor="middle" fill="${textDim}">currently beside you · <tspan fill="${accent}" font-weight="700">${esc(s.partner)}</tspan></text>
 
   <!-- Speech bubble — a thought, nudged toward the companion with a long soft tail -->
   <g class="bub">
@@ -333,15 +333,17 @@ export function buildCard(s: CardState): string {
 
   <!-- Layer 2: title (the product) + the money line as its identity -->
   <text class="nameShimmer" x="168" y="68" font-size="23" font-weight="800">${s.night ? "🌙" : "✦"} ${esc(title)}</text>
-  <text x="168" y="${tagB ? 90 : 92}" font-size="13" fill="${accent}" font-weight="600">${esc(tagA)}</text>
-  ${tagB ? `<text x="168" y="107" font-size="13" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
+  <text x="168" y="${tagB ? 92 : 94}" font-size="14.5" fill="${accent}" font-weight="600">${esc(tagA)}</text>
+  ${tagB ? `<text x="168" y="111" font-size="14.5" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
 
   <!-- Layer 3: narrative aliveness chips -->
   ${chipSvg}
 
-  <!-- Layer 4: a soft call (left) · factual counterweight (right) -->
-  <text class="footer" x="168" y="${H - 11}" font-size="11" fill="${accent}" fill-opacity="0.9">${esc(s.cta)}</text>
-  <text class="footer" x="${W - 18}" y="${H - 11}" font-size="10" fill="${textDim}" text-anchor="end">${esc(s.footer)}</text>
+  <!-- Layer 4: a soft call + factual counterweight, clustered together on the right -->
+  <text class="footer" x="${W - 18}" y="${H - 11}" text-anchor="end">
+    <tspan font-size="11" fill="${accent}" fill-opacity="0.9">${esc(s.cta)}</tspan>
+    <tspan font-size="10" fill="${textDim}"> · ${esc(s.footer)}</tspan>
+  </text>
 
 </svg>`;
 }

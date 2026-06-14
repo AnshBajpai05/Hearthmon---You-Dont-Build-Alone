@@ -1536,7 +1536,7 @@
     "a companion for people building difficult things"
   ];
   // Layer 4 — a soft call, never a button
-  const CARD_CTAS = ["see what it noticed →", "come say hi →", "still growing", "quietly learning"];
+  const CARD_CTAS = ["still here", "keeping watch", "staying nearby", "still noticing"];
 
   async function generateCard(silent = false) {
     const fm = await getMeta("first_met");
@@ -1567,7 +1567,7 @@
     const state = friction
       ? { icon: "🌧", label: "friction" }
       : effPts >= 60
-        ? { icon: "⚡", label: "deep work" }
+        ? { icon: "⚡", label: "quietly locked in" }
         : isNight
           ? { icon: "🌙", label: "quiet night" }
           : { icon: "🫖", label: "slow and steady" };
@@ -1577,7 +1577,7 @@
         : projDays >= 3
           ? { icon: "🛠", label: "still shaping" }
           : nightS > dayS
-            ? { icon: "🌙", label: "late-night season" }
+            ? { icon: "🌙", label: "one of those seasons" }
             : days <= 7
               ? { icon: "📖", label: "chapter one" }
               : { icon: "✨", label: "quietly becoming real" };
