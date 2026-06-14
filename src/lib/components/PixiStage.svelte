@@ -162,9 +162,11 @@
         return { g, bx: Math.random(), by: Math.random(), ph: Math.random() * 6.28, sp: 0.3 + Math.random() * 0.6, amp: 6 + Math.random() * 16, prog: Math.random() };
       });
 
-      // ════ PET (mesh-warp) ════
-      // Showdown sprites are GIFs (no Pixi loader) — load via <img> like the DOM
-      // pet does, then wrap with Texture.from (static first frame; we animate it).
+      // ════ PET (mesh-warp + animated GIF) ════
+      // Classic feels alive because its <img> plays the Showdown GIF (flames/limbs/
+      // tail). Texture.from froze us to frame 0, and a hidden <img> won't advance
+      // (Chromium pauses off-screen GIFs). So decode the GIF frames with ImageDecoder
+      // (WebCodecs — present in the Tauri WebView2) and cycle them onto a canvas texture.
       const loadImg = (url: string): Promise<HTMLImageElement | null> =>
         new Promise((resolve) => {
           const img = new Image();
@@ -173,33 +175,66 @@
           img.onerror = () => resolve(null);
           img.src = url;
         });
-      const sprImg = (await loadImg(spriteUrl(dexId, shiny))) ?? (await loadImg(fallbackUrl(dexId, shiny)));
-      if (destroyed) return;
-      if (!sprImg) throw new Error("sprite load failed for dex " + dexId);
 
-      // ── animated-GIF playback: a single Texture.from froze the sprite to frame 0,
-      // killing the native body motion (flames/limbs/tail). Instead mirror the still-
-      // playing <img> into a canvas each frame and use THAT canvas as the mesh texture,
-      // so the Showdown animation plays UNDER the mesh deform. The <img> must stay in
-      // the DOM for the browser to keep advancing the GIF.
-      sprImg.style.cssText = "position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
-      host.appendChild(sprImg);
-      const natW = sprImg.naturalWidth || 96;
-      const natH = sprImg.naturalHeight || 96;
+      interface GifFrame { bmp: ImageBitmap; dur: number }
+      const frames: GifFrame[] = [];
+      let natW = 96;
+      let natH = 96;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ImageDecoderCtor = (globalThis as unknown as { ImageDecoder?: any }).ImageDecoder;
+      const decodeGif = async (url: string): Promise<boolean> => {
+        if (!ImageDecoderCtor) return false;
+        try {
+          const resp = await fetch(url, { mode: "cors" });
+          if (!resp.ok) return false;
+          const buf = await resp.arrayBuffer();
+          const dec = new ImageDecoderCtor({ data: buf, type: "image/gif" });
+          await dec.tracks.ready;
+          const count: number = dec.tracks.selectedTrack?.frameCount ?? 1;
+          for (let i = 0; i < count; i++) {
+            const { image } = await dec.decode({ frameIndex: i });
+            natW = image.displayWidth || image.codedWidth || natW;
+            natH = image.displayHeight || image.codedHeight || natH;
+            const bmp = await createImageBitmap(image);
+            frames.push({ bmp, dur: (image.duration ?? 90000) / 1e6 }); // µs → s
+            image.close();
+          }
+          return frames.length > 0;
+        } catch {
+          return false;
+        }
+      };
+
+      const animated = await decodeGif(spriteUrl(dexId, shiny));
+      if (destroyed) {
+        for (const f of frames) f.bmp.close();
+        return;
+      }
+
+      // fallback when WebCodecs is unavailable / decode failed → one static image
+      let staticImg: HTMLImageElement | null = null;
+      if (!animated) {
+        staticImg = (await loadImg(spriteUrl(dexId, shiny))) ?? (await loadImg(fallbackUrl(dexId, shiny)));
+        if (destroyed) return;
+        if (!staticImg) throw new Error("sprite load failed for dex " + dexId);
+        natW = staticImg.naturalWidth || 96;
+        natH = staticImg.naturalHeight || 96;
+      }
+
       const petCanvas = document.createElement("canvas");
       petCanvas.width = natW;
       petCanvas.height = natH;
       const petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
 
-      // opaque content bbox (texture space) → centers the orb/square on the VISIBLE pet.
-      // The getImageData call also proves the canvas is CORS-clean → safe to live-update.
+      // paint frame 0, then read the opaque content bbox (centers the orb on the
+      // VISIBLE pet, not the padded frame)
       let visCX = natW / 2;
       let visCY = natH / 2;
       let contentW = natW;
       let contentH = natH;
-      let animTex = false;
       if (petCtx) {
-        petCtx.drawImage(sprImg, 0, 0, natW, natH);
+        if (animated) petCtx.drawImage(frames[0].bmp, 0, 0);
+        else if (staticImg) petCtx.drawImage(staticImg, 0, 0, natW, natH);
         try {
           const dd = petCtx.getImageData(0, 0, natW, natH).data;
           let top = natH, bot = -1, left = natW, right = -1;
@@ -219,14 +254,15 @@
             contentW = right - left;
             contentH = bot - top;
           }
-          animTex = true; // CORS-clean → we can replay frames from the canvas
         } catch {
-          animTex = false; // tainted → fall back to a static texture
+          /* tainted (shouldn't happen with ACAO:*) — keep the full-frame bbox */
         }
       }
+
       let tex: Texture;
       try {
-        tex = Texture.from(animTex && petCtx ? petCanvas : sprImg);
+        // animated → the canvas we cycle decoded frames onto; static → the image
+        tex = Texture.from(animated && petCtx ? petCanvas : (staticImg as HTMLImageElement));
       } catch {
         throw new Error("texture create failed for dex " + dexId);
       }
@@ -416,7 +452,8 @@
       let evoT = 0; // evolution flicker clock
       let prevEating = false;
       let face = -1; // pet facing: -1 default (sprite faces left), +1 flipped
-      let gifAcc = 0; // throttle for the animated-GIF texture refresh
+      let gifAcc = 0; // time accumulator for GIF frame advance
+      let frameIdx = 0; // current decoded GIF frame
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -512,14 +549,19 @@
         const w = W();
         const h = H();
 
-        // replay the Showdown GIF: pull the <img>'s current frame into the canvas
-        // texture (~25fps — these sprites are low-fps, so no need for every frame)
-        if (animTex && petCtx) {
+        // replay the Showdown GIF by cycling decoded frames onto the canvas texture
+        if (frames.length > 1 && petCtx) {
           gifAcc += dt;
-          if (gifAcc >= 0.04) {
-            gifAcc = 0;
+          let advanced = false;
+          let guard = 0;
+          while (gifAcc >= (frames[frameIdx].dur || 0.08) && guard++ < frames.length) {
+            gifAcc -= frames[frameIdx].dur || 0.08;
+            frameIdx = (frameIdx + 1) % frames.length;
+            advanced = true;
+          }
+          if (advanced) {
             petCtx.clearRect(0, 0, petCanvas.width, petCanvas.height);
-            petCtx.drawImage(sprImg, 0, 0, petCanvas.width, petCanvas.height);
+            petCtx.drawImage(frames[frameIdx].bmp, 0, 0);
             tex.source.update();
           }
         }
@@ -937,7 +979,7 @@
       cleanup = () => {
         document.removeEventListener("visibilitychange", onVis);
         ro.disconnect();
-        sprImg.remove(); // drop the hidden GIF <img> so it doesn't leak on remount
+        for (const f of frames) f.bmp.close(); // free decoded GIF frames
       };
     })().catch((e) => {
       console.error("[PixiStage] init failed:", e);
