@@ -98,6 +98,7 @@
       let part = rgba(biome.particleColor);
       let hasWater = biome.ground === "water";
       let pkind = biome.particle; // firefly|ember|pollen|spark|dust|snow|star|mist
+      let ambKind = "none"; // type-driven premium ambient: lightning | flare | rays
       let vpSig = ""; // gradient repaint signature (cleared on biome change)
 
       // transparent — so the desktop shows through (parity with the see-through widget)
@@ -170,6 +171,12 @@
         part = rgba(biome.particleColor);
         hasWater = biome.ground === "water";
         pkind = biome.particle;
+        ambKind =
+          petType === "electric" ? "lightning"
+          : petType === "fire" ? "flare"
+          : ["grass", "bug", "water", "ice", "flying", "psychic", "fairy", "dragon", "ghost", "poison"].includes(petType)
+            ? "rays"
+            : "none";
         vpSig = ""; // force gradient repaint
         
         flies.removeChildren();
@@ -394,7 +401,33 @@
       // (adding it to the stage was what rendered the stray white square).
       const scene = new Container();
       const biomeMask = new Graphics();
-      scene.addChild(back, orb, reflect, waves, lantern, flies, biomeMask);
+      // type-driven premium ambient (lightning / fire flare / light shafts) — additive
+      // glow, lives INSIDE the scene so it clips to the sphere + only shows with a habitat
+      const ambient = new Graphics();
+      const flash = new Graphics(); // lightning sky-flash
+      ambient.blendMode = "add";
+      flash.blendMode = "add";
+      scene.addChild(back, orb, reflect, waves, lantern, flies, ambient, flash, biomeMask);
+
+      // a jagged lightning polyline: wide soft glow pass + a bright thin core
+      function strokeBolt(pts: number[], alpha: number) {
+        if (pts.length < 4) return;
+        ambient.moveTo(pts[0], pts[1]);
+        for (let i = 2; i < pts.length; i += 2) ambient.lineTo(pts[i], pts[i + 1]);
+        ambient.stroke({ color: 0xbfe0ff, width: 5, alpha: alpha * 0.22 });
+        ambient.moveTo(pts[0], pts[1]);
+        for (let i = 2; i < pts.length; i += 2) ambient.lineTo(pts[i], pts[i + 1]);
+        ambient.stroke({ color: 0xffffff, width: 1.6, alpha });
+      }
+      function genBolt(x0: number, y0: number, y1: number, spread: number): number[] {
+        const pts = [x0, y0];
+        let x = x0;
+        for (let i = 1; i <= 7; i++) {
+          x += (Math.random() - 0.5) * spread;
+          pts.push(x, y0 + ((y1 - y0) * i) / 7);
+        }
+        return pts;
+      }
       // order: scene → backdrop → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
         scene, platform, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
@@ -490,6 +523,14 @@
       let evoT = 0; // evolution flicker clock
       let prevEating = false;
       let face = -1; // pet facing: -1 default (sprite faces left), +1 flipped
+      // ── ambient FX state ──
+      let boltT = 3 + Math.random() * 5; // seconds to the next lightning strike
+      let strikeT = 0; // remaining strike-visible time
+      let boltPts: number[] = [];
+      let boltBranch: number[] = [];
+      const flames = Array.from({ length: 5 }, () => ({
+        x: Math.random(), ph: Math.random() * 6.28, sp: 0.8 + Math.random() * 0.7, h: 0.55 + Math.random() * 0.5
+      }));
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -728,6 +769,62 @@
         lantern.y = vpBottom - vph * 0.08;
         lantern.alpha = 0.82 + Math.sin(t * 9) * 0.05 + Math.sin(t * 23) * 0.03;
         lantern.scale.set((globe ? 0.7 : 1) * (1 + Math.sin(t * 7) * 0.015));
+
+        // ── type-driven premium ambient (electric/fire/radiant) within the viewport ──
+        ambient.clear();
+        flash.clear();
+        if (ambKind === "lightning") {
+          if (strikeT > 0) {
+            strikeT -= dt;
+            const life = Math.max(0, strikeT / 0.4);
+            flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xcfe6ff, alpha: 0.05 + life * 0.3 });
+            if (life > 0.55) {
+              strokeBolt(boltPts, 0.6 + 0.4 * Math.random());
+              strokeBolt(boltBranch, 0.3);
+            }
+          } else {
+            boltT -= dt;
+            if (boltT <= 0) {
+              boltT = 4 + Math.random() * 7;
+              strikeT = 0.4;
+              const x0 = vpx + vpw * (0.25 + Math.random() * 0.5);
+              boltPts = genBolt(x0, vpy, vpy + (HZ - vpy) * 0.95, vpw * 0.07);
+              const mi = 6; // branch off a mid node
+              boltBranch = genBolt(boltPts[mi], boltPts[mi + 1], boltPts[mi + 1] + (HZ - vpy) * 0.4, vpw * 0.06);
+            }
+          }
+        } else if (ambKind === "flare") {
+          for (const f of flames) {
+            const fl = 0.5 + 0.35 * Math.sin(t * f.sp * 3 + f.ph) + 0.2 * Math.sin(t * f.sp * 7 + f.ph);
+            const fx2 = vpx + vpw * (0.32 + f.x * 0.36);
+            const fhg = (HZ - vpy) * 0.16 * f.h * (0.7 + 0.5 * fl);
+            const fwd = vpw * 0.028 * (0.8 + 0.3 * fl);
+            const tip = fx2 + Math.sin(t * 4 + f.ph) * fwd * 0.6;
+            ambient.moveTo(fx2 - fwd, HZ);
+            ambient.quadraticCurveTo(fx2 - fwd * 0.5, HZ - fhg * 0.6, tip, HZ - fhg);
+            ambient.quadraticCurveTo(fx2 + fwd * 0.5, HZ - fhg * 0.6, fx2 + fwd, HZ);
+            ambient.fill({ color: 0xff7a2a, alpha: 0.16 + 0.12 * fl });
+            ambient.moveTo(fx2 - fwd * 0.45, HZ);
+            ambient.quadraticCurveTo(fx2, HZ - fhg * 0.72, tip, HZ - fhg * 0.85);
+            ambient.quadraticCurveTo(fx2 + fwd * 0.45, HZ - fhg * 0.72, fx2 + fwd * 0.45, HZ);
+            ambient.fill({ color: 0xffd27a, alpha: 0.2 + 0.14 * fl });
+          }
+        } else if (ambKind === "rays") {
+          const ox = orb.x, oy = orb.y;
+          for (let i = 0; i < 5; i++) {
+            const ang = Math.PI * 0.5 + (i - 2) * 0.17 + Math.sin(t * 0.15 + i) * 0.03;
+            const len = vph * 0.95;
+            const dx = Math.cos(ang), dy = Math.sin(ang);
+            const px = -dy, py = dx;
+            const w0 = vpw * 0.012, w1 = vpw * 0.06;
+            const ex = ox + dx * len, ey = oy + dy * len;
+            ambient.moveTo(ox + px * w0, oy + py * w0);
+            ambient.lineTo(ex + px * w1, ey + py * w1);
+            ambient.lineTo(ex - px * w1, ey - py * w1);
+            ambient.lineTo(ox - px * w0, oy - py * w0);
+            ambient.fill({ color: lightCol, alpha: 0.05 + 0.025 * Math.sin(t * 0.5 + i * 1.3) });
+          }
+        }
 
         // ---- pet ----
         const F = fx ?? NO_FX;

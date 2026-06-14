@@ -44,8 +44,11 @@ Classic is NOT replaced. Hearthmon ships **two renderers over one shared brain**
 - [x] live GIF playback in Pixi — `ImageDecoder` decodes the Showdown frames onto the mesh's canvas
       texture (UNDER the deform), restoring native body motion (frame 0 freeze was the gap)
 - [x] in-place reload (no remount) — form/shiny change reloads pet + biome inside the live Application
-- [ ] window scenes / light beam richness to match the Classic biome (Pixi has orb+lantern+beam-lite;
-      could deepen later — optional polish, not a feature gap)
+- [x] type-driven premium ambient (additive, inside the scene → clips to the sphere, habitat-only):
+      **electric → lightning** (jagged bolt + glow/core + sky-flash + afterglow, strikes every 4–11s) ·
+      **fire → flame licks** (flickering tongues on the horizon w/ a hot inner core) ·
+      **grass/bug/water/ice/flying/psychic/fairy/dragon/ghost/poison → light shafts** (god-rays from the orb)
+- [ ] deeper window-scene detail (parallax interior, richer beams) — optional polish, not a feature gap
 
 **Bridge:** `+page` builds a `$derived` `aliveFx` (switchFx · attacking · atkKind/color/emoji/name/cls ·
 dir · evoActive/Flash · visitor{id,shiny,x,flip} · eating · birthday) → `PixiStage.fx`. The Pixi tick
