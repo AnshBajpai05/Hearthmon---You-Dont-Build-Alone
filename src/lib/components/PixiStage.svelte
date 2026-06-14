@@ -6,7 +6,7 @@
   // real widget.
   import { onMount } from "svelte";
   import {
-    Application, Assets, Container, Graphics, MeshPlane, Text, Rectangle, type Texture
+    Application, Container, Graphics, MeshPlane, Text, Rectangle, Texture
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl, dexEntry } from "$lib/sprites";
@@ -103,14 +103,26 @@
       });
 
       // ════ PET (mesh-warp) ════
-      let tex: Texture;
-      try {
-        tex = await Assets.load(spriteUrl(dexId, shiny));
-      } catch {
-        tex = await Assets.load(fallbackUrl(dexId, shiny));
-      }
+      // Showdown sprites are GIFs (no Pixi loader) — load via <img> like the DOM
+      // pet does, then wrap with Texture.from (static first frame; we animate it).
+      const loadTex = (url: string): Promise<Texture | null> =>
+        new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            try {
+              resolve(Texture.from(img));
+            } catch {
+              resolve(null);
+            }
+          };
+          img.onerror = () => resolve(null);
+          img.src = url;
+        });
+      const tex = (await loadTex(spriteUrl(dexId, shiny))) ?? (await loadTex(fallbackUrl(dexId, shiny)));
       if (destroyed) return;
-      tex.source.scaleMode = "nearest";
+      if (!tex) throw new Error("sprite load failed for dex " + dexId);
+      if (tex.source) tex.source.scaleMode = "nearest";
 
       const GX = 7;
       const GY = 8;
