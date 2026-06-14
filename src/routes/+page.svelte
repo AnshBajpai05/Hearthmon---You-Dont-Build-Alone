@@ -1555,6 +1555,45 @@
       return "";
     }
   }
+
+  // Decode the animated Showdown GIF into a horizontal frame STRIP (one PNG), so the
+  // README card can PLAY the companion via a CSS steps() animation — a moving figure,
+  // matching the live widget. Returns null → the card falls back to a static sprite.
+  type SpriteSheet = { uri: string; frames: number; fw: number; fh: number; dur: number };
+  async function spriteSheetDataUri(): Promise<SpriteSheet | null> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const IDC = (globalThis as any).ImageDecoder;
+      if (!IDC) return null;
+      const res = await fetch(spriteUrl(dexId, isShiny), { mode: "cors" });
+      if (!res.ok) return null;
+      const dec = new IDC({ data: await res.arrayBuffer(), type: "image/gif" });
+      await dec.tracks.ready;
+      const count = Math.min(60, dec.tracks.selectedTrack?.frameCount ?? 1);
+      if (count < 2) return null; // not animated → static path
+      const bmps: ImageBitmap[] = [];
+      let fw = 0, fh = 0, durMs = 0;
+      for (let i = 0; i < count; i++) {
+        const { image } = await dec.decode({ frameIndex: i });
+        fw = image.displayWidth || image.codedWidth || fw;
+        fh = image.displayHeight || image.codedHeight || fh;
+        durMs += (image.duration ?? 90000) / 1000; // µs → ms
+        bmps.push(await createImageBitmap(image));
+        image.close();
+      }
+      if (!fw || !fh) { for (const b of bmps) b.close(); return null; }
+      const cv = document.createElement("canvas");
+      cv.width = fw * count;
+      cv.height = fh;
+      const ctx = cv.getContext("2d");
+      if (!ctx) { for (const b of bmps) b.close(); return null; }
+      ctx.imageSmoothingEnabled = false;
+      for (let i = 0; i < bmps.length; i++) { ctx.drawImage(bmps[i], i * fw, 0); bmps[i].close(); }
+      return { uri: cv.toDataURL("image/png"), frames: count, fw, fh, dur: Math.max(0.6, durMs / 1000) };
+    } catch {
+      return null;
+    }
+  }
   // README card content — a tiny live window: seduce curiosity, don't explain.
   // Layer 2 — the identity / money line (the line that makes someone click)
   const CARD_TAGLINES = [
@@ -1622,6 +1661,8 @@
           ? pick(["another late one", "learning how to stay", "still growing"])
           : pick(["still growing", "learning how to stay", "quietly becoming real"]);
 
+    // prefer a moving figure (animated frame strip); fall back to a static sprite
+    const sheet = await spriteSheetDataUri();
     const svg = buildCard({
       thought,
       tagline: pick(CARD_TAGLINES),
@@ -1630,7 +1671,11 @@
       footer,
       partner,
       night: isNight,
-      sprite: await spriteDataUri()
+      sprite: sheet ? sheet.uri : await spriteDataUri(),
+      spriteFrames: sheet?.frames,
+      spriteFw: sheet?.fw,
+      spriteFh: sheet?.fh,
+      spriteDur: sheet?.dur
     });
     if (watchingRepo) {
       const path = `${watchingRepo.replace(/[\\/]+$/, "")}/assets/hearthmon-status.svg`;

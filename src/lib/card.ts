@@ -11,7 +11,11 @@ export interface CardState {
   footer: string; // emotional counterweight ("still growing")
   partner: string; // the companion's name, labelled under the sprite
   night: boolean;
-  sprite?: string; // base64 PNG data-URI of the companion (optional)
+  sprite?: string; // base64 data-URI of the companion (a static PNG, OR a frame STRIP)
+  spriteFrames?: number; // >1 → `sprite` is a horizontal sprite-sheet; play it
+  spriteFw?: number; // a single frame's width in the strip
+  spriteFh?: number; // a single frame's height in the strip
+  spriteDur?: number; // seconds for one full loop (matches the source GIF timing)
   title?: string; // defaults to "Hearthmon"
 }
 
@@ -88,10 +92,32 @@ export function buildCard(s: CardState): string {
     .join("");
 
   // ── Sprite ─────────────────────────────────────────────────────────────────
-  // ~15% larger so the companion commands the left, not decoration
-  const innerSprite = s.sprite
-    ? `<image class="mon" href="${s.sprite}" x="0" y="0" width="110" height="110" preserveAspectRatio="xMidYMax meet"/>`
-    : `<text class="mon" x="55" y="82" font-size="62" text-anchor="middle">🐾</text>`;
+  // ~15% larger so the companion commands the left, not decoration. If a frame
+  // STRIP is supplied, play it: clip to one frame and step the strip across with a
+  // CSS steps() animation (runs inside an <img>-loaded SVG on GitHub — no scripts).
+  const N = s.spriteFrames ?? 1;
+  const fw = s.spriteFw || 110;
+  const fh = s.spriteFh || 110;
+  const animatedSheet = N > 1 && !!s.sprite;
+  const fScale = Math.min(110 / fw, 110 / fh);
+  const dispW = fw * fScale;
+  const dispH = fh * fScale;
+  const offX = (110 - dispW) / 2; // center horizontally
+  const offY = 110 - dispH; // sit on the baseline (matches xMidYMax meet)
+  const stripW = dispW * N;
+  const innerSprite = animatedSheet
+    ? `<g clip-path="url(#petclip)"><image class="monframes" href="${s.sprite}" x="${offX.toFixed(2)}" y="${offY.toFixed(2)}" width="${stripW.toFixed(2)}" height="${dispH.toFixed(2)}" preserveAspectRatio="none"/></g>`
+    : s.sprite
+      ? `<image class="mon" href="${s.sprite}" x="0" y="0" width="110" height="110" preserveAspectRatio="xMidYMax meet"/>`
+      : `<text class="mon" x="55" y="82" font-size="62" text-anchor="middle">🐾</text>`;
+  const clipDef = animatedSheet
+    ? `<clipPath id="petclip"><rect x="${offX.toFixed(2)}" y="${offY.toFixed(2)}" width="${dispW.toFixed(2)}" height="${dispH.toFixed(2)}"/></clipPath>`
+    : "";
+  // step the strip one frame at a time over the loop duration (uniform-frame approx)
+  const spriteAnimCss = animatedSheet
+    ? `.monframes { image-rendering: pixelated; transform-box: fill-box; animation: monPlay ${(s.spriteDur || N / 12).toFixed(2)}s steps(${N}) infinite; }
+      @keyframes monPlay { from { transform: translateX(0); } to { transform: translateX(-${stripW.toFixed(2)}px); } }`
+    : "";
 
   // ── Speech bubble (the companion's live thought) ─────────────────────────────
   const bubW = Math.min(340, 36 + s.thought.length * 6.8);
@@ -127,6 +153,7 @@ export function buildCard(s: CardState): string {
       <stop offset="50%"  stop-color="white" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="white" stop-opacity="0"/>
     </linearGradient>
+    ${clipDef}
 
     <style>
       /*
@@ -288,6 +315,7 @@ export function buildCard(s: CardState): string {
         0%,100% { fill: ${textMain}; text-shadow: 0 0 0px rgba(255,255,255,0); }
         50%     { fill: #ffffff; text-shadow: 0 0 6px rgba(255,255,255,0.4); }
       }
+      ${spriteAnimCss}
     </style>
   </defs>
 
