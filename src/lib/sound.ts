@@ -101,7 +101,8 @@ function playClip(
   emphasis: number,
   channel: Channel,
   onMissing: () => void,
-  onEnded?: () => void
+  onEnded?: () => void,
+  rate = 1 // playback speed (1 = normal); used to slow the name-call clips
 ): void {
   if (!enabled) return;
   // a missing file can fire BOTH the error event and the play() rejection —
@@ -116,6 +117,7 @@ function playClip(
   try {
     const a = new Audio(url);
     a.volume = Math.min(1, Math.max(0, emphasis * vol[channel]));
+    if (rate !== 1) a.playbackRate = rate;
     a.onerror = miss;
     if (onEnded) a.onended = onEnded;
     a.play().catch(miss);
@@ -166,7 +168,8 @@ export function voiceCry(dexId: number, speciesName: string, emphasis = 1): void
       const spoke = speak(speciesName, 1.7, 1.18, emphasis * 0.75, afterName);
       if (!spoke) afterName();
     },
-    afterName
+    afterName,
+    0.80 // normal name-call clips play a touch slower (the "go-" throw clips stay 1×)
   );
 }
 
