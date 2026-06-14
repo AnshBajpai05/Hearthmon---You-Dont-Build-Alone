@@ -197,43 +197,43 @@ export function buildCard(s: CardState): string {
       .nameShimmer { animation: namePulse 6s ease-in-out infinite; }
 
       @keyframes monMove {
-        0%   { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        5%   { transform: translateY(-1px)  scaleX(1)    scaleY(1)    rotate(0deg); }
-        8%   { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        10%  { transform: translateY(3px)   scaleX(1.06) scaleY(0.92) rotate(0deg); }
-        13%  { transform: translateY(-22px) scaleX(0.88) scaleY(1.16) rotate(-2deg); }
-        15%  { transform: translateY(-10px) scaleX(0.92) scaleY(1.10) rotate(-1deg); }
-        16%  { transform: translateY(0)     scaleX(1.25) scaleY(0.78) rotate(0deg); }
-        18%  { transform: translateY(-9px)  scaleX(0.94) scaleY(1.08) rotate(1deg); }
-        20%  { transform: translateY(0)     scaleX(1.10) scaleY(0.92) rotate(0deg); }
-        21%  { transform: translateY(-3px)  scaleX(0.98) scaleY(1.03) rotate(0deg); }
-        23%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        28%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(-6deg); }
-        34%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(6deg); }
-        38%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(-2deg); }
-        42%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        50%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        51%  { transform: translateY(2px)   scaleX(1.04) scaleY(0.95) rotate(0deg); }
-        52%  { transform: translateY(-11px) scaleX(0.93) scaleY(1.10) rotate(1deg); }
-        53%  { transform: translateY(0)     scaleX(1.15) scaleY(0.86) rotate(0deg); }
-        55%  { transform: translateY(-2px)  scaleX(0.99) scaleY(1.02) rotate(0deg); }
-        57%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        60%  { transform: translateY(-1px)  scaleX(1)    scaleY(1)    rotate(-5deg); }
-        62%  { transform: translateY(-1px)  scaleX(1)    scaleY(1)    rotate(5deg); }
-        64%  { transform: translateY(-1px)  scaleX(1)    scaleY(1)    rotate(-4deg); }
-        66%  { transform: translateY(-1px)  scaleX(1)    scaleY(1)    rotate(4deg); }
-        68%  { transform: translateY(-1px)  scaleX(1)    scaleY(1)    rotate(-2deg); }
-        70%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        74%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        84%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        85%  { transform: translateY(3px)   scaleX(1.06) scaleY(0.92) rotate(0deg); }
-        87%  { transform: translateY(-22px) scaleX(0.88) scaleY(1.16) rotate(2deg); }
-        88%  { transform: translateY(-8px)  scaleX(0.92) scaleY(1.10) rotate(1deg); }
-        89%  { transform: translateY(0)     scaleX(1.25) scaleY(0.78) rotate(0deg); }
-        90%  { transform: translateY(-7px)  scaleX(0.95) scaleY(1.06) rotate(-1deg); }
-        91%  { transform: translateY(0)     scaleX(1.08) scaleY(0.94) rotate(0deg); }
-        93%  { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
-        100% { transform: translateY(0)     scaleX(1)    scaleY(1)    rotate(0deg); }
+        0%   { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        5%   { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(0deg); }
+        8%   { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        10%  { transform: translateY(1.5px)  scaleX(1.03)  scaleY(0.96)  rotate(0deg); }
+        13%  { transform: translateY(-11px)  scaleX(0.94)  scaleY(1.08)  rotate(-1deg); }
+        15%  { transform: translateY(-5px)   scaleX(0.96)  scaleY(1.05)  rotate(-0.5deg); }
+        16%  { transform: translateY(0)      scaleX(1.13)  scaleY(0.89)  rotate(0deg); }
+        18%  { transform: translateY(-4.5px) scaleX(0.97)  scaleY(1.04)  rotate(0.5deg); }
+        20%  { transform: translateY(0)      scaleX(1.05)  scaleY(0.96)  rotate(0deg); }
+        21%  { transform: translateY(-1.5px) scaleX(0.99)  scaleY(1.015) rotate(0deg); }
+        23%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        28%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(-3deg); }
+        34%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(3deg); }
+        38%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(-1deg); }
+        42%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        50%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        51%  { transform: translateY(1px)    scaleX(1.02)  scaleY(0.975) rotate(0deg); }
+        52%  { transform: translateY(-5.5px) scaleX(0.965) scaleY(1.05)  rotate(0.5deg); }
+        53%  { transform: translateY(0)      scaleX(1.075) scaleY(0.93)  rotate(0deg); }
+        55%  { transform: translateY(-1px)   scaleX(0.995) scaleY(1.01)  rotate(0deg); }
+        57%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        60%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(-2.5deg); }
+        62%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(2.5deg); }
+        64%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(-2deg); }
+        66%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(2deg); }
+        68%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(-1deg); }
+        70%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        74%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        84%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        85%  { transform: translateY(1.5px)  scaleX(1.03)  scaleY(0.96)  rotate(0deg); }
+        87%  { transform: translateY(-11px)  scaleX(0.94)  scaleY(1.08)  rotate(1deg); }
+        88%  { transform: translateY(-4px)   scaleX(0.96)  scaleY(1.05)  rotate(0.5deg); }
+        89%  { transform: translateY(0)      scaleX(1.13)  scaleY(0.89)  rotate(0deg); }
+        90%  { transform: translateY(-3.5px) scaleX(0.975) scaleY(1.03)  rotate(-0.5deg); }
+        91%  { transform: translateY(0)      scaleX(1.04)  scaleY(0.97)  rotate(0deg); }
+        93%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
+        100% { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
       }
 
       @keyframes monBreathe {
@@ -243,24 +243,24 @@ export function buildCard(s: CardState): string {
       }
 
       @keyframes shadowMove {
-        0%   { transform: scaleX(1)    scaleY(1);    opacity: 0.32; }
-        10%  { transform: scaleX(1.05) scaleY(1.05); opacity: 0.38; } 
-        13%  { transform: scaleX(0.55) scaleY(0.4);  opacity: 0.12; } 
-        15%  { transform: scaleX(0.7)  scaleY(0.55); opacity: 0.18; } 
-        16%  { transform: scaleX(1.4)  scaleY(1.35); opacity: 0.55; } 
-        18%  { transform: scaleX(0.8)  scaleY(0.65); opacity: 0.20; } 
-        20%  { transform: scaleX(1.15) scaleY(1.12); opacity: 0.42; } 
-        23%  { transform: scaleX(1)    scaleY(1);    opacity: 0.32; } 
-        51%  { transform: scaleX(1.03) scaleY(1.03); opacity: 0.36; } 
-        52%  { transform: scaleX(0.7)  scaleY(0.55); opacity: 0.16; } 
-        53%  { transform: scaleX(1.2)  scaleY(1.15); opacity: 0.48; } 
-        57%  { transform: scaleX(1)    scaleY(1);    opacity: 0.32; } 
-        85%  { transform: scaleX(1.05) scaleY(1.05); opacity: 0.38; } 
-        87%  { transform: scaleX(0.55) scaleY(0.4);  opacity: 0.12; } 
-        89%  { transform: scaleX(1.4)  scaleY(1.35); opacity: 0.55; } 
-        91%  { transform: scaleX(1.08) scaleY(1.06); opacity: 0.38; } 
-        93%  { transform: scaleX(1)    scaleY(1);    opacity: 0.32; }
-        100% { transform: scaleX(1)    scaleY(1);    opacity: 0.32; }
+        0%   { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
+        10%  { transform: scaleX(1.025) scaleY(1.025); opacity: 0.35; }
+        13%  { transform: scaleX(0.775) scaleY(0.7);   opacity: 0.22; }
+        15%  { transform: scaleX(0.85)  scaleY(0.775); opacity: 0.25; }
+        16%  { transform: scaleX(1.2)   scaleY(1.175); opacity: 0.435; }
+        18%  { transform: scaleX(0.9)   scaleY(0.825); opacity: 0.26; }
+        20%  { transform: scaleX(1.075) scaleY(1.06);  opacity: 0.37; }
+        23%  { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
+        51%  { transform: scaleX(1.015) scaleY(1.015); opacity: 0.34; }
+        52%  { transform: scaleX(0.85)  scaleY(0.775); opacity: 0.24; }
+        53%  { transform: scaleX(1.1)   scaleY(1.075); opacity: 0.40; }
+        57%  { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
+        85%  { transform: scaleX(1.025) scaleY(1.025); opacity: 0.35; }
+        87%  { transform: scaleX(0.775) scaleY(0.7);   opacity: 0.22; }
+        89%  { transform: scaleX(1.2)   scaleY(1.175); opacity: 0.435; }
+        91%  { transform: scaleX(1.04)  scaleY(1.03);  opacity: 0.35; }
+        93%  { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
+        100% { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
       }
 
       @keyframes glowPulse {
