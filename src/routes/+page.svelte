@@ -1573,7 +1573,10 @@
     if (days <= 7) chips.push({ icon: "📖", label: "chapter one" });
     chips.push({ icon: "✨", label: "quietly becoming real" }); // soft anchor if few signals
 
-    const footer = days <= 1 ? "day one" : `${days} days together`;
+    // species lives INSIDE the card now (the README text block is gone), so the
+    // whole card is one image → name + art always update together
+    const species = displayName(dexEntry(dexId)?.name ?? petName);
+    const footer = `${species} · ${days <= 1 ? "day one" : `${days} days`}`;
 
     const svg = buildCard({
       thought,
