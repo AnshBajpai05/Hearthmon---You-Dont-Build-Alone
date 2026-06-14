@@ -176,9 +176,57 @@
       const sprImg = (await loadImg(spriteUrl(dexId, shiny))) ?? (await loadImg(fallbackUrl(dexId, shiny)));
       if (destroyed) return;
       if (!sprImg) throw new Error("sprite load failed for dex " + dexId);
+
+      // ── animated-GIF playback: a single Texture.from froze the sprite to frame 0,
+      // killing the native body motion (flames/limbs/tail). Instead mirror the still-
+      // playing <img> into a canvas each frame and use THAT canvas as the mesh texture,
+      // so the Showdown animation plays UNDER the mesh deform. The <img> must stay in
+      // the DOM for the browser to keep advancing the GIF.
+      sprImg.style.cssText = "position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+      host.appendChild(sprImg);
+      const natW = sprImg.naturalWidth || 96;
+      const natH = sprImg.naturalHeight || 96;
+      const petCanvas = document.createElement("canvas");
+      petCanvas.width = natW;
+      petCanvas.height = natH;
+      const petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
+
+      // opaque content bbox (texture space) → centers the orb/square on the VISIBLE pet.
+      // The getImageData call also proves the canvas is CORS-clean → safe to live-update.
+      let visCX = natW / 2;
+      let visCY = natH / 2;
+      let contentW = natW;
+      let contentH = natH;
+      let animTex = false;
+      if (petCtx) {
+        petCtx.drawImage(sprImg, 0, 0, natW, natH);
+        try {
+          const dd = petCtx.getImageData(0, 0, natW, natH).data;
+          let top = natH, bot = -1, left = natW, right = -1;
+          for (let y = 0; y < natH; y++) {
+            for (let x = 0; x < natW; x++) {
+              if (dd[(y * natW + x) * 4 + 3] > 20) {
+                if (y < top) top = y;
+                if (y > bot) bot = y;
+                if (x < left) left = x;
+                if (x > right) right = x;
+              }
+            }
+          }
+          if (bot > top && right > left) {
+            visCX = (left + right) / 2;
+            visCY = (top + bot) / 2;
+            contentW = right - left;
+            contentH = bot - top;
+          }
+          animTex = true; // CORS-clean → we can replay frames from the canvas
+        } catch {
+          animTex = false; // tainted → fall back to a static texture
+        }
+      }
       let tex: Texture;
       try {
-        tex = Texture.from(sprImg);
+        tex = Texture.from(animTex && petCtx ? petCanvas : sprImg);
       } catch {
         throw new Error("texture create failed for dex " + dexId);
       }
@@ -193,45 +241,6 @@
       const ph = texH;
       const pcx = texW / 2;
       const maxY = texH; // plane spans 0..texW, 0..texH
-
-      // opaque content bbox in texture space — centers the orb/square on the VISIBLE
-      // pet, not the sprite's padded frame (frames have uneven transparent margins).
-      // Falls back to the full frame if the canvas is CORS-tainted.
-      let visCX = pcx;
-      let visCY = ph / 2;
-      let contentW = pw;
-      let contentH = ph;
-      try {
-        const cv = document.createElement("canvas");
-        cv.width = sprImg.naturalWidth || pw;
-        cv.height = sprImg.naturalHeight || ph;
-        const g2 = cv.getContext("2d", { willReadFrequently: true });
-        if (g2) {
-          g2.drawImage(sprImg, 0, 0);
-          const dd = g2.getImageData(0, 0, cv.width, cv.height).data;
-          let top = cv.height, bot = -1, left = cv.width, right = -1;
-          for (let y = 0; y < cv.height; y++) {
-            for (let x = 0; x < cv.width; x++) {
-              if (dd[(y * cv.width + x) * 4 + 3] > 20) {
-                if (y < top) top = y;
-                if (y > bot) bot = y;
-                if (x < left) left = x;
-                if (x > right) right = x;
-              }
-            }
-          }
-          if (bot > top && right > left) {
-            const sh = ph / cv.height;
-            const sw = pw / cv.width;
-            visCX = ((left + right) / 2) * sw;
-            visCY = ((top + bot) / 2) * sh;
-            contentW = (right - left) * sw;
-            contentH = (bot - top) * sh;
-          }
-        }
-      } catch {
-        /* tainted canvas (no CORS) — keep the full-frame fallback */
-      }
       const petScale = size / Math.max(pw, ph);
       mesh.pivot.set(pcx, maxY); // feet at the bottom
       mesh.scale.set(petScale);
@@ -407,6 +416,7 @@
       let evoT = 0; // evolution flicker clock
       let prevEating = false;
       let face = -1; // pet facing: -1 default (sprite faces left), +1 flipped
+      let gifAcc = 0; // throttle for the animated-GIF texture refresh
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -501,6 +511,18 @@
         t += dt;
         const w = W();
         const h = H();
+
+        // replay the Showdown GIF: pull the <img>'s current frame into the canvas
+        // texture (~25fps — these sprites are low-fps, so no need for every frame)
+        if (animTex && petCtx) {
+          gifAcc += dt;
+          if (gifAcc >= 0.04) {
+            gifAcc = 0;
+            petCtx.clearRect(0, 0, petCanvas.width, petCanvas.height);
+            petCtx.drawImage(sprImg, 0, 0, petCanvas.width, petCanvas.height);
+            tex.source.update();
+          }
+        }
 
         // ── viewport: full widget, OR a globe (habitat SHAPE, not the backdrop) ──
         const globe = habitat && habitatShape !== "full";
@@ -915,6 +937,7 @@
       cleanup = () => {
         document.removeEventListener("visibilitychange", onVis);
         ro.disconnect();
+        sprImg.remove(); // drop the hidden GIF <img> so it doesn't leak on remount
       };
     })().catch((e) => {
       console.error("[PixiStage] init failed:", e);
