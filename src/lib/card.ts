@@ -4,11 +4,11 @@
 // external refs: the sprite is embedded as a base64 data-URI.
 
 export interface CardState {
-  observation: string; // bubble — what Hearthmon is quietly doing/learning
-  subtitle: string; // under the title, e.g. "an emotionally-aware coding companion"
-  tagline: string; // the money line — wraps to two lines if long
-  chips: { icon: string; label: string }[]; // observational chips (dynamic)
-  footer: string; // e.g. "86 commits · quietly becoming real"
+  thought: string; // Layer 1 — a live COMPANION thought ("still here with this one")
+  tagline: string; // Layer 2 — the money line / identity, under the title (wraps)
+  chips: { icon: string; label: string }[]; // Layer 3 — narrative aliveness
+  cta: string; // Layer 4 — a soft call ("see what it noticed →")
+  footer: string; // factual counterweight ("86 commits · day 1")
   night: boolean;
   sprite?: string; // base64 PNG data-URI of the companion (optional)
   title?: string; // defaults to "Hearthmon"
@@ -40,12 +40,14 @@ export function buildCard(s: CardState): string {
   const accent    = s.night ? "#c4a0f0" : "#f0b66a";
   const accentDim = s.night ? "#7a55c0" : "#b07840";
   const textMain  = "#f6f1ff";
-  const textSub   = "#c9bff0";
   const textDim   = "#8d82ab";
   const bubbleBg  = "#160f24";
 
-  // ── Observational chips ("what it noticed") — width-aware single row ─────────
-  const CHIP_Y = 104;
+  // money line wraps to two lines if long — chips sit under it
+  const [tagA, tagB] = wrap2(s.tagline, 34);
+
+  // ── Narrative aliveness chips — width-aware single row ───────────────────────
+  const CHIP_Y = tagB ? 122 : 112;
   let chipX = 168;
   const chipSvg = s.chips
     .map((c, i) => {
@@ -90,13 +92,10 @@ export function buildCard(s: CardState): string {
     ? `<image class="mon" href="${s.sprite}" x="0" y="0" width="110" height="110" preserveAspectRatio="xMidYMax meet"/>`
     : `<text class="mon" x="55" y="82" font-size="62" text-anchor="middle">🐾</text>`;
 
-  // ── Speech bubble ──────────────────────────────────────────────────────────
-  const bubW = Math.min(340, 36 + s.observation.length * 6.8);
+  // ── Speech bubble (the companion's live thought) ─────────────────────────────
+  const bubW = Math.min(340, 36 + s.thought.length * 6.8);
 
-  // ── Money line (wraps to two lines if long) ─────────────────────────────────
-  const [tagA, tagB] = wrap2(s.tagline, 36);
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hearthmon — ${esc(s.observation)}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Hearthmon — ${esc(s.thought)}">
   <defs>
     <!-- Background gradient -->
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -325,24 +324,20 @@ export function buildCard(s: CardState): string {
     <rect x="120" y="16" rx="6"  width="${(bubW-8).toFixed(0)}" height="6"
           fill="white" fill-opacity="0.05"/>
     <path d="M124 42 q -7 17 -26 22 q 19 -2 30 -12 z" fill="${bubbleBg}" fill-opacity="0.95"/>
-    <text x="130" y="33" font-size="12" fill="#e9e2fb">${esc(s.observation)}</text>
+    <text x="130" y="33" font-size="12" fill="#e9e2fb">${esc(s.thought)}</text>
   </g>
 
-  <!-- Title: the PRODUCT, not the nickname -->
-  <text class="nameShimmer" x="168" y="74" font-size="23" font-weight="800">${s.night ? "🌙" : "✦"} ${esc(title)}</text>
+  <!-- Layer 2: title (the product) + the money line as its identity -->
+  <text class="nameShimmer" x="168" y="68" font-size="23" font-weight="800">${s.night ? "🌙" : "✦"} ${esc(title)}</text>
+  <text x="168" y="${tagB ? 90 : 92}" font-size="13" fill="${accent}" font-weight="600">${esc(tagA)}</text>
+  ${tagB ? `<text x="168" y="107" font-size="13" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
 
-  <!-- Subtitle -->
-  <text class="label" x="170" y="92" font-size="11.5" fill="${textSub}">${esc(s.subtitle)}</text>
-
-  <!-- Observational chips -->
+  <!-- Layer 3: narrative aliveness chips -->
   ${chipSvg}
 
-  <!-- Money line (1–2 lines) -->
-  <text x="168" y="${tagB ? 146 : 150}" font-size="12.5" fill="${accent}" font-weight="600">${esc(tagA)}</text>
-  ${tagB ? `<text x="168" y="162" font-size="12.5" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
-
-  <!-- Footer -->
-  <text class="footer" x="${W - 18}" y="${H - 10}" font-size="10" fill="${textDim}" text-anchor="end">${esc(s.footer)}</text>
+  <!-- Layer 4: a soft call (left) · factual counterweight (right) -->
+  <text class="footer" x="168" y="${H - 11}" font-size="11" fill="${accent}" fill-opacity="0.9">${esc(s.cta)}</text>
+  <text class="footer" x="${W - 18}" y="${H - 11}" font-size="10" fill="${textDim}" text-anchor="end">${esc(s.footer)}</text>
 
 </svg>`;
 }

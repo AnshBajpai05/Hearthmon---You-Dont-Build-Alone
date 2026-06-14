@@ -1527,26 +1527,23 @@
       return "";
     }
   }
-  // README card content — product-forward + observational, varies card to card.
-  const CARD_OBSERVATIONS = [
-    "quietly learning how to stay beside builders",
-    "watching hard work turn into something real",
-    "learning the shape of how you build",
-    "here for the long, quiet stretches",
-    "noticing how hard you've been trying"
-  ];
-  const CARD_SUBTITLES = [
-    "an emotionally-aware coding companion",
-    "a quiet companion for people building hard things"
-  ];
+  // README card content — a tiny live window: seduce curiosity, don't explain.
+  // Layer 2 — the identity / money line (the line that makes someone click)
   const CARD_TAGLINES = [
     "the companion that quietly stays while you build hard things",
-    "it stays beside you while you build hard things",
-    "quietly here while you make hard things"
+    "for the long nights between stuck and breakthrough",
+    "it quietly notices how hard you're trying",
+    "a companion for people building difficult things"
   ];
+  // Layer 4 — a soft call, never a button
+  const CARD_CTAS = ["see what it noticed →", "come say hi →", "still growing", "quietly learning"];
 
-  // observational chips drawn from real signals — short, never RPG metadata
-  async function cardChips(days: number): Promise<{ icon: string; label: string }[]> {
+  async function generateCard(silent = false) {
+    const fm = await getMeta("first_met");
+    const days = daysTogether(fm);
+    const commits = Number((await getMeta("commits")) ?? 0) || 0;
+
+    // real signals → a live companion thought + narrative chips
     const today = new Date().toISOString().slice(0, 10);
     const slug = activeProject ? projSlug(activeProject) : "";
     const projDays = slug ? Number((await getMeta(`proj_${slug}_days`)) ?? 0) : 0;
@@ -1554,33 +1551,36 @@
     const nightS = Number((await getMeta("sess_night")) ?? 0);
     const dayS = Number((await getMeta("sess_day")) ?? 0);
     const effPts = (await getMeta("effort_day")) === today ? Number((await getMeta("effort_pts")) ?? 0) : 0;
+    const friction = lastFrictionCue > 0 && Date.now() - lastFrictionCue < 36 * 3600_000;
 
+    // Layer 1 — a contextual COMPANION thought (what hooks people)
+    const thought = friction
+      ? "this one seems stubborn"
+      : effPts >= 60
+        ? "deep in it today"
+        : isNight
+          ? "late-night builder again?"
+          : projDays >= 3
+            ? "still here with this one"
+            : pick(["quietly staying nearby", "here, like always", "just keeping you company"]);
+
+    // Layer 3 — narrative aliveness chips
     const chips: { icon: string; label: string }[] = [];
-    if (effPts >= 60) chips.push({ icon: "⚡", label: "deep work day" });
-    else if (lastFrictionCue > 0 && Date.now() - lastFrictionCue < 36 * 3600_000)
-      chips.push({ icon: "🌧", label: "stubborn problem" });
-    if (isNight || nightS > dayS) chips.push({ icon: "🌙", label: "night builder" });
-    if (projDays >= 3) chips.push({ icon: "🫖", label: "still at it" });
+    if (effPts >= 60) chips.push({ icon: "⚡", label: "deep in it" });
+    else if (friction) chips.push({ icon: "🌧", label: "a stubborn one" });
+    if (isNight || nightS > dayS) chips.push({ icon: "🌙", label: "late-night chapter" });
+    if (projDays >= 3) chips.push({ icon: "🛠", label: "still building" });
     if (streak >= 3) chips.push({ icon: "🔥", label: `${streak}-day streak` });
-    if (days <= 7) chips.push({ icon: "✨", label: "first chapter" });
-    if (chips.length === 0 && petPersona) chips.push({ icon: petPersona.icon, label: petPersona.label.toLowerCase() });
-    if (chips.length === 0) chips.push({ icon: "🌱", label: "just beginning" });
-    return chips.slice(0, 3);
-  }
+    if (days <= 7) chips.push({ icon: "📖", label: "chapter one" });
+    chips.push({ icon: "✨", label: "quietly becoming real" }); // soft anchor if few signals
 
-  async function generateCard(silent = false) {
-    const fm = await getMeta("first_met");
-    const days = daysTogether(fm);
-    const commits = Number((await getMeta("commits")) ?? 0) || 0;
-    const footer =
-      days <= 14
-        ? `${commits} commits · quietly becoming real`
-        : pick([`${commits} commits · quietly becoming real`, `${commits} commits · ${days} days together`]);
+    const footer = `${commits} commits · day ${Math.max(1, days)}`;
+
     const svg = buildCard({
-      observation: pick(CARD_OBSERVATIONS),
-      subtitle: pick(CARD_SUBTITLES),
+      thought,
       tagline: pick(CARD_TAGLINES),
-      chips: await cardChips(days),
+      chips: chips.slice(0, 3),
+      cta: pick(CARD_CTAS),
       footer,
       night: isNight,
       sprite: await spriteDataUri()
