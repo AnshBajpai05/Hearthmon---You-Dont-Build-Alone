@@ -405,9 +405,10 @@
       // glow, lives INSIDE the scene so it clips to the sphere + only shows with a habitat
       const ambient = new Graphics();
       const flash = new Graphics(); // lightning sky-flash
+      const rareG = new Graphics(); // rare-event shapes (normal blend → silhouettes + glows)
       ambient.blendMode = "add";
       flash.blendMode = "add";
-      scene.addChild(back, orb, reflect, waves, lantern, flies, ambient, flash, biomeMask);
+      scene.addChild(back, orb, reflect, waves, lantern, flies, ambient, flash, rareG, biomeMask);
 
       // a jagged lightning polyline: wide soft glow pass + a bright thin core
       function strokeBolt(pts: number[], alpha: number) {
@@ -427,6 +428,109 @@
           pts.push(x, y0 + ((y1 - y0) * i) / 7);
         }
         return pts;
+      }
+
+      // the rare cinematic moment for the current type → [kind, durationSeconds]
+      const pickRare = (): [string, number] => {
+        switch (petType) {
+          case "electric": return ["superstrike", 0.85];
+          case "fire": return ["plume", 2.6];
+          case "water": return ["swell", 3.2];
+          case "grass": case "bug": return ["passerby", 4.6];
+          case "ghost": case "dark": return ["watcher", 3.4];
+          case "psychic": return ["vision", 0.9];
+          case "dragon": case "flying": return ["flyover", 3.6];
+          case "ice": return ["aurora", 4.6];
+          default: return ["shootingstar", 1.4];
+        }
+      };
+      // draw one rare event at progress p∈[0,1] within the viewport (x,y,w2,h2,hz)
+      function drawRare(kind: string, p: number, x: number, y: number, w2: number, h2: number, hz: number) {
+        const env = Math.sin(Math.min(1, Math.max(0, p)) * Math.PI); // 0→1→0 fade
+        const cx = x + w2 / 2;
+        if (kind === "superstrike") {
+          const a = p < 0.18 ? p / 0.18 : Math.max(0, 1 - (p - 0.18) / 0.82);
+          flash.rect(x, y, w2, h2).fill({ color: 0xeaf4ff, alpha: a * 0.55 });
+          if (p < 0.4) {
+            for (let b = 0; b < 3; b++)
+              strokeBolt(genBolt(x + w2 * (0.22 + 0.28 * b + Math.random() * 0.08), y, y + (hz - y) * 0.96, w2 * 0.08), 0.6 + 0.4 * Math.random());
+          }
+          petLight = Math.max(petLight, a);
+        } else if (kind === "plume") {
+          const hgt = (hz - y) * 0.55 * env;
+          const wd = w2 * 0.13;
+          const tip = cx + Math.sin(t * 3) * wd * 0.25;
+          rareG.moveTo(cx - wd, hz);
+          rareG.quadraticCurveTo(cx - wd * 0.4, hz - hgt * 0.55, tip, hz - hgt);
+          rareG.quadraticCurveTo(cx + wd * 0.4, hz - hgt * 0.55, cx + wd, hz);
+          rareG.fill({ color: 0xff5a14, alpha: 0.32 * env });
+          rareG.moveTo(cx - wd * 0.5, hz);
+          rareG.quadraticCurveTo(cx, hz - hgt * 0.7, tip, hz - hgt * 0.82);
+          rareG.quadraticCurveTo(cx + wd * 0.5, hz - hgt * 0.7, cx + wd * 0.5, hz);
+          rareG.fill({ color: 0xffc25a, alpha: 0.3 * env });
+        } else if (kind === "swell") {
+          const sx = x - w2 * 0.2 + p * w2 * 1.4;
+          const amp = (hz - y) * 0.12 * env;
+          rareG.moveTo(x, hz + 4);
+          for (let i = 0; i <= 16; i++) {
+            const xx = x + (w2 * i) / 16;
+            const d = (xx - sx) / (w2 * 0.18);
+            rareG.lineTo(xx, hz - amp * Math.exp(-d * d));
+          }
+          rareG.lineTo(x + w2, hz + 4);
+          rareG.fill({ color: lightCol, alpha: 0.12 * env });
+          rareG.circle(sx, hz - amp, Math.max(1.5, w2 * 0.01)).fill({ color: 0xffffff, alpha: 0.4 * env });
+        } else if (kind === "passerby") {
+          const px = x + p * w2;
+          const s = (hz - y) * 0.1;
+          const a = 0.5 * env;
+          const gait = Math.sin(p * 40) * s * 0.25;
+          rareG.ellipse(px, hz - s * 0.7, s * 0.85, s * 0.45).fill({ color: 0x0b0b14, alpha: a });
+          rareG.ellipse(px + s * 0.7, hz - s * 1.05, s * 0.3, s * 0.32).fill({ color: 0x0b0b14, alpha: a });
+          rareG.rect(px - s * 0.5, hz - s * 0.35, s * 0.12, s * 0.4 + gait).fill({ color: 0x0b0b14, alpha: a });
+          rareG.rect(px + s * 0.4, hz - s * 0.35, s * 0.12, s * 0.4 - gait).fill({ color: 0x0b0b14, alpha: a });
+        } else if (kind === "watcher") {
+          const ex = x + w2 * 0.72, ey = y + h2 * 0.34;
+          const blink = Math.sin(p * 26) > -0.4 ? 1 : 0.15;
+          const a = 0.7 * env * blink;
+          rareG.circle(ex, ey, 2.6).fill({ color: 0xff5252, alpha: a });
+          rareG.circle(ex + 13, ey, 2.6).fill({ color: 0xff5252, alpha: a });
+          rareG.circle(ex, ey, 5).fill({ color: 0xff2a2a, alpha: a * 0.25 });
+          rareG.circle(ex + 13, ey, 5).fill({ color: 0xff2a2a, alpha: a * 0.25 });
+        } else if (kind === "vision") {
+          flash.rect(x, y, w2, h2).fill({ color: 0xb98cff, alpha: 0.22 * env });
+          for (let r = 1; r <= 3; r++)
+            rareG.circle(cx, y + h2 * 0.45, (hz - y) * 0.5 * p * r * 0.4).stroke({ color: 0xd9c2ff, width: 1.4, alpha: 0.3 * env });
+        } else if (kind === "flyover") {
+          const fx2 = x + w2 * 1.25 - p * w2 * 1.5;
+          const fy = y + h2 * 0.2;
+          const a = 0.5 * env;
+          const flap = Math.sin(t * 6) * h2 * 0.03;
+          rareG.ellipse(fx2, fy, w2 * 0.07, h2 * 0.018).fill({ color: 0x05050a, alpha: a });
+          rareG.moveTo(fx2, fy);
+          rareG.lineTo(fx2 - w2 * 0.1, fy - h2 * 0.05 + flap);
+          rareG.lineTo(fx2 - w2 * 0.03, fy + h2 * 0.01);
+          rareG.fill({ color: 0x05050a, alpha: a });
+          rareG.moveTo(fx2, fy);
+          rareG.lineTo(fx2 + w2 * 0.1, fy - h2 * 0.05 + flap);
+          rareG.lineTo(fx2 + w2 * 0.03, fy + h2 * 0.01);
+          rareG.fill({ color: 0x05050a, alpha: a });
+        } else if (kind === "aurora") {
+          for (let bandI = 0; bandI < 3; bandI++) {
+            const yy = y + h2 * (0.18 + bandI * 0.07);
+            rareG.moveTo(x, yy);
+            for (let i = 0; i <= 16; i++)
+              rareG.lineTo(x + (w2 * i) / 16, yy + Math.sin((x + (w2 * i) / 16) * 0.02 + t * 0.6 + bandI) * 8);
+            rareG.stroke({ color: bandI === 1 ? 0x7affc0 : 0x8ad6ff, width: 6 - bandI, alpha: 0.12 * env });
+          }
+        } else if (kind === "shootingstar") {
+          const sx = x + p * w2;
+          const sy = y + h2 * 0.14 + p * h2 * 0.18;
+          rareG.moveTo(sx, sy);
+          rareG.lineTo(sx - 34, sy - 13);
+          rareG.stroke({ color: 0xffffff, width: 2, alpha: env });
+          rareG.circle(sx, sy, 2).fill({ color: 0xffffff, alpha: env });
+        }
       }
       // order: scene → backdrop → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
@@ -528,9 +632,15 @@
       let strikeT = 0; // remaining strike-visible time
       let boltPts: number[] = [];
       let boltBranch: number[] = [];
+      let petLight = 0; // momentary scene→pet illumination (lightning lights the body)
       const flames = Array.from({ length: 5 }, () => ({
         x: Math.random(), ph: Math.random() * 6.28, sp: 0.8 + Math.random() * 0.7, h: 0.55 + Math.random() * 0.5
       }));
+      // ── rare-event system: unexpected, memorable, per-type cinematic one-shots ──
+      let rareT = 90 + Math.random() * 150; // first rare moment in 1.5–4 min
+      let rareKind = "";
+      let rareProg = 0;
+      let rareDur = 1;
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -632,6 +742,8 @@
         t += dt;
         const w = W();
         const h = H();
+        const F = fx ?? NO_FX;
+        const sleeping = petState === "sleeping";
 
         // replay the Showdown GIF by cycling decoded frames onto the canvas texture
         if (frames.length > 1 && petCtx) {
@@ -773,6 +885,8 @@
         // ── type-driven premium ambient (electric/fire/radiant) within the viewport ──
         ambient.clear();
         flash.clear();
+        rareG.clear();
+        petLight *= Math.exp(-dt / 0.13); // illumination from a strike fades fast
         if (ambKind === "lightning") {
           if (strikeT > 0) {
             strikeT -= dt;
@@ -781,6 +895,7 @@
             if (life > 0.55) {
               strokeBolt(boltPts, 0.6 + 0.4 * Math.random());
               strokeBolt(boltBranch, 0.3);
+              petLight = Math.max(petLight, life * 0.7); // the bolt lights the pet
             }
           } else {
             boltT -= dt;
@@ -826,9 +941,40 @@
           }
         }
 
+        // water caustics: drifting shimmer cells on the sea (additive), any water biome
+        if (hasWater) {
+          for (let i = 0; i < 7; i++) {
+            const cxw = vpx + (((i * 0.16 + t * 0.03 * (1 + (i % 2))) % 1) + 1) % 1 * vpw;
+            const cyw = HZ + ((((i * 0.13 + t * 0.05) % 1) + 1) % 1) * (vpBottom - HZ);
+            const r = 8 + 6 * Math.sin(t * 1.3 + i);
+            ambient.ellipse(cxw, cyw, Math.max(3, r), Math.max(1.5, r * 0.3))
+              .fill({ color: lightCol, alpha: 0.05 + 0.035 * (0.5 + 0.5 * Math.sin(t * 2 + i)) });
+          }
+        }
+
+        // ── rare-event system: unexpected, memorable, per-type cinematic moments ──
+        if (rareKind) {
+          rareProg += dt / rareDur;
+          if (rareProg >= 1) { rareKind = ""; rareProg = 0; }
+          else drawRare(rareKind, rareProg, vpx, vpy, vpw, vph, HZ);
+        } else if (habitat) {
+          // mood-gated cadence: sleeping calms the world, happy/excited heightens it
+          rareT -= dt * (sleeping ? 0.35 : petState === "happy" ? 1.7 : 1);
+          if (rareT <= 0) {
+            const busy = F.switchFx !== "none" || F.evoActive || F.attacking;
+            if (!busy && !sleeping) {
+              const r = pickRare();
+              rareKind = r[0];
+              rareDur = r[1];
+              rareProg = 0;
+              rareT = 150 + Math.random() * 240; // next in 2.5–6.5 min
+            } else {
+              rareT = 25 + Math.random() * 25; // busy/asleep → retry shortly
+            }
+          }
+        }
+
         // ---- pet ----
-        const F = fx ?? NO_FX;
-        const sleeping = petState === "sleeping";
         // brain bridge: a fresh "happy" → a joyful hop
         if (petState === "happy" && prevState !== "happy") {
           hop(330);
@@ -992,6 +1138,7 @@
           evoT = 0;
         }
         if (isFire) tint = lerpCol(tint, 0xffcf8a, 0.25); // warm flicker tint
+        if (petLight > 0.01) tint = lerpCol(tint, 0xe6f2ff, Math.min(0.85, petLight)); // lightning lights the body
 
         const fScale = curScale * petScaleMul;
         if (deformable && posBuf) mesh.scale.set(fScale * face, fScale);

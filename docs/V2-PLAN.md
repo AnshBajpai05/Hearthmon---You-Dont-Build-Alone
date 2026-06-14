@@ -47,8 +47,19 @@ Classic is NOT replaced. Hearthmon ships **two renderers over one shared brain**
 - [x] type-driven premium ambient (additive, inside the scene → clips to the sphere, habitat-only):
       **electric → lightning** (jagged bolt + glow/core + sky-flash + afterglow, strikes every 4–11s) ·
       **fire → flame licks** (flickering tongues on the horizon w/ a hot inner core) ·
-      **grass/bug/water/ice/flying/psychic/fairy/dragon/ghost/poison → light shafts** (god-rays from the orb)
-- [ ] deeper window-scene detail (parallax interior, richer beams) — optional polish, not a feature gap
+      **grass/bug/water/ice/flying/psychic/fairy/dragon/ghost/poison → light shafts** (god-rays from the orb) ·
+      **water caustics** (drifting shimmer cells on the sea)
+- [x] **rare-event system** — unexpected, memorable per-type one-shots every ~2.5–6.5 min, mood-gated
+      (sleeping calms the world, happy heightens it; never mid-ceremony): electric superstrike ·
+      fire plume · water swell · grass/bug passer-by silhouette · ghost/dark watcher · psychic vision
+      pulse · dragon/flying winged-shadow flyover · ice aurora · default shooting-star
+- [x] **creature lighting** — a lightning strike (and superstrike) momentarily lights the PET's body
+      (blue-white tint flash), not just the sky
+- [ ] deeper window-scene detail (parallax interior) · weather-API / audio-reactive ambience (opt-in,
+      separate feature) · time-of-day depth — optional, not parity gaps
+- ❌ **declined on principle:** object/proximity recognition ("toddler mode") needs a camera → violates
+      the privacy soul (process names only, never camera/screen content). Recognizable legendary
+      silhouettes → done as abstract shadows/streaks instead (no IP cosplay).
 
 **Bridge:** `+page` builds a `$derived` `aliveFx` (switchFx · attacking · atkKind/color/emoji/name/cls ·
 dir · evoActive/Flash · visitor{id,shiny,x,flip} · eating · birthday) → `PixiStage.fx`. The Pixi tick
