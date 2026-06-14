@@ -41,13 +41,17 @@ Classic is NOT replaced. Hearthmon ships **two renderers over one shared brain**
       /dragon/fairy float-bob · electric jitter) + facing-flip by `dir`
 - [x] weather (rain/snow/wind/thunder) — shared `WeatherFx` DOM overlay sits above the Pixi canvas
       (`z-index:4` > pixilayer `1`), so it already renders in BOTH skins (true one-brain parity)
+- [x] live GIF playback in Pixi — `ImageDecoder` decodes the Showdown frames onto the mesh's canvas
+      texture (UNDER the deform), restoring native body motion (frame 0 freeze was the gap)
+- [x] in-place reload (no remount) — form/shiny change reloads pet + biome inside the live Application
 - [ ] window scenes / light beam richness to match the Classic biome (Pixi has orb+lantern+beam-lite;
       could deepen later — optional polish, not a feature gap)
 
 **Bridge:** `+page` builds a `$derived` `aliveFx` (switchFx · attacking · atkKind/color/emoji/name/cls ·
 dir · evoActive/Flash · visitor{id,shiny,x,flip} · eating · birthday) → `PixiStage.fx`. The Pixi tick
-reads it live each frame. Ceremony/evolution survive the `{#key dexId}` remount because the form swap
-coincides with a covered moment (ball on-screen / DOM evo-flash).
+reads it live each frame. **No `{#key}`:** the tick watches `dexId`/`shiny` and calls `reloadPet()`
+(decode → rebuild mesh/content-box → swap at same z-index) + `applyBiome()` — switch/evolve/shiny
+change the world without tearing down the WebGL context (the old keyed remount caused a hitch).
 
 ## The locked stack
 
