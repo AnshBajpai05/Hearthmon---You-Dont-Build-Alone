@@ -4,6 +4,24 @@
 
 ---
 
+## 🚀 V2 — Premium Body (branch `v2`, started 2026-06-14)
+> V1 is sealed on `main` (world-class brain, but the body "moves like a website"). V2 mission: **keep the soul, give it a body** — replace the CSS/DOM render+motion layer with a real one. Architecture LOCKED in `docs/V2-PLAN.md`.
+
+- [x] **V2 architecture locked** ✅ 2026-06-14 — `docs/V2-PLAN.md`: PixiJS v8 render core + custom spring + **whole-sprite mesh-warp** (scales to all 1025, no rig) + Showdown sprites as BASE texture + lightweight FSM + shader lighting + Verlet (environment only). **Rejected as foundation:** Rive/Spine (per-character rig, impossible at 1025) and Motion One/Popmotion (DOM clock vs. the Pixi rAF clock). Keep all `lib/*.ts` brain + SQLite + Rust watchers untouched.
+- [x] **Phase 0 — Pixi interaction-parity beachhead** ✅ 2026-06-14 (gated, non-negotiable) — isolated `/pixi` sandbox + `PixiPet.svelte` + `lib/pixi/spring.ts` (critically-damped spring). Pet lives in Pixi with breathing · cursor-lean · idle hop · **weighted drag** (lags cursor + overshoot settle) · petting (rising hearts) · tap-hop. rAF loop pauses when the tab is hidden (always-on hygiene). Proves the riskiest migration (drag/petting/tap hit-testing DOM→Pixi). View: `localhost:1420/pixi`.
+- [x] **Phase 1 — mesh-warp motion language** ✅ 2026-06-14 — `PixiPet` upgraded Sprite→**MeshPlane** (7×8); per-vertex deform each frame: squash/stretch anchored at the feet, jelly belly bulge, decaying jiggle (on land/tap/release), lean shear → "soft toy with weight," no rig. Contact shadow reacts to squash + hop height; tiny idle/drag/pet state seed.
+- [ ] **Phase 2 — environment proof (Moonlit Shore)** — one biome in Pixi: lantern flicker, water-reflection shader, parallax moon, moving water, fireflies, responsive contact shadow. The "holy shit it's beautiful" validation before porting the rest of `biomes.ts`.
+- [ ] **Phase 3 — optional flex** — Rive bespoke rigs for a small curated hero set only.
+
+### README living-card — V2 polish ✅ 2026-06-14
+- [x] **Product-forward redesign** — reframed from "named companion + RPG badges" to the PRODUCT with a curiosity gap: title **Hearthmon**, a live **companion thought** bubble (Layer 1), the **money line** as identity (Layer 2), **narrative aliveness chips** (Layer 3), a soft **CTA "see what it noticed →"** (Layer 4). Content rotates card-to-card. Card 480×172→188.
+- [x] **Composition tuning** — companion sprite +15% (commands the left), intimate thought-bubble with a long soft tail, **commit count removed** from the footer (relationship, not dashboard).
+- [x] **One-artifact fix (atomic updates)** — the README text block (Current Companion/Mood/Status) raced ahead of the camo-cached SVG → mismatch. Fix: the card is now a **single image**; the **species name is baked into the SVG footer**, and the README text block is removed → name + art always refresh **together** (delay OK, desync gone).
+- [x] **`push_card` resilience** — fetches + rebases `--autostash` onto `origin/<branch>` before the amend + `--force-with-lease`, so a README edited on github.com can no longer reject the push as "stale info" (and the remote edit is preserved, not clobbered).
+- [x] **Voice: name-call clips 0.8×** — `playClip` gained a `rate` param; `voiceCry` plays the `<species>.mp3` name calls slower; `go-` throw clips + SFX stay 1×.
+
+---
+
 ## ✅ Already Shipped
 Everything below is **live** in the current build:
 
@@ -337,4 +355,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: 2026-06-13 — soul layer complete; fun layer complete; weather + background system shipped; voice cloning blocked (TTS fallback live).*
+*Last updated: 2026-06-14 — V1 sealed on `main` (soul + fun + coding/training/flow awareness + companion engines, all live). V2 in progress on branch `v2`: architecture locked (`docs/V2-PLAN.md`), Pixi Phase 0 (parity) + Phase 1 (mesh-warp motion) shipped; README living-card redesigned to a single product-forward artifact. Next: Phase 2 — Moonlit Shore in Pixi.*
