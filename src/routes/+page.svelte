@@ -820,8 +820,9 @@
   let tempPlay = $state(false); // dominant trait → subtly biases the wander
   let tempCalm = $state(false);
   let bondTierNow = $state(0); // current bond tier (lantern warmth in the habitat)
-  let room = $state("none"); // habitat toggle: "none" (open sky) or "on"
+  let room = $state("none"); // habitat: "none" | "full" | "sphere" | "square" (shape ≠ backdrop)
   const habitatOn = $derived(room !== "none");
+  const habitatShape = $derived(room === "none" ? "full" : (room as "full" | "sphere" | "square"));
   // the habitat is chosen by the pet's primary type — a Tiny Living Sanctuary
   const currentBiome = $derived(biomeForType(curType));
   // the lantern (identity prop) glows warmer the deeper the bond
@@ -840,10 +841,11 @@
   ];
 
   async function cycleRoom() {
-    room = room === "none" ? "on" : "none";
+    // none → full → sphere → square → none
+    room = room === "none" ? "full" : room === "full" ? "sphere" : room === "sphere" ? "square" : "none";
     await setMeta("room", room);
     poke();
-    say(room === "none" ? "Back to open sky." : `${currentBiome.name}.`, 4500);
+    say(room === "none" ? "Back to open sky." : room === "full" ? `${currentBiome.name}.` : `${currentBiome.name} · ${room}.`, 4500);
   }
   // github handle for Showcase, derived from whatever remote is set
   const ghHandle = $derived.by(() => {
@@ -1806,7 +1808,10 @@
       setFocus(focusMode);
       companionMode = ((await getMeta("companion_mode")) as CompanionMode | null) ?? "default";
       setMode(companionMode);
-      room = (await getMeta("room")) ?? "none"; // cozy-room theme
+      {
+        const r = await getMeta("room"); // legacy "on" → "full"
+        room = r === "on" ? "full" : r === "full" || r === "sphere" || r === "square" ? r : "none";
+      }
       trainAware = (await getMeta("train_aware")) !== "0"; // training awareness (default on)
       renderMode = (await getMeta("render_mode")) === "alive" ? "alive" : "classic"; // renderer choice
       flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
@@ -2901,7 +2906,15 @@
     <div class="stage" class:pixihide={renderMode === "alive"}>
       {#if habitatOn}
         <!-- Type Habitat: a Tiny Living Sanctuary chosen by the pet's type -->
-        <div class="roombg" style="opacity: {0.96 * widgetOpacity}" aria-hidden="true">
+        <div
+          class="roombg"
+          style="opacity: {0.96 * widgetOpacity}; border-radius: {habitatShape === 'sphere'
+            ? '50%'
+            : habitatShape === 'square'
+              ? '10px'
+              : '20px'}"
+          aria-hidden="true"
+        >
           <div class="r-wall" style="background: linear-gradient(180deg, {currentBiome.wall[0]}, {currentBiome.wall[1]})"></div>
           <!-- the window shows the biome's outside world (shape varies per biome) -->
           <div class="r-window w-{currentBiome.window}" class:moonlit={isNight} style="--lite: {currentBiome.light}">
@@ -3061,6 +3074,7 @@
             {petState}
             calm={comfortMode || deepWork()}
             habitat={habitatOn}
+            {habitatShape}
             {bgStyle}
             opacity={widgetOpacity}
             onTap={onPetTap}

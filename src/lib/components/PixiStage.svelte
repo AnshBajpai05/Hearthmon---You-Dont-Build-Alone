@@ -19,6 +19,7 @@
     petState?: string; // brain bridge: "idle" | "sleeping" | "happy" | …
     calm?: boolean; // comfort / deep-flow → settle (no zoomies)
     habitat?: boolean; // biome scene on/off (Classic's habitat toggle)
+    habitatShape?: "full" | "sphere" | "square"; // biome SHAPE — independent of backdrop
     bgStyle?: "orb" | "square" | "ground" | "off"; // pet backdrop (Classic's 🌿 cycle)
     opacity?: number; // widget transparency slider (--wo)
     onTap?: () => void; // bridge to the shared brain (parity with Classic)
@@ -32,6 +33,7 @@
     petState = "idle",
     calm = false,
     habitat = false,
+    habitatShape = "full",
     bgStyle = "orb",
     opacity = 1,
     onTap,
@@ -83,7 +85,7 @@
       const groundY = () => {
         const w = W();
         const h = H();
-        if (habitat && (bgStyle === "orb" || bgStyle === "square")) {
+        if (habitat && habitatShape !== "full") {
           const gR = Math.min(w, h) * 0.42;
           return h * 0.46 - gR + gR * 2 * 0.6; // globe horizon
         }
@@ -327,8 +329,8 @@
         const w = W();
         const h = H();
 
-        // ── viewport: full widget, OR a globe centered in the widget ───────────
-        const globe = habitat && (bgStyle === "orb" || bgStyle === "square");
+        // ── viewport: full widget, OR a globe (habitat SHAPE, not the backdrop) ──
+        const globe = habitat && habitatShape !== "full";
         const gR = Math.min(w, h) * 0.42;
         const gcx = w / 2;
         const gcy = h * 0.46;
@@ -345,21 +347,18 @@
         scene.visible = habitat;
         scene.alpha = 0.9;
 
-        // backdrop: the globe shell (habitat-in-sphere) or a small pad around the pet
-        const bx = globe ? gcx : posX.value;
-        const by = globe ? gcy : posY.value - size * 0.3;
-        const br = globe ? gR : size * 0.52;
-        drawPlatform(br);
+        // backdrop: ALWAYS the pet's pad (independent of the habitat globe)
+        drawPlatform(size * 0.52);
         platform.visible = bgStyle !== "off";
-        platform.x = bgStyle === "ground" ? posX.value : bx;
-        platform.y = bgStyle === "ground" ? groundY() + 4 : by;
+        platform.x = posX.value;
+        platform.y = bgStyle === "ground" ? groundY() + 4 : posY.value - size * 0.3;
         petShadow.visible = bgStyle !== "off" || habitat;
 
-        // clip the biome to the backdrop shape — full vista INSIDE the globe
+        // clip the biome to the habitat SHAPE — full vista INSIDE the globe
         biomeMask.clear();
         if (globe) {
           scene.mask = biomeMask;
-          if (bgStyle === "square") biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
+          if (habitatShape === "square") biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
           else biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
         } else {
           scene.mask = null;
