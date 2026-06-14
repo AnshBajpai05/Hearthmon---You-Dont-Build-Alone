@@ -3032,7 +3032,7 @@
     {#if renderMode === "pixi"}
       <div class="pixilayer">
         {#key `${dexId}-${isShiny}`}
-          <PixiStage {dexId} shiny={isShiny} size={imgSize} />
+          <PixiStage {dexId} shiny={isShiny} size={imgSize} {petState} calm={comfortMode || deepWork()} />
         {/key}
       </div>
     {/if}

@@ -16,8 +16,10 @@
     dexId: number;
     shiny?: boolean;
     size?: number;
+    petState?: string; // brain bridge: "idle" | "sleeping" | "happy" | …
+    calm?: boolean; // comfort / deep-flow → settle (no zoomies)
   }
-  let { dexId, shiny = false, size = 230 }: Props = $props();
+  let { dexId, shiny = false, size = 230, petState = "idle", calm = false }: Props = $props();
 
   let host: HTMLDivElement;
   let app: Application | null = null;
@@ -133,9 +135,12 @@
       const petShadow = new Graphics();
       petShadow.ellipse(0, 0, pw * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
       const hearts = new Container();
+      const zzz = new Text({ text: "z  z  z", style: { fill: 0xcfc6e8, fontSize: 13 } });
+      zzz.anchor.set(0.5);
+      zzz.visible = false;
 
       // order: sky → orb → reflection → waves → lantern → shadow → pet → particles → hearts
-      a.stage.addChild(back, orb, reflect, waves, lantern, petShadow, mesh, flies, hearts);
+      a.stage.addChild(back, orb, reflect, waves, lantern, petShadow, mesh, flies, hearts, zzz);
 
       // ════ MOTION STATE ════
       const posX = new Spring(W() / 2, 120, 16);
@@ -150,6 +155,7 @@
       let petFrames = 0;
       let airborne = false;
       let nextHop = 3 + Math.random() * 5;
+      let prevState = petState; // brain bridge: detect happy/sleep transitions
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -299,7 +305,16 @@
         lantern.scale.set(1 + Math.sin(t * 7) * 0.015);
 
         // ---- pet ----
-        if (mode === "idle") {
+        const sleeping = petState === "sleeping";
+        // brain bridge: a fresh "happy" → a joyful hop
+        if (petState === "happy" && prevState !== "happy") {
+          hop(330);
+          squash.nudge(2);
+          jiggle = Math.min(14, jiggle + 5);
+        }
+        prevState = petState;
+        // idle hops — but not while sleeping or settled (comfort/flow)
+        if (mode === "idle" && !sleeping && !calm) {
           nextHop -= dt;
           if (nextHop <= 0) {
             nextHop = 5 + Math.random() * 6;
@@ -322,7 +337,10 @@
           }
         }
         const sq = squash.value;
-        const breathe = 0.022 * Math.sin(t * 1.7) + (petFrames > 0 ? 0.02 * Math.sin(t * 26) : 0);
+        // sleeping → slower, deeper breath
+        const breathe =
+          (sleeping ? 0.032 * Math.sin(t * 1.0) : 0.022 * Math.sin(t * 1.7)) +
+          (petFrames > 0 ? 0.02 * Math.sin(t * 26) : 0);
         const shear = lean.value * pw * 0.22;
         for (let i = 0; i < baseV.length; i += 2) {
           const bx = baseV[i];
@@ -337,6 +355,17 @@
         posBuf.update();
         mesh.x = posX.value;
         mesh.y = posY.value;
+        mesh.alpha = sleeping ? 0.84 : 1; // dim a touch while asleep
+
+        // zzz while sleeping
+        if (sleeping) {
+          zzz.visible = true;
+          zzz.x = posX.value + size * 0.24;
+          zzz.y = posY.value - size * 0.72 + Math.sin(t * 2) * 3;
+          zzz.alpha = 0.45 + 0.45 * Math.sin(t * 1.4);
+        } else {
+          zzz.visible = false;
+        }
 
         const lift = Math.max(0, groundY() - posY.value);
         petShadow.x = posX.value;
