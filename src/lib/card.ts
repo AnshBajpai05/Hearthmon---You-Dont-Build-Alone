@@ -280,7 +280,7 @@ export function buildCard(s: CardState): string {
         74%     { transform: translateX(0)    scale(1);    opacity: 0.32; }
       }
       /* a heart drifts up every ~12s — CSS-only so it animates on GitHub (README
-         cards render as <img>, which has no hover/pointer events) */
+         cards render as images, which have no hover/pointer events) */
       .heart {
         opacity: 0;
         transform-box: fill-box;
