@@ -16,6 +16,7 @@ export interface CardState {
   spriteFw?: number; // a single frame's width in the strip
   spriteFh?: number; // a single frame's height in the strip
   spriteDur?: number; // seconds for one full loop (matches the source GIF timing)
+  type?: string; // the pet's primary type → picks ONE ambient effect for the card
   title?: string; // defaults to "Hearthmon"
 }
 
@@ -30,11 +31,90 @@ function wrap2(text: string, max = 34): [string, string] {
   return [text.slice(0, cut).trim(), text.slice(cut).trim()];
 }
 
+/** ONE ambient effect for the card, chosen by the pet's type. Pure SVG + CSS so it
+ *  animates inside an <img>-loaded SVG on GitHub (no scripts, no external refs). */
+function petFieldFx(type: string, W: number, H: number): { css: string; body: string } {
+  const R = (a: number, b: number) => +(a + Math.random() * (b - a)).toFixed(1);
+  // N rising/scattered motes around the pet (x 34–126), parametric
+  const motes = (cls: string, n: number, fill: string, y0: number, y1: number, r0: number, r1: number, dur: number) =>
+    Array.from({ length: n }, (_, i) =>
+      `<circle class="${cls}" cx="${R(34, 126)}" cy="${R(y0, y1)}" r="${R(r0, r1)}" fill="${fill}" style="animation-delay:${(i * dur / n).toFixed(2)}s"/>`
+    ).join("");
+
+  switch (type) {
+    case "electric": {
+      let d = "M78,32"; let yy = 32; let xx = 78;
+      for (let i = 0; i < 5; i++) { yy += R(20, 30); xx = 78 + R(-24, 24); d += ` L${xx.toFixed(0)},${yy.toFixed(0)}`; }
+      return {
+        css: `.ltflash{opacity:0;animation:ltFlash 4.6s ease-out infinite}
+      .ltbolt{opacity:0;fill:none;stroke-linecap:round;stroke-linejoin:round;animation:ltStrike 4.6s ease-out infinite}
+      .ltglow{filter:blur(1.6px)}
+      @keyframes ltStrike{0%,100%{opacity:0}1%{opacity:1}3%{opacity:.25}4.5%{opacity:.95}6.5%{opacity:0}}
+      @keyframes ltFlash{0%,100%{opacity:0}1.5%{opacity:.5}6.5%{opacity:0}}`,
+        body: `<rect class="ltflash" x="0" y="0" width="${W}" height="${H}" rx="16" fill="#d7ecff"/>
+      <path class="ltbolt ltglow" d="${d}" stroke="#bfe0ff" stroke-width="5"/>
+      <path class="ltbolt" d="${d}" stroke="#ffffff" stroke-width="1.7"/>`
+      };
+    }
+    case "fire":
+      return {
+        css: `.ember{opacity:0;transform-box:fill-box;animation:emberRise 3.2s ease-in infinite}
+      @keyframes emberRise{0%{opacity:0;transform:translateY(0) scale(1)}18%{opacity:.9}100%{opacity:0;transform:translateY(-90px) scale(.3)}}`,
+        body: motes("ember", 8, "#ffb061", 146, 152, 1.2, 2.6, 3.2)
+      };
+    case "water":
+      return {
+        css: `.bub2{opacity:0;fill:none;stroke:#9fdcff;stroke-width:1;transform-box:fill-box;animation:bubRise 5.5s ease-in infinite}
+      @keyframes bubRise{0%{opacity:0;transform:translateY(0)}22%{opacity:.7}100%{opacity:0;transform:translateY(-94px)}}`,
+        body: Array.from({ length: 6 }, (_, i) => `<circle class="bub2" cx="${R(40, 122)}" cy="150" r="${R(1.6, 3.2)}" style="animation-delay:${(i * 0.9).toFixed(2)}s"/>`).join("")
+      };
+    case "grass": case "bug":
+      return {
+        css: `.pollen{opacity:.7;transform-box:fill-box;animation:pollenDrift 9s ease-in-out infinite alternate}
+      @keyframes pollenDrift{0%{transform:translate(0,0)}50%{transform:translate(9px,-7px)}100%{transform:translate(-6px,-13px)}}`,
+        body: motes("pollen", 9, "#bff09a", 92, 144, 1, 2.1, 9)
+      };
+    case "ice":
+      return {
+        css: `.flake{opacity:0;transform-box:fill-box;animation:snowFall 7s linear infinite}
+      @keyframes snowFall{0%{opacity:0;transform:translateY(-14px) translateX(0)}12%{opacity:.9}88%{opacity:.9}100%{opacity:0;transform:translateY(120px) translateX(12px)}}`,
+        body: Array.from({ length: 9 }, (_, i) => `<circle class="flake" cx="${R(30, 128)}" cy="${R(30, 46)}" r="${R(1, 2)}" fill="#eaf6ff" style="animation-delay:${(i * 0.8).toFixed(2)}s"/>`).join("")
+      };
+    case "psychic": case "fairy": {
+      const orbit = [[44, 96], [112, 96], [78, 64], [78, 126]].map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="${i % 2 ? 2 : 2.6}" fill="#d9c2ff"/>`).join("");
+      return {
+        css: `.psy{transform-box:fill-box;transform-origin:center;animation:psySpin 16s linear infinite}
+      .pbloom{opacity:.4;transform-box:fill-box;transform-origin:center;animation:glowPulse 4s ease-in-out infinite}
+      @keyframes psySpin{to{transform:rotate(360deg)}}`,
+        body: `<ellipse class="pbloom" cx="78" cy="96" rx="46" ry="44" fill="url(#sprGlow)"/><g class="psy">${orbit}</g>`
+      };
+    }
+    case "ghost": case "dark":
+      return {
+        css: `.wisp{opacity:0;transform-box:fill-box;animation:wispDrift 6s ease-in-out infinite}
+      .geye{animation:gblink 5s ease-in-out infinite}
+      @keyframes wispDrift{0%{opacity:0;transform:translateY(0)}30%{opacity:.5}100%{opacity:0;transform:translateY(-42px) translateX(7px)}}
+      @keyframes gblink{0%,40%,46%,100%{opacity:.55}43%{opacity:.05}72%{opacity:.55}}`,
+        body: Array.from({ length: 4 }, (_, i) => `<ellipse class="wisp" cx="${R(44, 120)}" cy="${R(120, 148)}" rx="7" ry="4" fill="#9a8fd6" style="animation-delay:${(i * 1.2).toFixed(2)}s"/>`).join("")
+          + `<circle class="geye" cx="70" cy="84" r="2.4" fill="#ff5a5a"/><circle class="geye" cx="84" cy="84" r="2.4" fill="#ff5a5a"/>`
+      };
+    case "dragon": case "flying":
+      return {
+        css: `.wind{opacity:0;transform-box:fill-box;animation:windPass 5s linear infinite}
+      @keyframes windPass{0%{opacity:0;transform:translateX(-34px)}25%{opacity:.4}75%{opacity:.4}100%{opacity:0;transform:translateX(46px)}}`,
+        body: Array.from({ length: 4 }, (_, i) => `<rect class="wind" x="34" y="${62 + i * 22}" width="${R(34, 60)}" height="1.4" rx="0.7" fill="#cdbcf0" style="animation-delay:${(i * 0.7).toFixed(2)}s"/>`).join("")
+      };
+    default:
+      return { css: "", body: "" }; // normal/ground/rock/steel/fighting/poison → base sparkles
+  }
+}
+
 /** Build the animated README status card as an SVG string. */
 export function buildCard(s: CardState): string {
   const W = 480;
   const H = 188;
   const title = s.title ?? "Hearthmon";
+  const field = petFieldFx(s.type ?? "normal", W, H); // one type-based ambient effect
 
   // Night mode shifts palette toward cooler purples; day is warmer indigo
   const bg1       = s.night ? "#0d0b18" : "#1a1530";
@@ -160,10 +240,11 @@ export function buildCard(s: CardState): string {
        * ── SPRITE MOVEMENT SYSTEM ───────────────────────────────────────────
        */
 
+      /* gentle, BOUNDED idle: a small drift left/right + a little hop — never leaves the card */
       .monWrap {
         transform-box: fill-box;
         transform-origin: 50% 100%;
-        animation: monMove 18s cubic-bezier(0.45,0,0.55,1) infinite;
+        animation: monSway 11s ease-in-out infinite;
       }
 
       .mon {
@@ -176,7 +257,36 @@ export function buildCard(s: CardState): string {
       .shadow {
         transform-box: fill-box;
         transform-origin: 50% 50%;
-        animation: shadowMove 18s cubic-bezier(0.45,0,0.55,1) infinite;
+        animation: shadowSway 11s ease-in-out infinite;
+      }
+
+      @keyframes monSway {
+        0%   { transform: translate(0,0)       rotate(0deg); }
+        14%  { transform: translate(-4px,0)    rotate(-1.2deg); }
+        26%  { transform: translate(-3px,-7px) rotate(0deg); }
+        34%  { transform: translate(0,0)       rotate(0deg); }
+        54%  { transform: translate(4px,0)     rotate(1.2deg); }
+        66%  { transform: translate(3px,-7px)  rotate(0deg); }
+        74%  { transform: translate(0,0)       rotate(0deg); }
+        100% { transform: translate(0,0)       rotate(0deg); }
+      }
+      @keyframes shadowSway {
+        0%,100% { transform: translateX(0)    scale(1);    opacity: 0.32; }
+        14%     { transform: translateX(-4px) scale(1);    opacity: 0.32; }
+        26%     { transform: translateX(-3px) scale(0.78); opacity: 0.2; }
+        34%     { transform: translateX(0)    scale(1);    opacity: 0.32; }
+        54%     { transform: translateX(4px)  scale(1);    opacity: 0.32; }
+        66%     { transform: translateX(3px)  scale(0.78); opacity: 0.2; }
+        74%     { transform: translateX(0)    scale(1);    opacity: 0.32; }
+      }
+      /* heart on hover — only fires when the SVG is interactive (opened directly /
+         embedded as <object>); GitHub renders the README card as <img> (no hover). */
+      .heart { opacity: 0; transform-box: fill-box; transform-origin: center; }
+      svg:hover .heart { animation: heartPop 1.1s ease-out; }
+      @keyframes heartPop {
+        0%   { opacity: 0; transform: translateY(0) scale(0.4); }
+        25%  { opacity: 1; transform: translateY(-8px) scale(1.1); }
+        100% { opacity: 0; transform: translateY(-34px) scale(0.8); }
       }
 
       .sprGlow {
@@ -196,71 +306,10 @@ export function buildCard(s: CardState): string {
       .borderShimmer { animation: borderPulse 4s ease-in-out infinite; }
       .nameShimmer { animation: namePulse 6s ease-in-out infinite; }
 
-      @keyframes monMove {
-        0%   { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        5%   { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(0deg); }
-        8%   { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        10%  { transform: translateY(1.5px)  scaleX(1.03)  scaleY(0.96)  rotate(0deg); }
-        13%  { transform: translateY(-11px)  scaleX(0.94)  scaleY(1.08)  rotate(-1deg); }
-        15%  { transform: translateY(-5px)   scaleX(0.96)  scaleY(1.05)  rotate(-0.5deg); }
-        16%  { transform: translateY(0)      scaleX(1.13)  scaleY(0.89)  rotate(0deg); }
-        18%  { transform: translateY(-4.5px) scaleX(0.97)  scaleY(1.04)  rotate(0.5deg); }
-        20%  { transform: translateY(0)      scaleX(1.05)  scaleY(0.96)  rotate(0deg); }
-        21%  { transform: translateY(-1.5px) scaleX(0.99)  scaleY(1.015) rotate(0deg); }
-        23%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        28%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(-3deg); }
-        34%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(3deg); }
-        38%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(-1deg); }
-        42%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        50%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        51%  { transform: translateY(1px)    scaleX(1.02)  scaleY(0.975) rotate(0deg); }
-        52%  { transform: translateY(-5.5px) scaleX(0.965) scaleY(1.05)  rotate(0.5deg); }
-        53%  { transform: translateY(0)      scaleX(1.075) scaleY(0.93)  rotate(0deg); }
-        55%  { transform: translateY(-1px)   scaleX(0.995) scaleY(1.01)  rotate(0deg); }
-        57%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        60%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(-2.5deg); }
-        62%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(2.5deg); }
-        64%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(-2deg); }
-        66%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(2deg); }
-        68%  { transform: translateY(-0.5px) scaleX(1)     scaleY(1)     rotate(-1deg); }
-        70%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        74%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        84%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        85%  { transform: translateY(1.5px)  scaleX(1.03)  scaleY(0.96)  rotate(0deg); }
-        87%  { transform: translateY(-11px)  scaleX(0.94)  scaleY(1.08)  rotate(1deg); }
-        88%  { transform: translateY(-4px)   scaleX(0.96)  scaleY(1.05)  rotate(0.5deg); }
-        89%  { transform: translateY(0)      scaleX(1.13)  scaleY(0.89)  rotate(0deg); }
-        90%  { transform: translateY(-3.5px) scaleX(0.975) scaleY(1.03)  rotate(-0.5deg); }
-        91%  { transform: translateY(0)      scaleX(1.04)  scaleY(0.97)  rotate(0deg); }
-        93%  { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-        100% { transform: translateY(0)      scaleX(1)     scaleY(1)     rotate(0deg); }
-      }
-
       @keyframes monBreathe {
         0%,100% { transform: scaleX(1)    scaleY(1)    translateY(0);    }
         40%     { transform: scaleX(0.97) scaleY(1.04) translateY(-2px); }
         70%     { transform: scaleX(1.01) scaleY(0.99) translateY(0);    }
-      }
-
-      @keyframes shadowMove {
-        0%   { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
-        10%  { transform: scaleX(1.025) scaleY(1.025); opacity: 0.35; }
-        13%  { transform: scaleX(0.775) scaleY(0.7);   opacity: 0.22; }
-        15%  { transform: scaleX(0.85)  scaleY(0.775); opacity: 0.25; }
-        16%  { transform: scaleX(1.2)   scaleY(1.175); opacity: 0.435; }
-        18%  { transform: scaleX(0.9)   scaleY(0.825); opacity: 0.26; }
-        20%  { transform: scaleX(1.075) scaleY(1.06);  opacity: 0.37; }
-        23%  { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
-        51%  { transform: scaleX(1.015) scaleY(1.015); opacity: 0.34; }
-        52%  { transform: scaleX(0.85)  scaleY(0.775); opacity: 0.24; }
-        53%  { transform: scaleX(1.1)   scaleY(1.075); opacity: 0.40; }
-        57%  { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
-        85%  { transform: scaleX(1.025) scaleY(1.025); opacity: 0.35; }
-        87%  { transform: scaleX(0.775) scaleY(0.7);   opacity: 0.22; }
-        89%  { transform: scaleX(1.2)   scaleY(1.175); opacity: 0.435; }
-        91%  { transform: scaleX(1.04)  scaleY(1.03);  opacity: 0.35; }
-        93%  { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
-        100% { transform: scaleX(1)     scaleY(1);     opacity: 0.32; }
       }
 
       @keyframes glowPulse {
@@ -316,6 +365,7 @@ export function buildCard(s: CardState): string {
         50%     { fill: #ffffff; text-shadow: 0 0 6px rgba(255,255,255,0.4); }
       }
       ${spriteAnimCss}
+      ${field.css}
     </style>
   </defs>
 
@@ -339,12 +389,18 @@ export function buildCard(s: CardState): string {
   <!-- Sparkle particles -->
   ${particleSvg}
 
+  <!-- Type-based ambient effect (lightning / fire / rays / …) — behind the pet -->
+  ${field.body}
+
   <!-- Sprite (bigger, grounded near the shadow) -->
   <g transform="translate(23,42)">
     <g class="monWrap">
       ${innerSprite}
     </g>
   </g>
+
+  <!-- Affection heart (on hover, where supported) -->
+  <text class="heart" x="78" y="88" font-size="20" text-anchor="middle" fill="#ff7aa8">❤</text>
 
   <!-- Current partner, labelled right under the companion -->
   <text x="78" y="170" font-size="10.5" text-anchor="middle" fill="${textDim}">currently beside you · <tspan fill="${accent}" font-weight="700">${esc(s.partner)}</tspan></text>

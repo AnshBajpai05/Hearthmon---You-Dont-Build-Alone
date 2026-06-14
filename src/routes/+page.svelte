@@ -1687,7 +1687,8 @@
       spriteFrames: sheet?.frames,
       spriteFw: sheet?.fw,
       spriteFh: sheet?.fh,
-      spriteDur: sheet?.dur
+      spriteDur: sheet?.dur,
+      type: curType
     });
     if (watchingRepo) {
       const path = `${watchingRepo.replace(/[\\/]+$/, "")}/assets/hearthmon-status.svg`;
