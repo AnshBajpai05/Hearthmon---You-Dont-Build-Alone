@@ -179,10 +179,15 @@
         pkind = biome.particle;
         ambKind =
           petType === "electric" ? "lightning"
-          : petType === "fire" ? "flare"
-          : ["grass", "bug", "water", "ice", "flying", "psychic", "fairy", "dragon", "ghost", "poison"].includes(petType)
-            ? "rays"
-            : "none";
+          : petType === "fire" ? "hearth"
+          : ["water", "ice", "fairy"].includes(petType) ? "aurora"
+          : ["psychic", "dragon"].includes(petType) ? "constellation"
+          : ["ghost", "dark", "poison"].includes(petType) ? "whispers"
+          : ["grass", "bug"].includes(petType) ? "canopy"
+          : ["flying"].includes(petType) ? "current"
+          : ["rock", "ground"].includes(petType) ? "earth"
+          : ["steel"].includes(petType) ? "industrial"
+          : "warmth"; // normal, fighting
         vpSig = ""; // force gradient repaint
         
         flies.removeChildren();
@@ -412,9 +417,11 @@
       const ambient = new Graphics();
       const flash = new Graphics(); // lightning sky-flash
       const rareG = new Graphics(); // rare-event shapes (normal blend → silhouettes + glows)
+      const hazeG = new Graphics(); // atmospheric depth layer
+      const vignetteG = new Graphics(); // soft globe boundary overlay
       ambient.blendMode = "add";
       flash.blendMode = "add";
-      scene.addChild(back, orb, reflect, waves, lantern, flies, ambient, flash, rareG, biomeMask);
+      scene.addChild(back, orb, reflect, waves, hazeG, lantern, flies, ambient, flash, rareG, biomeMask);
 
       // a jagged lightning polyline: wide soft glow pass + a bright thin core
       function strokeBolt(pts: number[], alpha: number) {
@@ -538,9 +545,9 @@
           rareG.circle(sx, sy, 2).fill({ color: 0xffffff, alpha: env });
         }
       }
-      // order: scene → backdrop → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
+      // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, platform, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, platform, vignetteG, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
       );
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
@@ -613,6 +620,8 @@
       const lean = new Spring(0, 90, 12);
       const squash = new Spring(0, 220, 16);
       let jiggle = 0;
+      let petEnergy = 1; // smoothed environmental coupling parameter
+      let hopBurstT = 0; // tiny burst when jumping
       let mode: "idle" | "drag" | "pet" = "idle";
       let downAt: { x: number; y: number; t: number } | null = null;
       let lastPt: { x: number; y: number } | null = null;
@@ -813,8 +822,8 @@
         scene.visible = habitat;
         scene.alpha = 0.9;
 
-        // backdrop: ALWAYS the pet's pad (independent of the habitat globe)
-        platform.visible = bgStyle !== "off";
+        // backdrop: pet's pad (hidden when the full habitat is active to avoid double-bubble)
+        platform.visible = bgStyle !== "off" && !habitat;
         if (bgStyle === "ground") {
           drawPlatform(petPx * 0.6);
           platform.x = posX.value;
@@ -830,13 +839,24 @@
 
         // clip the biome to the habitat SHAPE — full vista INSIDE the globe
         biomeMask.clear();
+        vignetteG.clear();
         if (globe) {
           scene.mask = biomeMask;
-          if (habitatShape === "square") biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
-          else biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
+          if (habitatShape === "square") {
+            biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
+            for (let i = 1; i <= 6; i++) {
+              vignetteG.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: 0x0f0b14, alpha: 0.18 - i * 0.025, width: i * 8, alignment: 1 });
+            }
+          } else {
+            biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
+            for (let i = 1; i <= 6; i++) {
+              vignetteG.circle(gcx, gcy, gR).stroke({ color: 0x0f0b14, alpha: 0.18 - i * 0.025, width: i * 8, alignment: 1 });
+            }
+          }
         } else {
           scene.mask = null;
         }
+        vignetteG.visible = globe;
 
         // sky + ground gradient inside the viewport (repaint on change)
         const sig = `${vpx | 0},${vpy | 0},${vpw | 0},${vph | 0}`;
@@ -908,13 +928,29 @@
         lantern.alpha = 0.82 + Math.sin(t * 9) * 0.05 + Math.sin(t * 23) * 0.03;
         lantern.scale.set((globe ? 0.7 : 1) * (1 + Math.sin(t * 7) * 0.015));
 
-        // ── type-driven premium ambient (electric/fire/radiant) within the viewport ──
+        // ── type-driven premium ambient within the viewport ──
+        // ── environmental coupling & inertia ──
+        // smooth target energy: sleep=0.2, idle=1, happy/excited=1.8+
+        const targetEnergy = (sleeping ? 0.2 : 1) + (petState === "happy" ? 0.8 : 0) + Math.min(1.5, jiggle * 0.15 + Math.abs(squash.value) * 0.05);
+        if (targetEnergy - petEnergy > 0.5) hopBurstT = 0.5; // Trigger tiny response burst
+        hopBurstT = Math.max(0, hopBurstT - dt);
+        petEnergy += (targetEnergy - petEnergy) * (dt / 0.4); // momentum / delayed response
+        // normalized breathing sine (-1 to +1) that strictly matches the pet's lung speed
+        const petBreath = Math.sin(t * (sleeping ? 1.0 : 1.7));
+
         ambient.clear();
         flash.clear();
         rareG.clear();
-        petLight *= Math.exp(-dt / 0.13); // illumination from a strike fades fast
+        hazeG.clear();
+        petLight *= Math.exp(-dt / 0.13); // illumination from a strike/beat fades fast
+        
+        // Music pulse + Pet influence (breathing and energy)
+        const pulse = audioEnergy * 0.8 + (beatT > 0 ? (beatT / 0.32) * 0.4 : 0);
+        const envBreath = (petBreath * 0.5 + 0.5) * petEnergy; // 0 to 1, scaled by energy
+
         if (ambKind === "lightning") {
-          // a music drop forces a strike right now
+          // Energetic chaos — the only explosive music-sync effect
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x001133, alpha: 0.05 });
           if (beatStrike && strikeT <= 0) {
             beatStrike = false;
             strikeT = 0.4;
@@ -929,50 +965,184 @@
             if (life > 0.55) {
               strokeBolt(boltPts, 0.6 + 0.4 * Math.random());
               strokeBolt(boltBranch, 0.3);
-              petLight = Math.max(petLight, life * 0.7); // the bolt lights the pet
+              petLight = Math.max(petLight, life * 0.7); // bolt illuminates the pet
             }
           } else {
-            boltT -= dt * (1 + audioEnergy * 1.5); // louder music → the storm intensifies
+            boltT -= dt * (1 + audioEnergy * 1.5);
             if (boltT <= 0) {
               boltT = 4 + Math.random() * 7;
               strikeT = 0.4;
               const x0 = vpx + vpw * (0.25 + Math.random() * 0.5);
               boltPts = genBolt(x0, vpy, vpy + (HZ - vpy) * 0.95, vpw * 0.07);
-              const mi = 6; // branch off a mid node
+              const mi = 6;
               boltBranch = genBolt(boltPts[mi], boltPts[mi + 1], boltPts[mi + 1] + (HZ - vpy) * 0.4, vpw * 0.06);
             }
           }
-        } else if (ambKind === "flare") {
-          for (const f of flames) {
-            const fl = 0.5 + 0.35 * Math.sin(t * f.sp * 3 + f.ph) + 0.2 * Math.sin(t * f.sp * 7 + f.ph);
-            const fx2 = vpx + vpw * (0.32 + f.x * 0.36);
-            const fhg = (HZ - vpy) * 0.16 * f.h * (0.7 + 0.5 * fl);
-            const fwd = vpw * 0.028 * (0.8 + 0.3 * fl);
-            const tip = fx2 + Math.sin(t * 4 + f.ph) * fwd * 0.6;
+        } else if (ambKind === "hearth") {
+          // Hearth-fire energy: warm, alive, responds to pet breath and movement
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xff6600, alpha: 0.08 * petEnergy });
+          for (let i = 0; i < 5; i++) {
+            // Micro-variation: dark pockets and slight density changes
+            const darkPocket = Math.sin(t * 0.6 + i * 2) > 0.8 ? 0.4 : 1.0;
+            const fl = (0.5 + 0.35 * Math.sin(t * (0.8 + i*0.2) * 3 + i) + 0.2 * Math.sin(t * (0.8 + i*0.2) * 7 + i)) * darkPocket;
+            const fx2 = vpx + vpw * (0.2 + i * 0.15);
+            const fhg = (HZ - vpy) * 0.12 * (0.6 + 0.4 * fl + pulse * 0.25) * (0.5 + 0.5 * petEnergy) * (1 + envBreath * 0.3);
+            const fwd = vpw * 0.04 * (0.8 + 0.3 * fl + pulse * 0.1) * petEnergy;
+            const tip = fx2 + Math.sin(t * 3 + i) * fwd * 0.5;
             ambient.moveTo(fx2 - fwd, HZ);
             ambient.quadraticCurveTo(fx2 - fwd * 0.5, HZ - fhg * 0.6, tip, HZ - fhg);
             ambient.quadraticCurveTo(fx2 + fwd * 0.5, HZ - fhg * 0.6, fx2 + fwd, HZ);
-            ambient.fill({ color: 0xff7a2a, alpha: 0.16 + 0.12 * fl });
-            ambient.moveTo(fx2 - fwd * 0.45, HZ);
-            ambient.quadraticCurveTo(fx2, HZ - fhg * 0.72, tip, HZ - fhg * 0.85);
-            ambient.quadraticCurveTo(fx2 + fwd * 0.45, HZ - fhg * 0.72, fx2 + fwd * 0.45, HZ);
-            ambient.fill({ color: 0xffd27a, alpha: 0.2 + 0.14 * fl });
+            ambient.fill({ color: 0xff7a2a, alpha: Math.min(1, (0.15 + 0.1 * fl + pulse * 0.1) * petEnergy) });
           }
-        } else if (ambKind === "rays") {
-          const ox = orb.x, oy = orb.y;
+          // Floor warmth pulse radiating out with breath
+          ambient.ellipse(posX.value, groundY() + 4, pw * 0.6 + envBreath * pw * 0.2, pw * 0.15).fill({ color: 0xff4400, alpha: 0.15 * envBreath * petEnergy });
+          // Tiny spark burst on hop
+          if (hopBurstT > 0) {
+            const hbp = hopBurstT / 0.5;
+            for (let i = 0; i < 6; i++) {
+               const sx = posX.value + Math.sin(i * 2 + t * 4) * pw * 0.5 * (1 - hbp);
+               const sy = groundY() - (1 - hbp) * pw * 0.4 - Math.abs(Math.cos(i)) * pw * 0.2;
+               ambient.circle(sx, sy, 1.5 + hbp).fill({ color: 0xffcc44, alpha: hbp * 0.8 });
+            }
+          }
+          // Room reaction: campfire breathing with pet + beat
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xff8c42, alpha: 0.01 + pulse * 0.04 + envBreath * 0.02 });
+          petLight = Math.max(petLight, pulse * 0.18 + envBreath * 0.05);
+        } else if (ambKind === "aurora") {
+          // Gentle, reflective, dreamlike
+          const baseColor = petType === "fairy" ? 0xf0a8d8 : petType === "ice" ? 0x9fe8f0 : 0x58a8f0;
+          const altColor  = petType === "fairy" ? 0xffd1f0 : petType === "ice" ? 0xd1f7ff : 0x8ce0ff;
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: baseColor, alpha: 0.06 });
+          for (let i = 0; i < 4; i++) {
+            const sway = Math.sin(t * 0.3 + i * 1.5) * vpw * 0.15;
+            const cx = vpx + vpw * (0.2 + i * 0.2) + sway;
+            ambient.moveTo(cx - vpw * 0.1, vpy);
+            ambient.bezierCurveTo(cx + vpw * 0.1, vpy + vph * 0.3, cx - vpw * 0.1, vpy + vph * 0.6, cx + vpw * 0.1, HZ);
+            ambient.lineTo(cx - vpw * 0.05, HZ);
+            ambient.bezierCurveTo(cx - vpw * 0.25, vpy + vph * 0.6, cx + vpw * 0.05, vpy + vph * 0.3, cx - vpw * 0.25, vpy);
+            ambient.fill({ color: i % 2 === 0 ? baseColor : altColor, alpha: Math.min(1, (0.04 + 0.02 * Math.sin(t * 0.5 + i) + pulse * 0.03) * (0.8 + envBreath * 0.4) * petEnergy) });
+          }
+          // Room reaction: color wash synced with breath
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: baseColor, alpha: 0.02 + pulse * 0.03 + envBreath * 0.02 });
+          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.06);
+        } else if (ambKind === "constellation") {
+          // Ancient, subtle rotating cosmic geometry
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x0a0a1a, alpha: 0.1 });
+          const cx = vpx + vpw * 0.5, cy = vpy + (HZ - vpy) * 0.4;
+          const r1 = vpw * 0.3, r2 = vpw * 0.45;
           for (let i = 0; i < 5; i++) {
-            const ang = Math.PI * 0.5 + (i - 2) * 0.17 + Math.sin(t * 0.15 + i) * 0.03;
-            const len = vph * 0.95;
+            const ang = t * 0.05 + i * Math.PI * 0.4;
+            const x1 = cx + Math.cos(ang) * r1, y1 = cy + Math.sin(ang) * r1 * 0.5;
+            const x2 = cx + Math.cos(ang + 0.8) * r2, y2 = cy + Math.sin(ang + 0.8) * r2 * 0.5;
+            ambient.moveTo(x1, y1).lineTo(x2, y2);
+            ambient.stroke({ color: lightCol, width: 1, alpha: Math.min(1, (0.06 + pulse * 0.06) * petEnergy) });
+            ambient.circle(x1, y1, 2).fill({ color: lightCol, alpha: Math.min(1, (0.1 + pulse * 0.1) * petEnergy) });
+            ambient.circle(x2, y2, 1.5).fill({ color: lightCol, alpha: Math.min(1, (0.1 + pulse * 0.1) * petEnergy) });
+          }
+          // Inner connecting triangle
+          const a1 = -t * 0.03, a2 = a1 + 2.1, a3 = a1 + 4.2;
+          ambient.moveTo(cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1 * 0.5)
+                 .lineTo(cx + Math.cos(a2) * r1, cy + Math.sin(a2) * r1 * 0.5)
+                 .lineTo(cx + Math.cos(a3) * r1, cy + Math.sin(a3) * r1 * 0.5)
+                 .lineTo(cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1 * 0.5);
+          ambient.stroke({ color: lightCol, width: 0.5, alpha: Math.min(1, (0.04 + pulse * 0.04) * petEnergy) });
+          // Room reaction: deep starry glow with breath
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0x9fd0ff, alpha: 0.01 + pulse * 0.02 + envBreath * 0.01 });
+        } else if (ambKind === "whispers") {
+          // Mystery, eerie fog, shadow distortions
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x050508, alpha: 0.12 });
+          const shadowAlpha = Math.min(1, (0.25 + pulse * 0.15) * petEnergy);
+          // Corner darkening
+          flash.moveTo(vpx, vpy).lineTo(vpx + vpw * 0.3, vpy).lineTo(vpx, vpy + vph * 0.3).fill({ color: 0x000000, alpha: shadowAlpha });
+          flash.moveTo(vpx + vpw, vpy).lineTo(vpx + vpw * 0.7, vpy).lineTo(vpx + vpw, vpy + vph * 0.3).fill({ color: 0x000000, alpha: shadowAlpha });
+          // Drifting faint wisps
+          for (let i = 0; i < 3; i++) {
+            const wx = vpx + (((t * 0.04 + i * 0.33) % 1) * vpw);
+            const wy = vpy + (HZ - vpy) * (0.3 + 0.4 * Math.sin(t * 0.2 + i));
+            ambient.ellipse(wx, wy, vpw * 0.15, vph * 0.08).fill({ color: lightCol, alpha: Math.min(1, (0.02 + 0.01 * Math.sin(t * 1.1 + i) + pulse * 0.02) * petEnergy) });
+          }
+          // Rare eye-like glow in dark
+          if (Math.sin(t * 0.8) > 0.96) {
+             const ex = vpx + vpw * 0.15, ey = vpy + vph * 0.2;
+             ambient.circle(ex, ey, 1.5).fill({ color: 0x9060ff, alpha: Math.min(1, 0.4 * petEnergy) });
+             ambient.circle(ex + 10, ey, 1.5).fill({ color: 0x9060ff, alpha: Math.min(1, 0.4 * petEnergy) });
+          }
+          petLight = Math.max(petLight, pulse * 0.08); // subtle eerie pet light
+        } else if (ambKind === "canopy") {
+          // Canopy light: moving sunlight through leaves
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffffd0, alpha: 0.05 });
+          for (let i = 0; i < 4; i++) {
+            const ang = 1.1 + Math.sin(t * 0.1 + i) * 0.05;
+            const w0 = (vpw * 0.06 + pulse * vpw * 0.03) * petEnergy; // Widen gently on beat/energy
+            const ox = vpx + vpw * (0.1 + i * 0.25);
+            const oy = vpy - vph * 0.1;
+            const len = vph * 1.2;
             const dx = Math.cos(ang), dy = Math.sin(ang);
             const px = -dy, py = dx;
-            const w0 = vpw * 0.012, w1 = vpw * 0.06;
             const ex = ox + dx * len, ey = oy + dy * len;
-            ambient.moveTo(ox + px * w0, oy + py * w0);
-            ambient.lineTo(ex + px * w1, ey + py * w1);
-            ambient.lineTo(ex - px * w1, ey - py * w1);
-            ambient.lineTo(ox - px * w0, oy - py * w0);
-            ambient.fill({ color: lightCol, alpha: 0.05 + 0.025 * Math.sin(t * 0.5 + i * 1.3) });
+            ambient.moveTo(ox + px * w0, oy + py * w0)
+                   .lineTo(ex + px * w0 * 1.5, ey + py * w0 * 1.5)
+                   .lineTo(ex - px * w0 * 1.5, ey - py * w0 * 1.5)
+                   .lineTo(ox - px * w0, oy - py * w0);
+            ambient.fill({ color: lightCol, alpha: Math.min(1, (0.03 + 0.015 * Math.sin(t * 0.4 + i) + pulse * 0.02) * petEnergy) });
           }
+          // Room reaction: leaf shadows slowly track across floor
+          for (let i = 0; i < 5; i++) {
+            const lx = vpx + (((t * 0.01 + i * 0.2) % 1) * vpw);
+            const ly = HZ + (vpBottom - HZ) * (0.2 + 0.15 * (i % 3));
+            ambient.circle(lx, ly, 15 + 5 * Math.sin(i)).fill({ color: 0x000000, alpha: Math.min(1, (0.06 + pulse * 0.01) * petEnergy) });
+          }
+          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.04); // Warm sunbeam catch
+        } else if (ambKind === "current") {
+          // Sky current: wind movement, cloud drift
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffffff, alpha: 0.04 });
+          for (let i = 0; i < 6; i++) {
+            const spd = (0.2 + i * 0.05 + pulse * 0.15) * petEnergy; // Gust on beat/energy
+            const wx = vpx + (((t * spd + i * 0.16) % 1) * vpw);
+            const wy = vpy + (HZ - vpy) * (0.2 + 0.12 * i);
+            const wlen = vpw * (0.1 + 0.1 * Math.sin(t * 0.5 + i));
+            ambient.moveTo(wx, wy).lineTo(wx + wlen, wy).stroke({ color: 0xffffff, width: 1.5, alpha: Math.min(1, 0.04 + pulse * 0.04) });
+          }
+          // Room reaction: overall airy brightening
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xffffff, alpha: 0.01 + pulse * 0.02 + envBreath * 0.01 });
+        } else if (ambKind === "earth") {
+          // Earth pulse: grounded, seismic shimmer
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x665544, alpha: 0.07 });
+          // Stone glow from below
+          flash.rect(vpx, HZ, vpw, vpBottom - HZ).fill({ color: 0xd8b96a, alpha: Math.min(1, (0.02 + pulse * 0.04) * petEnergy) });
+          // Heavy dust drifting up
+          for (let i = 0; i < 8; i++) {
+            const dx = vpx + (((t * 0.02 + i * 0.12) % 1) * vpw);
+            const dy = vpBottom - (((t * 0.05 + i * 0.2) % 1) * (vpBottom - vpy));
+            // Subtle seismic shimmer on heavy beat
+            const sx = pulse > 0.5 ? Math.sin(t * 40 + i) * 1.5 * pulse : 0;
+            ambient.circle(dx + sx, dy, 2 + i % 2).fill({ color: 0xd8b96a, alpha: Math.min(1, (0.1 + pulse * 0.05) * petEnergy) });
+          }
+          petLight = Math.max(petLight, pulse * 0.1 + envBreath * 0.02);
+        } else if (ambKind === "industrial") {
+          // Industrial glow: premium soft reflected metallic lighting
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x334455, alpha: 0.06 });
+          for (let i = 0; i < 3; i++) {
+            const rx = vpx + vpw * (0.2 + i * 0.3);
+            const ry = vpy + vph * 0.5;
+            ambient.moveTo(rx - vpw * 0.1, vpy).lineTo(rx + vpw * 0.1, vpy).lineTo(rx + vpw * 0.15, vpBottom).lineTo(rx - vpw * 0.05, vpBottom);
+            ambient.fill({ color: 0x7fd9ff, alpha: Math.min(1, (0.015 + pulse * 0.03) * petEnergy) });
+          }
+          // Room reaction: sharp cold rim light
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0x7fd9ff, alpha: Math.min(1, 0.01 + pulse * 0.03 + envBreath * 0.01) });
+          petLight = Math.max(petLight, pulse * 0.2 + envBreath * 0.02); // metallic sheen on pet
+        } else if (ambKind === "warmth") {
+          // Warm home: comfort energy
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffe8ba, alpha: 0.07 });
+          const cx = vpx + vpw * 0.5;
+          ambient.moveTo(cx - vpw * 0.2, vpy).lineTo(cx + vpw * 0.2, vpy)
+                 .lineTo(cx + vpw * 0.4, HZ + vph * 0.2).lineTo(cx - vpw * 0.2, HZ + vph * 0.2);
+          ambient.fill({ color: 0xffe8ba, alpha: Math.min(1, (0.03 + pulse * 0.02) * petEnergy) });
+          // Floor comfort pool
+          ambient.ellipse(cx + vpw * 0.1, HZ + vph * 0.1, vpw * 0.3, vph * 0.08).fill({ color: 0xffe8ba, alpha: Math.min(1, (0.04 + pulse * 0.03) * petEnergy) });
+          // Room reaction: soft breathing warmth
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xffe8ba, alpha: Math.min(1, 0.01 + pulse * 0.02 + envBreath * 0.02) });
+          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.04);
         }
 
         // music beat pulse: a quick type-flavored burst on a reacting beat (additive)
@@ -1246,9 +1416,10 @@
         const lift = Math.max(0, groundY() - posY.value);
         petShadow.x = posX.value;
         petShadow.y = groundY() + 3;
-        const k = curScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1);
+        // Grounding polish: shadow softens with breath/flare, settles when sleeping
+        const k = curScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1) * (1 + envBreath * 0.05);
         petShadow.scale.set(k, k);
-        petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160));
+        petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160)) * (sleeping ? 1.2 : 1) * (1 - envBreath * 0.15);
 
         for (const child of [...hearts.children]) {
           const hh = child as unknown as { _life: number; y: number; alpha: number; destroy: () => void };
