@@ -1552,38 +1552,55 @@
     const effPts = (await getMeta("effort_day")) === today ? Number((await getMeta("effort_pts")) ?? 0) : 0;
     const friction = lastFrictionCue > 0 && Date.now() - lastFrictionCue < 36 * 3600_000;
 
-    // Layer 1 — a contextual COMPANION thought (what hooks people)
+    // Layer 1 — a contextual COMPANION thought (an observation, never a state label)
     const thought = friction
-      ? "this one seems stubborn"
+      ? pick(["this one seems stubborn", "this one's taking a while", "still wrestling this"])
       : effPts >= 60
-        ? "deep in it today"
+        ? pick(["deep waters today", "lost in it today", "still with this one"])
         : isNight
-          ? "late-night builder again?"
+          ? pick(["keeping watch tonight", "quiet room tonight", "staying up with this one", "feels like one of those nights"])
           : projDays >= 3
-            ? "still here with this one"
+            ? pick(["still here with this one", "back with this one"])
             : pick(["quietly staying nearby", "here, like always", "just keeping you company"]);
 
-    // Layer 3 — narrative aliveness chips
-    const chips: { icon: string; label: string }[] = [];
-    if (effPts >= 60) chips.push({ icon: "⚡", label: "deep in it" });
-    else if (friction) chips.push({ icon: "🌧", label: "a stubborn one" });
-    if (isNight || nightS > dayS) chips.push({ icon: "🌙", label: "late-night chapter" });
-    if (projDays >= 3) chips.push({ icon: "🛠", label: "still building" });
-    if (streak >= 3) chips.push({ icon: "🔥", label: `${streak}-day streak` });
-    if (days <= 7) chips.push({ icon: "📖", label: "chapter one" });
-    chips.push({ icon: "✨", label: "quietly becoming real" }); // soft anchor if few signals
+    // Layer 3 — two chips that tell DIFFERENT stories: present state + the journey
+    const state = friction
+      ? { icon: "🌧", label: "friction" }
+      : effPts >= 60
+        ? { icon: "⚡", label: "deep work" }
+        : isNight
+          ? { icon: "🌙", label: "quiet night" }
+          : { icon: "🫖", label: "slow and steady" };
+    const arc =
+      streak >= 3
+        ? { icon: "🔥", label: `${streak}-day streak` }
+        : projDays >= 3
+          ? { icon: "🛠", label: "still shaping" }
+          : nightS > dayS
+            ? { icon: "🌙", label: "late-night season" }
+            : days <= 7
+              ? { icon: "📖", label: "chapter one" }
+              : { icon: "✨", label: "quietly becoming real" };
+    const chips = [state, arc];
 
-    // species lives INSIDE the card now (the README text block is gone), so the
-    // whole card is one image → name + art always update together
-    const species = displayName(dexEntry(dexId)?.name ?? petName);
-    const footer = `${species} · ${days <= 1 ? "day one" : `${days} days`}`;
+    // the companion, named — lives INSIDE the card (one artifact → never desyncs)
+    const partner = displayName(dexEntry(dexId)?.name ?? petName);
+
+    // an emotional footer, never a metric
+    const footer =
+      days <= 7
+        ? pick(["chapter one", "quietly becoming real", "still growing"])
+        : isNight
+          ? pick(["another late one", "learning how to stay", "still growing"])
+          : pick(["still growing", "learning how to stay", "quietly becoming real"]);
 
     const svg = buildCard({
       thought,
       tagline: pick(CARD_TAGLINES),
-      chips: chips.slice(0, 3),
+      chips,
       cta: pick(CARD_CTAS),
       footer,
+      partner,
       night: isNight,
       sprite: await spriteDataUri()
     });

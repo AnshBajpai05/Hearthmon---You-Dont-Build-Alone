@@ -8,7 +8,8 @@ export interface CardState {
   tagline: string; // Layer 2 — the money line / identity, under the title (wraps)
   chips: { icon: string; label: string }[]; // Layer 3 — narrative aliveness
   cta: string; // Layer 4 — a soft call ("see what it noticed →")
-  footer: string; // factual counterweight ("86 commits · day 1")
+  footer: string; // emotional counterweight ("still growing")
+  partner: string; // the companion's name, labelled under the sprite
   night: boolean;
   sprite?: string; // base64 PNG data-URI of the companion (optional)
   title?: string; // defaults to "Hearthmon"
@@ -316,6 +317,9 @@ export function buildCard(s: CardState): string {
       ${innerSprite}
     </g>
   </g>
+
+  <!-- Current partner, labelled right under the companion -->
+  <text x="78" y="170" font-size="10.5" text-anchor="middle" fill="${textDim}">current partner · <tspan fill="${accent}" font-weight="700">${esc(s.partner)}</tspan></text>
 
   <!-- Speech bubble — a thought, nudged toward the companion with a long soft tail -->
   <g class="bub">
