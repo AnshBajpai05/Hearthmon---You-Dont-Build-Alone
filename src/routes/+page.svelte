@@ -1541,7 +1541,6 @@
   async function generateCard(silent = false) {
     const fm = await getMeta("first_met");
     const days = daysTogether(fm);
-    const commits = Number((await getMeta("commits")) ?? 0) || 0;
 
     // real signals → a live companion thought + narrative chips
     const today = new Date().toISOString().slice(0, 10);
@@ -1574,7 +1573,7 @@
     if (days <= 7) chips.push({ icon: "📖", label: "chapter one" });
     chips.push({ icon: "✨", label: "quietly becoming real" }); // soft anchor if few signals
 
-    const footer = `${commits} commits · day ${Math.max(1, days)}`;
+    const footer = days <= 1 ? "day one" : `${days} days together`;
 
     const svg = buildCard({
       thought,
