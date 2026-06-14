@@ -411,7 +411,22 @@
         document.removeEventListener("visibilitychange", onVis);
         ro.disconnect();
       };
-    })().catch((e) => console.error("[PixiStage] init failed:", e));
+    })().catch((e) => {
+      console.error("[PixiStage] init failed:", e);
+      // surface the error ON SCREEN so it's diagnosable without devtools
+      try {
+        if (host) {
+          const pre = document.createElement("pre");
+          pre.textContent = "PixiStage error:\n" + ((e && (e.stack || e.message)) || String(e));
+          pre.style.cssText =
+            "position:absolute;inset:0;margin:0;padding:10px;color:#ff9d9d;background:#1a1020;" +
+            "font:11px/1.4 monospace;white-space:pre-wrap;overflow:auto;z-index:99;pointer-events:auto";
+          host.appendChild(pre);
+        }
+      } catch {
+        /* ignore */
+      }
+    });
 
     return () => {
       destroyed = true;
