@@ -875,6 +875,31 @@
         orb.x = vpx + vpw * 0.74 + Math.sin(t * 0.18) * 6;
         orb.y = vpy + vph * 0.2 + Math.sin(t * 0.12) * 3;
 
+        // ── environmental coupling & inertia ──
+        let targetEnergy = (sleeping ? 0.2 : 1) + (petState === "happy" ? 0.8 : 0) + Math.min(1.5, jiggle * 0.15 + Math.abs(squash.value) * 0.05);
+        if (flowContext === "focus") targetEnergy *= 0.5; // deeply calm
+        else if (flowContext === "waiting") targetEnergy *= 0.7; // slower watch
+        else if (flowContext === "friction") targetEnergy *= 1.15; // slightly warmer/more active
+        
+        if (fx.breakthrough && !prevBreakthrough) {
+          hopBurstT = 1.0;
+          petEnergy = 2.5; // immediate spike
+        }
+        prevBreakthrough = fx.breakthrough;
+
+        if (targetEnergy - petEnergy > 0.5) hopBurstT = 0.5; // Trigger tiny response burst
+        hopBurstT = Math.max(0, hopBurstT - dt);
+        petEnergy += (targetEnergy - petEnergy) * (dt / 0.4); // momentum / delayed response
+        // normalized breathing sine (-1 to +1) that strictly matches the pet's lung speed
+        const petBreath = Math.sin(t * (sleeping ? 1.0 : 1.7));
+        const envBreath = (petBreath * 0.5 + 0.5) * petEnergy; // 0 to 1, scaled by energy
+
+        ambient.clear();
+        flash.clear();
+        rareG.clear();
+        hazeG.clear();
+        petLight *= Math.exp(-dt / 0.13); // illumination from a strike/beat fades fast
+
         // water-only: reflection + rolling waves
         if (hasWater) {
           reflect.clear();
@@ -939,34 +964,8 @@
         lantern.scale.set((globe ? 0.7 : 1) * (1 + Math.sin(t * 7) * 0.015));
 
         // ── type-driven premium ambient within the viewport ──
-        // ── environmental coupling & inertia ──
-        // smooth target energy: sleep=0.2, idle=1, happy/excited=1.8+
-        let targetEnergy = (sleeping ? 0.2 : 1) + (petState === "happy" ? 0.8 : 0) + Math.min(1.5, jiggle * 0.15 + Math.abs(squash.value) * 0.05);
-        if (flowContext === "focus") targetEnergy *= 0.5; // deeply calm
-        else if (flowContext === "waiting") targetEnergy *= 0.7; // slower watch
-        else if (flowContext === "friction") targetEnergy *= 1.15; // slightly warmer/more active
-        
-        if (fx.breakthrough && !prevBreakthrough) {
-          hopBurstT = 1.0;
-          petEnergy = 2.5; // immediate spike
-        }
-        prevBreakthrough = fx.breakthrough;
-
-        if (targetEnergy - petEnergy > 0.5) hopBurstT = 0.5; // Trigger tiny response burst
-        hopBurstT = Math.max(0, hopBurstT - dt);
-        petEnergy += (targetEnergy - petEnergy) * (dt / 0.4); // momentum / delayed response
-        // normalized breathing sine (-1 to +1) that strictly matches the pet's lung speed
-        const petBreath = Math.sin(t * (sleeping ? 1.0 : 1.7));
-
-        ambient.clear();
-        flash.clear();
-        rareG.clear();
-        hazeG.clear();
-        petLight *= Math.exp(-dt / 0.13); // illumination from a strike/beat fades fast
-        
         // Music pulse + Pet influence (breathing and energy)
         const pulse = audioEnergy * 0.8 + (beatT > 0 ? (beatT / 0.32) * 0.4 : 0);
-        const envBreath = (petBreath * 0.5 + 0.5) * petEnergy; // 0 to 1, scaled by energy
 
         if (ambKind === "lightning") {
           // Energetic chaos — the only explosive music-sync effect
@@ -1436,12 +1435,12 @@
         petShadow.x = posX.value - (lean.value * 0.3);
         petShadow.y = groundY() + 3;
         // Grounding polish: shadow softens with breath/flare, settles when sleeping
-        const sq = squash.value / 220;
-        const k = curScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1) * (1 + envBreath * 0.05);
-        const shadowStretchX = 1 + Math.abs(sq) * 0.2 + Math.abs(jiggle) * 0.08;
-        const shadowStretchY = 1 - Math.abs(sq) * 0.1;
+        const sqN = squash.value / 220;
+        const k = curScale * (1 - Math.min(0.45, lift / 130) + sqN * 0.1) * (1 + envBreath * 0.05);
+        const shadowStretchX = 1 + Math.abs(sqN) * 0.2 + Math.abs(jiggle) * 0.08;
+        const shadowStretchY = 1 - Math.abs(sqN) * 0.1;
         petShadow.scale.set(k * shadowStretchX, k * shadowStretchY);
-        petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160)) * (sleeping ? 1.2 : 1) * (1 - envBreath * 0.15) * (1 + sq * 0.2);
+        petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160)) * (sleeping ? 1.2 : 1) * (1 - envBreath * 0.15) * (1 + sqN * 0.2);
 
         for (const child of [...hearts.children]) {
           const hh = child as unknown as { _life: number; y: number; alpha: number; destroy: () => void };
