@@ -1569,19 +1569,29 @@
       if (!res.ok) return null;
       const dec = new IDC({ data: await res.arrayBuffer(), type: "image/gif" });
       await dec.tracks.ready;
-      const count = Math.min(60, dec.tracks.selectedTrack?.frameCount ?? 1);
-      if (count < 2) return null; // not animated → static path
+      const total: number = dec.tracks.selectedTrack?.frameCount ?? 1;
+      if (total < 2) return null; // not animated → static path
+
+      // peek frame 0 for dimensions, then SAMPLE frames so the strip stays small —
+      // a 40+ frame strip is a multi-thousand-px image that makes the card's CSS
+      // animation lag. Cap to ~24 frames and ~2400px wide; keep the loop speed.
+      const f0 = await dec.decode({ frameIndex: 0 });
+      const fw = f0.image.displayWidth || f0.image.codedWidth || 96;
+      const fh = f0.image.displayHeight || f0.image.codedHeight || 96;
+      const maxF = Math.max(8, Math.min(24, Math.floor(2400 / fw)));
+      const stepN = total > maxF ? total / maxF : 1;
+      const idxs = [...new Set(Array.from({ length: Math.min(total, maxF) }, (_, k) => Math.floor(k * stepN)))];
+
       const bmps: ImageBitmap[] = [];
-      let fw = 0, fh = 0, durMs = 0;
-      for (let i = 0; i < count; i++) {
-        const { image } = await dec.decode({ frameIndex: i });
-        fw = image.displayWidth || image.codedWidth || fw;
-        fh = image.displayHeight || image.codedHeight || fh;
-        durMs += (image.duration ?? 90000) / 1000; // µs → ms
-        bmps.push(await createImageBitmap(image));
-        image.close();
+      let durMs = 0;
+      for (const fi of idxs) {
+        const img = fi === 0 ? f0.image : (await dec.decode({ frameIndex: fi })).image;
+        durMs += (img.duration ?? 90000) / 1000; // µs → ms
+        bmps.push(await createImageBitmap(img));
+        img.close();
       }
-      if (!fw || !fh) { for (const b of bmps) b.close(); return null; }
+      const count = bmps.length;
+      if (!fw || !fh || !count) { for (const b of bmps) b.close(); return null; }
       const cv = document.createElement("canvas");
       cv.width = fw * count;
       cv.height = fh;
@@ -1589,7 +1599,9 @@
       if (!ctx) { for (const b of bmps) b.close(); return null; }
       ctx.imageSmoothingEnabled = false;
       for (let i = 0; i < bmps.length; i++) { ctx.drawImage(bmps[i], i * fw, 0); bmps[i].close(); }
-      return { uri: cv.toDataURL("image/png"), frames: count, fw, fh, dur: Math.max(0.6, durMs / 1000) };
+      // estimate the full-loop time (sampled frames span the whole timeline)
+      const loopS = Math.max(0.6, Math.min(4, (durMs * (total / count)) / 1000));
+      return { uri: cv.toDataURL("image/png"), frames: count, fw, fh, dur: loopS };
     } catch {
       return null;
     }
