@@ -3,6 +3,7 @@
   // browser too; it is all pointer events + WebGL). Flip species to prove the
   // motion/interaction holds across very different sprites.
   import PixiPet from "$lib/components/PixiPet.svelte";
+  import MoonlitShore from "$lib/components/MoonlitShore.svelte";
 
   const mons = [
     { id: 131, name: "Lapras" },
@@ -14,20 +15,23 @@
   ];
   let i = $state(0);
   let shiny = $state(false);
+  let scene = $state(true);
   const cur = $derived(mons[i]);
 </script>
 
 <div class="sandbox">
+  {#if scene}<MoonlitShore />{/if}
   {#key `${cur.id}-${shiny}`}
     <PixiPet dexId={cur.id} {shiny} size={230} />
   {/key}
 
   <div class="hud">
-    <span class="tag">V2 · Pixi parity — {cur.name}</span>
+    <span class="tag">V2 · Moonlit Shore — {cur.name}</span>
     <div class="row">
       <button onclick={() => (i = (i + mons.length - 1) % mons.length)} aria-label="Previous">‹</button>
       <button onclick={() => (i = (i + 1) % mons.length)} aria-label="Next">›</button>
       <button class:on={shiny} onclick={() => (shiny = !shiny)}>shiny</button>
+      <button class:on={scene} onclick={() => (scene = !scene)}>scene</button>
     </div>
     <p class="hint">drag the pet · stroke to pet it · tap to hop · move the cursor to lean</p>
   </div>
