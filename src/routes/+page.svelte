@@ -95,6 +95,9 @@
     pokeReactions,
     treatLines,
     pettingLines,
+    musicCalmLines,
+    musicChillLines,
+    musicHypeLines,
     jarLines,
     letterReadyLines,
     endOfNightLines,
@@ -324,6 +327,56 @@
     delight = kind;
     clearTimeout(delightTimer);
     delightTimer = setTimeout(() => (delight = "none"), ms);
+  }
+
+  // For BIG celebrations: fires repeated bursts of `kind` every 2.5s for `totalMs`.
+  // Each burst is a fresh animation so it never gets stuck on the guard.
+  let _burstInterval: ReturnType<typeof setInterval> | undefined;
+  let _burstEndTimer: ReturnType<typeof setTimeout> | undefined;
+  function runDelightBurst(kind: "star" | "fireworks", totalMs: number, burstMs = 2500) {
+    clearInterval(_burstInterval);
+    clearTimeout(_burstEndTimer);
+    // fire immediately
+    delight = kind;
+    clearTimeout(delightTimer);
+    delightTimer = setTimeout(() => (delight = "none"), burstMs - 200);
+    // keep firing for totalMs
+    _burstInterval = setInterval(() => {
+      delight = "none";
+      requestAnimationFrame(() => {
+        delight = kind;
+        clearTimeout(delightTimer);
+        delightTimer = setTimeout(() => (delight = "none"), burstMs - 200);
+      });
+    }, burstMs);
+    _burstEndTimer = setTimeout(() => {
+      clearInterval(_burstInterval);
+      _burstInterval = undefined;
+      delight = "none";
+    }, totalMs);
+  }
+
+  // Manual celebrate: 60s fireworks + the pet parties alongside you.
+  async function celebrate() {
+    if (phase !== "home") return;
+    poke();
+    runDelightBurst("fireworks", 60_000);
+    if (!focusMode) shipFanfare();
+    // pet goes happy
+    petState = "happy";
+    setTimeout(() => (petState = "idle"), 1200);
+    // say something genuinely excited
+    say(pick(musicHypeLines), 8000);
+    // pet does zoomies + spin + jump to match the energy
+    await new Promise((r) => setTimeout(r, 400));
+    for (let i = 0; i < 3; i++) {
+      if (phase !== "home" || petState !== "idle") break;
+      startMove("run");
+      await new Promise((r) => setTimeout(r, moveDur * 1000 + 160));
+    }
+    doOneShot("spin");
+    await new Promise((r) => setTimeout(r, 800));
+    doOneShot("jump");
   }
 
   const MOOD_COLORS: Record<Mood, string> = {
@@ -894,10 +947,10 @@
     let line = spoken;
     switch (kind) {
       case "fix":       line ||= pick(fixQuips);       runDelight("star", 2400);     fixFanfare();        break;
-      case "pr":        line ||= pick(prQuips);        runDelight("fireworks", 2800); shipFanfare();       break;
-      case "release":   line ||= pick(releaseQuips);   runDelight("fireworks", 3200); shipFanfare();       break;
+      case "pr":        line ||= pick(prQuips);        runDelightBurst("fireworks", 60_000); shipFanfare();       break;
+      case "release":   line ||= pick(releaseQuips);   runDelightBurst("fireworks", 60_000); shipFanfare();       break;
       case "repo":      line ||= pick(newRepoQuips);   runDelight("star", 2600);     newRepoChime();      break;
-      case "milestone": line ||= "Look how far we've come."; runDelight("fireworks", 3200); milestoneFanfare(); break;
+      case "milestone": line ||= "Look how far we've come."; runDelightBurst("fireworks", 60_000); milestoneFanfare(); break;
       default:          line ||= pick(commitQuips);                                   commitChime();       break;
     }
     say(line, 6000);  // show in the bubble
@@ -977,7 +1030,7 @@
       case "done":
         line = pick(trainDoneLines);
         celebrate();
-        runDelight("fireworks", 3000);
+        runDelightBurst("fireworks", 60_000);
         shipFanfare();
         break;
       case "crash":
@@ -1170,8 +1223,22 @@
   let audioStrength = $state(0); // 0..1 strength of the latest beat (drops ≈ 1)
   let _bassAvg = 0;
   let _lastBeatAt = 0;
+  let _musicSlow = 0; // slow EMA (~3s) of loudness → calm vs hype classification
+  let lastMusicLineAt = 0;
+  // current vibe mode set when a music line fires — drives vibeTick animations for 30s
+  let musicVibe = $state<"none" | "calm" | "chill" | "hype">("none");
+  let musicVibeTimer: ReturnType<typeof setTimeout> | undefined;
+  // sub-timers that sustain a single picked reaction for ~10s before choosing the next
+  let vibeReactionTimer: ReturnType<typeof setInterval> | undefined;
+  let vibeReactionEndTimer: ReturnType<typeof setTimeout> | undefined;
+  function clearVibeReaction() {
+    clearInterval(vibeReactionTimer);
+    clearTimeout(vibeReactionEndTimer);
+    vibeReactionTimer = undefined;
+  }
   function onAudioBands(b: number, m: number, _h: number, lvl: number) {
     audioEnergy = +(audioEnergy + 0.18 * (lvl - audioEnergy)).toFixed(3);
+    _musicSlow += 0.01 * (lvl - _musicSlow);
     _bassAvg += 0.08 * (b - _bassAvg); // running bass floor
     const now = performance.now();
     // onset: a bass spike above the floor, with a refractory gap (no 140bpm seizure)
@@ -1186,6 +1253,67 @@
     await setMeta("audio_aware", on ? "1" : "0");
     try { await invoke("set_audio_aware", { on }); } catch { /* not under Tauri */ }
     if (!on) { audioEnergy = 0; audioStrength = 0; }
+  }
+  // ~30s: a short, grounded line about whatever's playing — calm vs hype by energy.
+  // Also kicks off a 30s vibe mode that drives matching animations via vibeTick.
+  function maybeMusicLine() {
+    if (!audioAware || audioEnergy < 0.06) return;
+    if (phase !== "home" || battleOpen || evoActive || evoOffer || switchFx !== "none") return;
+    if (focusMode || petState === "sleeping" || panel !== "none") return;
+    if (Date.now() - lastMusicLineAt < 28_000) return;
+    lastMusicLineAt = Date.now();
+    const kind = _musicSlow > 0.45 ? "hype" : _musicSlow < 0.22 ? "calm" : "chill";
+    const bank = kind === "hype" ? musicHypeLines : kind === "calm" ? musicCalmLines : musicChillLines;
+    say(pick(bank), 7000);
+    // enter vibe mode for 30s; clear any running reaction so a fresh one picks immediately
+    clearTimeout(musicVibeTimer);
+    clearVibeReaction();
+    musicVibe = kind;
+    musicVibeTimer = setTimeout(() => { musicVibe = "none"; clearVibeReaction(); }, 30_000);
+  }
+
+  // Sustains a picked reaction for 10s by repeating `action` every `repeatMs`.
+  // Outer vibeTick skips while vibeReactionTimer is set, so reactions don't overlap.
+  function startVibeReaction(action: () => void, repeatMs: number) {
+    clearVibeReaction();
+    action();
+    vibeReactionTimer = setInterval(() => { if (!busy()) action(); }, repeatMs);
+    vibeReactionEndTimer = setTimeout(clearVibeReaction, 10_000);
+  }
+
+  // Called every 2.5s — picks a reaction and locks it in for 10s via startVibeReaction.
+  // Does nothing if a reaction is already running or the pet is in a ceremony/move.
+  function vibeTick() {
+    if (musicVibe === "none") return;
+    if (vibeReactionTimer) return; // mid-reaction, let it run
+    if (busy() || petState === "sleeping" || switchFx !== "none" || evoActive || evoOffer || battleOpen) return;
+    const r = Math.random();
+    if (musicVibe === "calm") {
+      // Dreamy, slow: chosen action repeats gently every 2s for 10s
+      if (r < 0.30)      startVibeReaction(() => fidget("tilt"),    2000); // slow dreamy sway
+      else if (r < 0.50) startVibeReaction(() => fidget("blink"),   2000); // half-lidded blink
+      else if (r < 0.60) startVibeReaction(() => startMove("walk"), 3500); // slow dreamy drift
+      else if (r < 0.65) runDelight("star", 2600);                         // shooting star
+      else if (r < 0.70) runDelight("rain", 9000);                         // soft pixel rain
+      // otherwise: still — peaceful silence is part of calm
+    } else if (musicVibe === "chill") {
+      // Relaxed groove: chosen action repeats every 1.4s for 10s
+      if (r < 0.28)      startVibeReaction(() => startMove("hop"),                   1400); // bounce-bop
+      else if (r < 0.48) startVibeReaction(() => fidget("perk"),                    1400); // "oh I know this song"
+      else if (r < 0.60) startVibeReaction(() => fidget("blink"),                   1400); // relaxed blink
+      else if (r < 0.72) startVibeReaction(() => { dir = dir === 1 ? -1 : 1; },    2000); // groove-glance
+      else if (r < 0.80) startVibeReaction(() => startMove("walk"),                 2500); // chill stroll
+      else if (r < 0.85) runDelight("star", 2600);
+    } else if (musicVibe === "hype") {
+      // Full energy: chosen action hammers every 0.85s for 10s — the pet is FEELING IT
+      if (r < 0.24)      startVibeReaction(() => startMove("run"),                   850); // non-stop sprints
+      else if (r < 0.40) startVibeReaction(() => doOneShot("jump"),                  850); // repeat jumps
+      else if (r < 0.54) startVibeReaction(() => doOneShot("spin"),                  850); // spin-spin-spin
+      else if (r < 0.62) { void zoomies(); }                                               // multi-lap zoomies
+      else if (r < 0.72) startVibeReaction(() => startMove("hop"),                 1000); // bounce-dance
+      else if (r < 0.80) runDelight("fireworks", 2400);                                   // fireworks!
+      else if (r < 0.86) startVibeReaction(() => { dir = dir === 1 ? -1 : 1; },     700); // rapid head-whips
+    }
   }
 
   // a working-tree change (you saved). The strongest "real building" signal.
@@ -1218,7 +1346,7 @@
     }
     if (focusMode || companionMode === "just_there") return;
     const l = pick(breakthroughLines);
-    runDelight("fireworks", 3200);
+    runDelightBurst("fireworks", 60_000);
     fixFanfare();
     say(l, 9000);
     announce(l);
@@ -2074,7 +2202,7 @@
             bondCeremony = label;
             say(line, 12000);
             announce(line);
-            runDelight("fireworks", 3600);
+            runDelightBurst("fireworks", 60_000);
             setTimeout(() => (bondCeremony = null), 5200);
           }, 9000); // deferred so it doesn't pile onto the greeting
         }
@@ -2120,7 +2248,7 @@
               birthday = true;
               say(line, 15000);
               announce(line);
-              runDelight("fireworks", 4000);
+              runDelightBurst("fireworks", 60_000);
               playVoiceClip(["congrats", "that-was-awesome", "awesome"], 0.85, 0.6);
             }, 6500);
           }
@@ -2134,7 +2262,7 @@
           await setMeta("last_anniversary", today);
           setTimeout(() => {
             say(anniversaryLine(days), 14000);
-            runDelight("fireworks", 3200);
+            runDelightBurst("fireworks", 60_000);
             // yearly: the pet pulls up your Year in Review on its own
             if (days % 365 === 0 && !focusMode) setTimeout(() => (panel = "wrapped"), 4000);
           }, 6000);
@@ -2229,6 +2357,10 @@
     // music awareness: ephemeral energy bands [bass, mid, high, level] (opt-in)
     let unlistenAudio: (() => void) | undefined;
     listen<[number, number, number, number]>("audio-bands", (e) => onAudioBands(...e.payload)).then((un) => (unlistenAudio = un));
+    // ~30s scheduler: pick a calm/chill/hype line based on slow-energy EMA
+    const musicLineTimer = setInterval(maybeMusicLine, 30_000);
+    // vibe tick: 2.5s animation driver while a music vibe is active
+    const vibeTimer = setInterval(vibeTick, 2500);
 
     // global command palette — Alt+Space from anywhere summons the quick log bar
     register("Alt+Space", (e) => {
@@ -2261,6 +2393,12 @@
       unlistenAudio?.();
       clearInterval(remotePollTimer);
       clearInterval(toddlerTimer);
+      clearInterval(musicLineTimer);
+      clearInterval(vibeTimer);
+      clearTimeout(musicVibeTimer);
+      clearVibeReaction();
+      clearInterval(_burstInterval);
+      clearTimeout(_burstEndTimer);
       unregister("Alt+Space").catch(() => {});
       unregister("Alt+W").catch(() => {});
       resizeUnlisten?.();
@@ -2718,7 +2856,7 @@
     await bumpCounter("interactions");
     if (kind === "win" || kind === "survived") {
       attack(signatureMove(dexId)); // strongest move for the celebration
-      runDelight("fireworks", 3200); // tiny fireworks after a milestone
+      runDelightBurst("fireworks", 60_000); // 1 full minute of crackers for a win/survived
       if (!focusMode) playVoiceClip(["that-was-awesome", "congrats", "awesome"], 0.85, 0.5);
     } else if (kind === "praise") {
       // tender, not triumphant — a soft glow, no fireworks
@@ -2827,7 +2965,7 @@
         onClose={() => (panel = "none")}
         onChapterClose={(name) => {
           poke();
-          runDelight("fireworks", 3200);
+          runDelightBurst("fireworks", 60_000);
           const line = chapterCloseLine(name);
           say(line, 12000);
           announce(line);
@@ -3304,6 +3442,18 @@
       onpointerdown={beginResize}
     ></div>
 
+    <!-- celebrate button: right edge, vertical mid — tap to throw a 60s party -->
+    {#if panel === "none" && !battleOpen && phase === "home"}
+    <button
+      id="celebrate-btn"
+      class="celebrate-btn"
+      class:celebrating={_burstInterval}
+      title="Celebrate! 🎉"
+      aria-label="Celebrate"
+      onclick={celebrate}
+    >🎉</button>
+    {/if}
+
     {#if battleOpen}
       <BattleScene currentDexId={dexId} onClose={closeBattle} />
     {/if}
@@ -3316,6 +3466,65 @@
     width: 100vw;
     height: 100vh;
     overflow: hidden;
+  }
+
+  /* ---- celebrate button: mirrors the ✦ radial trigger, right edge mid ---- */
+  .celebrate-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(180, 160, 240, 0.35);
+    background: rgba(28, 22, 42, 0.82);
+    color: rgba(200, 185, 240, 0.5);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 0.25s ease,
+      color 0.25s,
+      border-color 0.25s,
+      background 0.25s,
+      box-shadow 0.25s,
+      transform 0.35s cubic-bezier(0.34, 1.3, 0.64, 1);
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .widget:hover .celebrate-btn {
+    opacity: 1;
+    pointer-events: all;
+    color: rgba(220, 205, 255, 0.85);
+  }
+  .celebrate-btn:hover {
+    color: #f0b66a;
+    border-color: rgba(240, 182, 106, 0.6);
+    background: rgba(50, 38, 68, 0.95);
+    box-shadow: 0 0 18px rgba(240, 182, 106, 0.3), 0 2px 12px rgba(0,0,0,0.4);
+    transform: translateY(-50%) scale(1.08);
+  }
+  .celebrate-btn:active {
+    transform: translateY(-50%) scale(0.92);
+  }
+  .celebrate-btn.celebrating {
+    opacity: 1;
+    pointer-events: all;
+    color: #f0b66a;
+    border-color: rgba(240, 182, 106, 0.6);
+    background: rgba(50, 38, 68, 0.95);
+    animation: celebpulse 0.7s ease-in-out infinite alternate;
+  }
+  @keyframes celebpulse {
+    from { box-shadow: 0 0 10px rgba(255,200,80,0.3), 0 2px 10px rgba(0,0,0,0.35); }
+    to   { box-shadow: 0 0 24px rgba(255,200,80,0.8), 0 2px 14px rgba(0,0,0,0.4);  }
   }
   /* background drag handle fills the window; the pet sits above and re-enables clicks */
   .draglayer {

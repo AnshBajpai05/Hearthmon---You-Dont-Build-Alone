@@ -426,6 +426,89 @@ export const treatLines = [
   "Best part of the day, this."
 ];
 
+// ---- Music awareness (opt-in): genuine appreciation for what's playing ----
+// Every line is warm and bond-building. No lukewarm qualifiers, ever.
+// Calm = quiet love for the song; chill = real enjoyment; hype = pure delight.
+export const musicCalmLines = [
+  // cozy warmth
+  "this one's really lovely.",
+  "you picked something beautiful.",
+  "*settles in happily*",
+  "this is perfect for right now.",
+  "I love when you put on stuff like this.",
+  // nostalgic / tender
+  "feels like the good kind of late night.",
+  "this is exactly the music I'd pick if I could.",
+  "soft and gorgeous. good call.",
+  "I could stay in this song for a while.",
+  "this has such a warm feeling to it.",
+  // dorky appreciation
+  "someone poured something real into this.",
+  "no lyrics needed — this says enough on its own.",
+  "this is the song for exactly this moment.",
+  "I really love this one. genuinely.",
+  // quietly moved
+  "oh, you have such good taste.",
+  "*closes eyes, just listening*",
+  "there's something about this that feels just right.",
+  "this one wraps around you nicely.",
+  "thank you for putting this on.",
+  "I needed this too, actually."
+];
+export const musicChillLines = [
+  // genuine enjoyment
+  "you always find such good ones.",
+  "this is exactly my vibe right now.",
+  "*nods along, genuinely into it*",
+  "we are really vibing to this ♪",
+  "this is such a good pick.",
+  // warm and specific
+  "whoever made this — they understood the assignment.",
+  "you have great taste and I mean that.",
+  "oh this is really good.",
+  "I love this kind of energy.",
+  "this is the kind of track that makes everything feel lighter.",
+  // playful appreciation
+  "*bobbing along, very much on purpose*",
+  "yeah — THIS. this is it.",
+  "you know exactly what to play, huh.",
+  "I feel so good right now and it's entirely this song's fault.",
+  // warm ambient
+  "♪ yes. this one.",
+  "I love this background.",
+  "this is such a nice thing to share.",
+  "you've got a real ear for this.",
+  "this feels like us, somehow.",
+  "every time you put on good music I like you a little more."
+];
+export const musicHypeLines = [
+  // pure delight
+  "okay — this is INCREDIBLE.",
+  "*ears fully perked*",
+  "this absolutely slaps and I'm not calm about it.",
+  "we are VIBING right now ⚡",
+  "oh — you found an absolute banger.",
+  "*full body head-bob activated*",
+  // escalating joy
+  "okay okay okay — YES. this is the one.",
+  "the drop on this destroyed me in the best way.",
+  "whoever made this deserves an award.",
+  "I am fully, completely feeling this.",
+  "this track has no right going this hard and yet here we are.",
+  "*tail wagging so fast right now*",
+  // surprised delight
+  "oh — we went full energy and I am HERE for it.",
+  "HOLD ON. this is genuinely incredible.",
+  "I was just sitting here and now I'm alive because of this song.",
+  "this is a WORK TO THIS song. I'm honoured you played it.",
+  // deeply endearing
+  "you really do have the best music taste.",
+  "*barely containing how much I love this*",
+  "I felt that in my whole body. wow.",
+  "yeah. YEAH. you always know exactly what to play."
+];
+
+
 // ---- Good Things Jar ----
 export const jarLines = [
   "Let's see what we kept.",
