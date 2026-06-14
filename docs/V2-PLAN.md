@@ -10,6 +10,35 @@
 
 ---
 
+## Dual-renderer architecture (decided 2026-06-14) — one brain, two skins
+
+Classic is NOT replaced. Hearthmon ships **two renderers over one shared brain**:
+
+```
+                ┌──────────────── shared brain (KEEP) ────────────────┐
+                │ memory · Builder Context · Chapters · drift · quirks │
+                │ biomes data · presence · battles · weather · sound   │
+                │ interactions (tap/stroke/feed/throw/evolve/attack)   │
+                └───────────────┬───────────────────┬─────────────────┘
+                                │                   │
+                   ClassicRenderer (CSS/Svelte)   AliveRenderer (Pixi)
+                   cozy · lightweight · nostalgic  premium · living · immersive
+```
+
+- Toggle anytime (key **V**, `render_mode` meta: `classic` | `alive`).
+- **STRICT FEATURE PARITY.** Same systems + interactions in both; only presentation differs.
+  If one renderer gains a capability, the other must offer the same experience. **No feature drift.**
+- **The danger to avoid:** two separate apps. It must stay *one brain, two skins* — the brain
+  lives in `+page` + `lib/*`; renderers only draw it and forward interactions back to it.
+
+### Parity checklist (Alive must reach Classic)
+- [x] biome by type · pet body · breathing/idle/hop · sleep/happy/calm state
+- [x] interaction: tap → `onPetTap`, stroke → `onPetStroke`, empty-space → window drag
+- [ ] pet-attached FX: speech bubble · attack beams · Ash throw · evolution flash · visitor · treat · birthday
+- [ ] type-specific idles in the mesh (leaf-sway/fire-flicker/…)
+- [ ] weather (rain/snow/wind/thunder) in the Pixi scene
+- [ ] window scenes / light beam richness to match the Classic biome
+
 ## The locked stack
 
 ```

@@ -175,7 +175,8 @@
   let dexId = $state(0);
   let petName = $state("");
   let petState = $state<PetState>("idle");
-  let renderMode = $state<"classic" | "pixi">("classic"); // V2 preview: Pixi body+biome
+  // one brain, two renderers: Classic (CSS) · Alive (Pixi). Same systems, different skin.
+  let renderMode = $state<"classic" | "alive">("classic");
   let bubble = $state("");
   let panel = $state<Panel>("none");
   let switchFx = $state<SwitchFx>("none");
@@ -536,13 +537,12 @@
   }
 
   /** Grab the empty area (the "box" around the pet) to move the window. */
-  async function startWinDrag(e: PointerEvent) {
-    if (e.button !== 0) return;
+  // shared by Classic (draglayer) and Alive (Pixi background) — drag the window
+  async function beginWindowDrag() {
     poke();
     try {
       const win = getCurrentWindow();
       await win.startDragging();
-      // Save position after the drag ends (pointerup on window)
       const savePos = async () => {
         try {
           const pos = await win.outerPosition();
@@ -555,6 +555,10 @@
     } catch {
       // dragging unavailable in web preview
     }
+  }
+  function startWinDrag(e: PointerEvent) {
+    if (e.button !== 0) return;
+    void beginWindowDrag();
   }
 
   // ---- one-tap pet from radial menu ----
@@ -1728,11 +1732,11 @@
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     const key = e.key.toLowerCase();
     if (key === "v") {
-      // V2 preview: swap the CSS pet+biome for the Pixi render (visual only for now)
+      // switch renderer: Classic (cozy CSS) ↔ Alive (premium Pixi) — same brain
       e.preventDefault();
-      renderMode = renderMode === "pixi" ? "classic" : "pixi";
+      renderMode = renderMode === "alive" ? "classic" : "alive";
       void setMeta("render_mode", renderMode);
-      say(renderMode === "pixi" ? "V2 preview ✦" : "back to classic", 2500);
+      say(renderMode === "alive" ? "Alive ✦" : "Classic", 2500);
       return;
     }
     const map: Record<string, Panel> = { m: "mood", j: "jar", n: "note" };
@@ -1804,7 +1808,7 @@
       setMode(companionMode);
       room = (await getMeta("room")) ?? "none"; // cozy-room theme
       trainAware = (await getMeta("train_aware")) !== "0"; // training awareness (default on)
-      renderMode = (await getMeta("render_mode")) === "pixi" ? "pixi" : "classic"; // V2 preview (default off)
+      renderMode = (await getMeta("render_mode")) === "alive" ? "alive" : "classic"; // renderer choice
       flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
       try { await invoke("set_flow_aware", { on: flowAware }); } catch { /* not under Tauri */ }
       {
@@ -2876,7 +2880,7 @@
       >
     {/if}
 
-    <div class="stage" class:pixihide={renderMode === "pixi"}>
+    <div class="stage" class:pixihide={renderMode === "alive"}>
       {#if habitatOn}
         <!-- Type Habitat: a Tiny Living Sanctuary chosen by the pet's type -->
         <div class="roombg" style="opacity: {0.96 * widgetOpacity}" aria-hidden="true">
@@ -3029,10 +3033,19 @@
 
     <!-- V2 preview: Pixi body + biome (visual; toggle with V). pointer-events off
          so window-drag, radial menu and panels keep working over it. -->
-    {#if renderMode === "pixi"}
+    {#if renderMode === "alive"}
       <div class="pixilayer">
         {#key `${dexId}-${isShiny}`}
-          <PixiStage {dexId} shiny={isShiny} size={imgSize} {petState} calm={comfortMode || deepWork()} />
+          <PixiStage
+            {dexId}
+            shiny={isShiny}
+            size={imgSize}
+            {petState}
+            calm={comfortMode || deepWork()}
+            onTap={onPetTap}
+            onStroke={onPetStroke}
+            onBackgroundDown={beginWindowDrag}
+          />
         {/key}
       </div>
     {/if}
@@ -3791,8 +3804,8 @@
   .pixilayer {
     position: absolute;
     inset: 0;
-    z-index: 1;
-    pointer-events: none; /* visual preview — DOM drag/menu/panels stay live */
+    z-index: 1; /* below chrome (radial 8–12, panels 5+) so menus stay clickable */
+    pointer-events: auto; /* Alive renderer handles pet interaction + bg window-drag */
   }
   /* idle: clip the pet/shadow/bubble to the orb so only the sphere shows.
      on hover the mask lifts, so controls and overflow return. */

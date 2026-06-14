@@ -18,8 +18,20 @@
     size?: number;
     petState?: string; // brain bridge: "idle" | "sleeping" | "happy" | …
     calm?: boolean; // comfort / deep-flow → settle (no zoomies)
+    onTap?: () => void; // bridge to the shared brain (parity with Classic)
+    onStroke?: () => void;
+    onBackgroundDown?: () => void; // empty-space press → drag the window
   }
-  let { dexId, shiny = false, size = 230, petState = "idle", calm = false }: Props = $props();
+  let {
+    dexId,
+    shiny = false,
+    size = 230,
+    petState = "idle",
+    calm = false,
+    onTap,
+    onStroke,
+    onBackgroundDown
+  }: Props = $props();
 
   let host: HTMLDivElement;
   let app: Application | null = null;
@@ -201,6 +213,10 @@
       });
       a.stage.eventMode = "static";
       a.stage.hitArea = a.screen;
+      // empty-space press → drag the window (parity with Classic's draglayer)
+      a.stage.on("pointerdown", (e) => {
+        if (e.target !== mesh) onBackgroundDown?.();
+      });
       a.stage.on("pointermove", (e) => {
         const gx = e.global.x;
         const gy = e.global.y;
@@ -221,6 +237,7 @@
               petFrames = 30;
               squash.nudge(1.6);
               jiggle = Math.min(14, jiggle + 4);
+              onStroke?.(); // shared brain: affection / drift / lines (parity)
             }
           }
         }
@@ -232,6 +249,7 @@
           if (moved < 6 && performance.now() - downAt.t < 400) {
             hop(360);
             jiggle = Math.min(14, jiggle + 5);
+            onTap?.(); // shared brain: same tap reaction as Classic
           }
         }
         if (mode === "drag") {
