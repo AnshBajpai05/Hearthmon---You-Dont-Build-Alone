@@ -3086,24 +3086,22 @@
          so window-drag, radial menu and panels keep working over it. -->
     {#if renderMode === "alive"}
       <div class="pixilayer">
-        {#key `${dexId}-${isShiny}`}
-          <PixiStage
-            {dexId}
-            shiny={isShiny}
-            size={imgSize}
-            {petState}
-            {bubble}
-            calm={comfortMode || deepWork()}
-            habitat={habitatOn}
-            {habitatShape}
-            {bgStyle}
-            opacity={widgetOpacity}
-            onTap={onPetTap}
-            onStroke={onPetStroke}
-            onBackgroundDown={beginWindowDrag}
-            fx={aliveFx}
-          />
-        {/key}
+        <PixiStage
+          {dexId}
+          shiny={isShiny}
+          size={imgSize}
+          {petState}
+          {bubble}
+          calm={comfortMode || deepWork()}
+          habitat={habitatOn}
+          {habitatShape}
+          {bgStyle}
+          opacity={widgetOpacity}
+          onTap={onPetTap}
+          onStroke={onPetStroke}
+          onBackgroundDown={beginWindowDrag}
+          fx={aliveFx}
+        />
       </div>
     {/if}
 

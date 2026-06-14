@@ -86,16 +86,19 @@
 
     (async () => {
       const a = new Application();
-      const petType = dexEntry(dexId)?.type ?? "normal"; // drives type-specific idles
-      const biome = biomeForType(petType);
-      const sky0 = hexNum(biome.wall[0]);
-      const sky1 = hexNum(biome.wall[1]);
-      const grd0 = hexNum(biome.floor[0]);
-      const grd1 = hexNum(biome.floor[1]);
-      const lightCol = hexNum(biome.light);
-      const part = rgba(biome.particleColor);
-      const hasWater = biome.ground === "water";
-      const pkind = biome.particle; // firefly|ember|pollen|spark|dust|snow|star|mist
+      // biome palette is MUTABLE so a form switch can change the whole world live
+      // (no teardown). applyBiome() recomputes these + recolors the scene.
+      let petType = dexEntry(dexId)?.type ?? "normal"; // drives type-specific idles
+      let biome = biomeForType(petType);
+      let sky0 = hexNum(biome.wall[0]);
+      let sky1 = hexNum(biome.wall[1]);
+      let grd0 = hexNum(biome.floor[0]);
+      let grd1 = hexNum(biome.floor[1]);
+      let lightCol = hexNum(biome.light);
+      let part = rgba(biome.particleColor);
+      let hasWater = biome.ground === "water";
+      let pkind = biome.particle; // firefly|ember|pollen|spark|dust|snow|star|mist
+      let vpSig = ""; // gradient repaint signature (cleared on biome change)
 
       // transparent — so the desktop shows through (parity with the see-through widget)
       await a.init({ backgroundAlpha: 0, antialias: true, resizeTo: host });
@@ -125,13 +128,15 @@
       const back = new Graphics();
       const orb = new Container(); // the biome's light source (moon / sun / lamp)
       const halo = new Graphics();
-      for (let i = 4; i >= 1; i--) halo.circle(0, 0, 10 + i * 9).fill({ color: lightCol, alpha: 0.06 });
-      orb.addChild(halo, new Graphics().circle(0, 0, 13).fill({ color: lightCol, alpha: 0.92 }));
+      const orbCore = new Graphics();
+      orb.addChild(halo, orbCore); // colored in applyBiome()
       const reflect = new Graphics(); // water reflection (water biomes only)
       const waves = new Graphics(); // sea (water biomes only)
       const lantern = new Graphics();
       for (let i = 5; i >= 1; i--) lantern.circle(0, 0, 6 + i * 10).fill({ color: 0xffb066, alpha: 0.05 });
       lantern.circle(0, 0, 5).fill({ color: 0xffd9a0, alpha: 0.85 });
+      const flies = new Container(); // particle field (rebuilt per biome)
+      let P: { g: Graphics; bx: number; by: number; ph: number; sp: number; amp: number; prog: number }[] = [];
 
       // gradient via stacked rects (no FillGradient — avoids Pixi-version API drift)
       const lerpCol = (c0: number, c1: number, t: number) => {
@@ -153,20 +158,30 @@
       }
 
       // ════ PARTICLES (kind-driven) ════
-      const flies = new Container();
-      const PSIZE = pkind === "mist" ? 7 : pkind === "star" || pkind === "spark" ? 1.5 : 2.2;
-      const P = Array.from({ length: pkind === "mist" ? 7 : 14 }, () => {
-        const g = new Graphics().circle(0, 0, PSIZE).fill({ color: part.color, alpha: part.alpha });
-        if (pkind === "firefly" || pkind === "ember") g.circle(0, 0, PSIZE * 2).fill({ color: part.color, alpha: part.alpha * 0.25 });
-        flies.addChild(g);
-        return { g, bx: Math.random(), by: Math.random(), ph: Math.random() * 6.28, sp: 0.3 + Math.random() * 0.6, amp: 6 + Math.random() * 16, prog: Math.random() };
-      });
 
-      // ════ PET (mesh-warp + animated GIF) ════
-      // Classic feels alive because its <img> plays the Showdown GIF (flames/limbs/
-      // tail). Texture.from froze us to frame 0, and a hidden <img> won't advance
-      // (Chromium pauses off-screen GIFs). So decode the GIF frames with ImageDecoder
-      // (WebCodecs — present in the Tauri WebView2) and cycle them onto a canvas texture.
+      const applyBiome = (newDex: number) => {
+        petType = dexEntry(newDex)?.type ?? "normal";
+        biome = biomeForType(petType);
+        sky0 = hexNum(biome.wall[0]);
+        sky1 = hexNum(biome.wall[1]);
+        grd0 = hexNum(biome.floor[0]);
+        grd1 = hexNum(biome.floor[1]);
+        lightCol = hexNum(biome.light);
+        part = rgba(biome.particleColor);
+        hasWater = biome.ground === "water";
+        pkind = biome.particle;
+        vpSig = ""; // force gradient repaint
+        
+        flies.removeChildren();
+        const PSIZE = pkind === "mist" ? 7 : pkind === "star" || pkind === "spark" ? 1.5 : 2.2;
+        P = Array.from({ length: pkind === "mist" ? 7 : 14 }, () => {
+          const g = new Graphics().circle(0, 0, PSIZE).fill({ color: part.color, alpha: part.alpha });
+          if (pkind === "firefly" || pkind === "ember") g.circle(0, 0, PSIZE * 2).fill({ color: part.color, alpha: part.alpha * 0.25 });
+          flies.addChild(g);
+          return { g, bx: Math.random(), by: Math.random(), ph: Math.random() * 6.28, sp: 0.3 + Math.random() * 0.6, amp: 6 + Math.random() * 16, prog: Math.random() };
+        });
+      };
+      
       const loadImg = (url: string): Promise<HTMLImageElement | null> =>
         new Promise((resolve) => {
           const img = new Image();
@@ -178,8 +193,7 @@
 
       interface GifFrame { bmp: ImageBitmap; dur: number }
       const frames: GifFrame[] = [];
-      let natW = 96;
-      let natH = 96;
+      let natW = 96, natH = 96;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ImageDecoderCtor = (globalThis as unknown as { ImageDecoder?: any }).ImageDecoder;
       const decodeGif = async (url: string): Promise<boolean> => {
@@ -196,115 +210,123 @@
             natW = image.displayWidth || image.codedWidth || natW;
             natH = image.displayHeight || image.codedHeight || natH;
             const bmp = await createImageBitmap(image);
-            frames.push({ bmp, dur: (image.duration ?? 90000) / 1e6 }); // µs → s
+            frames.push({ bmp, dur: (image.duration ?? 90000) / 1e6 });
             image.close();
           }
           return frames.length > 0;
-        } catch {
-          return false;
-        }
+        } catch { return false; }
       };
 
-      const animated = await decodeGif(spriteUrl(dexId, shiny));
-      if (destroyed) {
-        for (const f of frames) f.bmp.close();
-        return;
-      }
-
-      // fallback when WebCodecs is unavailable / decode failed → one static image
-      let staticImg: HTMLImageElement | null = null;
-      if (!animated) {
-        staticImg = (await loadImg(spriteUrl(dexId, shiny))) ?? (await loadImg(fallbackUrl(dexId, shiny)));
-        if (destroyed) return;
-        if (!staticImg) throw new Error("sprite load failed for dex " + dexId);
-        natW = staticImg.naturalWidth || 96;
-        natH = staticImg.naturalHeight || 96;
-      }
-
       const petCanvas = document.createElement("canvas");
-      petCanvas.width = natW;
-      petCanvas.height = natH;
       const petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
-
-      // paint frame 0, then read the opaque content bbox (centers the orb on the
-      // VISIBLE pet, not the padded frame)
-      let visCX = natW / 2;
-      let visCY = natH / 2;
-      let contentW = natW;
-      let contentH = natH;
-      if (petCtx) {
-        if (animated) petCtx.drawImage(frames[0].bmp, 0, 0);
-        else if (staticImg) petCtx.drawImage(staticImg, 0, 0, natW, natH);
-        try {
-          const dd = petCtx.getImageData(0, 0, natW, natH).data;
-          let top = natH, bot = -1, left = natW, right = -1;
-          for (let y = 0; y < natH; y++) {
-            for (let x = 0; x < natW; x++) {
-              if (dd[(y * natW + x) * 4 + 3] > 20) {
-                if (y < top) top = y;
-                if (y > bot) bot = y;
-                if (x < left) left = x;
-                if (x > right) right = x;
-              }
-            }
-          }
-          if (bot > top && right > left) {
-            visCX = (left + right) / 2;
-            visCY = (top + bot) / 2;
-            contentW = right - left;
-            contentH = bot - top;
-          }
-        } catch {
-          /* tainted (shouldn't happen with ACAO:*) — keep the full-frame bbox */
-        }
-      }
-
-      let tex: Texture;
-      try {
-        // animated → the canvas we cycle decoded frames onto; static → the image
-        tex = Texture.from(animated && petCtx ? petCanvas : (staticImg as HTMLImageElement));
-      } catch {
-        throw new Error("texture create failed for dex " + dexId);
-      }
-      if (tex.source) tex.source.scaleMode = "nearest";
-
+      let visCX = 48, visCY = 48, contentW = 96, contentH = 96;
+      
+      let tex: Texture = Texture.EMPTY;
       const GX = 7;
       const GY = 8;
-      const mesh = new MeshPlane({ texture: tex, verticesX: GX, verticesY: GY });
-      const texW = tex.width || 96;
-      const texH = tex.height || 96;
-      const pw = texW;
-      const ph = texH;
-      const pcx = texW / 2;
-      const maxY = texH; // plane spans 0..texW, 0..texH
-      const petScale = size / Math.max(pw, ph);
-      mesh.pivot.set(pcx, maxY); // feet at the bottom
-      mesh.scale.set(petScale);
-      mesh.eventMode = "static";
-      mesh.cursor = "grab";
-      mesh.hitArea = new Rectangle(0, 0, texW, texH);
-
-      // vertex deform is OPTIONAL — if the buffer API differs by Pixi version, the
-      // pet still renders (scale-only breath/squash). Never let it blank the stage.
+      let mesh: MeshPlane = new MeshPlane({ texture: Texture.EMPTY, verticesX: GX, verticesY: GY });
+      let pw = 96, ph = 96, pcx = 48, maxY = 96, petScale = 1;
       let deformable = false;
       let posBuf: { data: Float32Array; update: () => void } | null = null;
       let baseV = new Float32Array(0);
       let uv = new Float32Array(0);
-      try {
-        const b = mesh.geometry.getBuffer("aPosition") as unknown as { data: Float32Array; update: () => void };
-        baseV = Float32Array.from(b.data);
-        if (baseV.length < 4) throw new Error("no vertices");
-        uv = new Float32Array(baseV.length);
-        for (let i = 0; i < baseV.length; i += 2) uv[i + 1] = baseV[i + 1] / texH;
-        posBuf = b;
-        deformable = true;
-      } catch (err) {
-        console.error("[PixiStage] mesh deform unavailable; scale-only fallback:", err);
-      }
+      
+      let drawShadow = () => {};
+      let gifAcc = 0; // time accumulator for GIF frame advance
+      let frameIdx = 0; // current decoded GIF frame
+
+      const reloadPet = async (newDex: number, newShiny: boolean) => {
+        for (const f of frames) f.bmp.close();
+        frames.length = 0;
+        gifAcc = 0;
+        frameIdx = 0;
+        
+        let animated = await decodeGif(spriteUrl(newDex, newShiny));
+        if (destroyed) return;
+        
+        let staticImg: HTMLImageElement | null = null;
+        if (!animated) {
+          staticImg = (await loadImg(spriteUrl(newDex, newShiny))) ?? (await loadImg(fallbackUrl(newDex, newShiny)));
+          if (destroyed) return;
+          if (!staticImg) throw new Error("sprite load failed for dex " + newDex);
+          natW = staticImg.naturalWidth || 96;
+          natH = staticImg.naturalHeight || 96;
+        }
+
+        petCanvas.width = natW;
+        petCanvas.height = natH;
+        visCX = natW / 2; visCY = natH / 2; contentW = natW; contentH = natH;
+        if (petCtx) {
+          petCtx.clearRect(0, 0, natW, natH);
+          if (animated) petCtx.drawImage(frames[0].bmp, 0, 0);
+          else if (staticImg) petCtx.drawImage(staticImg, 0, 0, natW, natH);
+          try {
+            const dd = petCtx.getImageData(0, 0, natW, natH).data;
+            let top = natH, bot = -1, left = natW, right = -1;
+            for (let y = 0; y < natH; y++) {
+              for (let x = 0; x < natW; x++) {
+                if (dd[(y * natW + x) * 4 + 3] > 20) {
+                  if (y < top) top = y;
+                  if (y > bot) bot = y;
+                  if (x < left) left = x;
+                  if (x > right) right = x;
+                }
+              }
+            }
+            if (bot > top && right > left) {
+              visCX = (left + right) / 2; visCY = (top + bot) / 2; contentW = right - left; contentH = bot - top;
+            }
+          } catch {}
+        }
+        
+        try {
+          tex = Texture.from(animated && petCtx ? petCanvas : (staticImg as HTMLImageElement));
+        } catch { return; }
+        if (tex.source) tex.source.scaleMode = "nearest";
+
+        const oldMesh = mesh;
+        mesh = new MeshPlane({ texture: tex, verticesX: GX, verticesY: GY });
+        const texW = tex.width || 96;
+        const texH = tex.height || 96;
+        pw = texW; ph = texH; pcx = texW / 2; maxY = texH;
+        petScale = size / Math.max(pw, ph);
+        mesh.pivot.set(pcx, maxY);
+        mesh.scale.set(petScale);
+        mesh.eventMode = "static";
+        mesh.cursor = "grab";
+        mesh.hitArea = new Rectangle(0, 0, texW, texH);
+
+        try {
+          const b = mesh.geometry.getBuffer("aPosition") as unknown as { data: Float32Array; update: () => void };
+          baseV = Float32Array.from(b.data);
+          uv = new Float32Array(baseV.length);
+          for (let i = 0; i < baseV.length; i += 2) uv[i + 1] = baseV[i + 1] / texH;
+          posBuf = b;
+          deformable = true;
+        } catch (err) {
+          deformable = false;
+        }
+
+        if (oldMesh && a.stage.children.includes(oldMesh)) {
+          const idx = a.stage.getChildIndex(oldMesh);
+          a.stage.addChildAt(mesh, idx);
+          oldMesh.destroy({ children: true });
+        }
+        
+        drawShadow();
+        applyBiome(newDex);
+      };
+
+      await reloadPet(dexId, shiny);
+      if (destroyed) return;
 
       const platform = new Graphics(); // pet backdrop (orb / ground / off)
       const petShadow = new Graphics();
-      petShadow.ellipse(0, 0, pw * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
+      drawShadow = () => {
+        petShadow.clear();
+        petShadow.ellipse(0, 0, pw * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
+      };
+      drawShadow();
       const hearts = new Container();
       const zzz = new Text({ text: "z  z  z", style: { fill: 0xcfc6e8, fontSize: 13 } });
       zzz.anchor.set(0.5);
@@ -468,8 +490,6 @@
       let evoT = 0; // evolution flicker clock
       let prevEating = false;
       let face = -1; // pet facing: -1 default (sprite faces left), +1 flipped
-      let gifAcc = 0; // time accumulator for GIF frame advance
-      let frameIdx = 0; // current decoded GIF frame
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -556,10 +576,17 @@
       const ro = new ResizeObserver(layout);
       ro.observe(host);
 
-      const data = posBuf ? posBuf.data : new Float32Array(0);
       let t = 0;
-      let vpSig = ""; // repaint the gradient only when the viewport changes
+      let prevDexId = dexId;
+      let prevShiny = shiny;
+      
       const tick = (ticker: { deltaMS: number }) => {
+        if (dexId !== prevDexId || shiny !== prevShiny) {
+          prevDexId = dexId;
+          prevShiny = shiny;
+          void reloadPet(dexId, shiny);
+        }
+      
         const dt = Math.min(0.05, ticker.deltaMS / 1000);
         t += dt;
         const w = W();
@@ -597,7 +624,8 @@
 
         // pet render scale: full screen → fixed size; globe → shrink to fit the sphere
         // (clamp height to the room above the shoreline AND width to the sphere — keeps the head in)
-        const curScale = globe ? Math.min((gR * 1.1) / ph, (gR * 1.7) / pw) : petScale;
+        // size is read live so the scale slider resizes the Alive pet too (parity)
+        const curScale = globe ? Math.min((gR * 1.1) / ph, (gR * 1.7) / pw) : size / Math.max(pw, ph);
         const petPx = curScale * ph; // rendered pet height (drives every vertical offset)
         petPxRef = petPx;
 
@@ -723,6 +751,13 @@
             hop(200);
           }
         }
+        // keep the pet anchored to its aligned home every frame (auto-corrects after a
+        // drag-release or a window resize — no need to toggle V to realign). Hops only
+        // nudge velocity, so the target staying at home is safe.
+        if (mode !== "drag") {
+          posX.target = w / 2;
+          posY.target = groundY();
+        }
         posX.step(dt);
         posY.step(dt);
         lean.step(dt);
@@ -757,6 +792,7 @@
         const elJit = petType === "electric" && Math.sin(t * 1.7) > 0.94 ? (Math.random() - 0.5) * pw * 0.03 : 0;
 
         if (deformable && posBuf) {
+          const data = posBuf.data; // current buffer (reloadPet swaps it on form change)
           for (let i = 0; i < baseV.length; i += 2) {
             const bx = baseV[i];
             const by = baseV[i + 1];
