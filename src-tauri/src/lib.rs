@@ -462,7 +462,36 @@ fn write_card(path: String, svg: String) -> Result<(), String> {
 #[tauri::command]
 fn push_card(path: String, companion: String, mood: String, status: String) -> Result<(), String> {
     let repo_path = std::path::Path::new(&path);
-    
+
+    // Integrate any remote changes FIRST (e.g. a README edited on github.com) so
+    // the amend + --force-with-lease below can't be rejected as "stale info".
+    let branch = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| "main".to_string());
+    let _ = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["fetch", "origin"])
+        .status();
+    let rebased = std::process::Command::new("git")
+        .current_dir(repo_path)
+        .args(["rebase", "--autostash", &format!("origin/{branch}")])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !rebased {
+        // a conflict — don't leave the repo mid-rebase; bail out of the integration
+        let _ = std::process::Command::new("git")
+            .current_dir(repo_path)
+            .args(["rebase", "--abort"])
+            .status();
+    }
+
     let readme_path = repo_path.join("README.md");
     if let Ok(content) = std::fs::read_to_string(&readme_path) {
         use std::time::{SystemTime, UNIX_EPOCH};
