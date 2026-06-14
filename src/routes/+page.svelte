@@ -25,6 +25,7 @@
   import CommandBar from "$lib/components/CommandBar.svelte";
   import YearInReview from "$lib/components/YearInReview.svelte";
   import JourneyMovie from "$lib/components/JourneyMovie.svelte";
+  import PixiStage from "$lib/components/PixiStage.svelte";
   import Showcase from "$lib/components/Showcase.svelte";
   import FutureSelf from "$lib/components/FutureSelf.svelte";
   import TodayFelt from "$lib/components/TodayFelt.svelte";
@@ -174,6 +175,7 @@
   let dexId = $state(0);
   let petName = $state("");
   let petState = $state<PetState>("idle");
+  let renderMode = $state<"classic" | "pixi">("classic"); // V2 preview: Pixi body+biome
   let bubble = $state("");
   let panel = $state<Panel>("none");
   let switchFx = $state<SwitchFx>("none");
@@ -1725,6 +1727,14 @@
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     const key = e.key.toLowerCase();
+    if (key === "v") {
+      // V2 preview: swap the CSS pet+biome for the Pixi render (visual only for now)
+      e.preventDefault();
+      renderMode = renderMode === "pixi" ? "classic" : "pixi";
+      void setMeta("render_mode", renderMode);
+      say(renderMode === "pixi" ? "V2 preview ✦" : "back to classic", 2500);
+      return;
+    }
     const map: Record<string, Panel> = { m: "mood", j: "jar", n: "note" };
     const target = map[key];
     if (!target) return;
@@ -1794,6 +1804,7 @@
       setMode(companionMode);
       room = (await getMeta("room")) ?? "none"; // cozy-room theme
       trainAware = (await getMeta("train_aware")) !== "0"; // training awareness (default on)
+      renderMode = (await getMeta("render_mode")) === "pixi" ? "pixi" : "classic"; // V2 preview (default off)
       flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
       try { await invoke("set_flow_aware", { on: flowAware }); } catch { /* not under Tauri */ }
       {
@@ -2865,7 +2876,7 @@
       >
     {/if}
 
-    <div class="stage">
+    <div class="stage" class:pixihide={renderMode === "pixi"}>
       {#if habitatOn}
         <!-- Type Habitat: a Tiny Living Sanctuary chosen by the pet's type -->
         <div class="roombg" style="opacity: {0.96 * widgetOpacity}" aria-hidden="true">
@@ -3015,6 +3026,16 @@
         >
       {/if}
     </div>
+
+    <!-- V2 preview: Pixi body + biome (visual; toggle with V). pointer-events off
+         so window-drag, radial menu and panels keep working over it. -->
+    {#if renderMode === "pixi"}
+      <div class="pixilayer">
+        {#key `${dexId}-${isShiny}`}
+          <PixiStage {dexId} shiny={isShiny} size={imgSize} />
+        {/key}
+      </div>
+    {/if}
 
     {#if evoFlash}
       <div class="evoflash" aria-hidden="true"></div>
@@ -3762,6 +3783,16 @@
     pointer-events: none;
     transition: -webkit-mask-position 0.2s ease;
     opacity: var(--wo, 1); /* user-adjustable widget transparency */
+  }
+  /* V2 preview swaps the CSS stage for the Pixi render */
+  .stage.pixihide {
+    display: none;
+  }
+  .pixilayer {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none; /* visual preview — DOM drag/menu/panels stay live */
   }
   /* idle: clip the pet/shadow/bubble to the orb so only the sphere shows.
      on hover the mask lifts, so controls and overflow return. */
