@@ -85,9 +85,10 @@ export function buildCard(s: CardState): string {
     .join("");
 
   // ── Sprite ─────────────────────────────────────────────────────────────────
+  // ~15% larger so the companion commands the left, not decoration
   const innerSprite = s.sprite
-    ? `<image class="mon" href="${s.sprite}" x="0" y="0" width="96" height="96" preserveAspectRatio="xMidYMax meet"/>`
-    : `<text class="mon" x="48" y="72" font-size="54" text-anchor="middle">🐾</text>`;
+    ? `<image class="mon" href="${s.sprite}" x="0" y="0" width="110" height="110" preserveAspectRatio="xMidYMax meet"/>`
+    : `<text class="mon" x="55" y="82" font-size="62" text-anchor="middle">🐾</text>`;
 
   // ── Speech bubble ──────────────────────────────────────────────────────────
   const bubW = Math.min(340, 36 + s.observation.length * 6.8);
@@ -302,29 +303,29 @@ export function buildCard(s: CardState): string {
         fill="none" stroke="${accent}" stroke-width="1.5"/>
 
   <!-- Sprite glow -->
-  <ellipse class="sprGlow" cx="74" cy="86" rx="110" ry="100" fill="url(#sprGlow)"/>
+  <ellipse class="sprGlow" cx="78" cy="96" rx="120" ry="108" fill="url(#sprGlow)"/>
 
   <!-- Ground shadow (synced to monMove) -->
-  <ellipse class="shadow" cx="74" cy="138" rx="38" ry="6" fill="#000" fill-opacity="0.38"/>
+  <ellipse class="shadow" cx="78" cy="152" rx="44" ry="6.5" fill="#000" fill-opacity="0.38"/>
 
   <!-- Sparkle particles -->
   ${particleSvg}
 
-  <!-- Sprite -->
-  <g transform="translate(26,58)">
+  <!-- Sprite (bigger, grounded near the shadow) -->
+  <g transform="translate(23,42)">
     <g class="monWrap">
       ${innerSprite}
     </g>
   </g>
 
-  <!-- Speech bubble -->
+  <!-- Speech bubble — a thought, nudged toward the companion with a long soft tail -->
   <g class="bub">
-    <rect x="118" y="16" rx="10" width="${bubW.toFixed(0)}" height="28"
-          fill="${bubbleBg}" fill-opacity="0.94" stroke="${accent}" stroke-opacity="0.45" stroke-width="1"/>
-    <rect x="122" y="18" rx="6"  width="${(bubW-8).toFixed(0)}" height="6"
-          fill="white" fill-opacity="0.04"/>
-    <path d="M128 44 l-10 11 l14 -5 z" fill="${bubbleBg}" fill-opacity="0.94"/>
-    <text x="132" y="35" font-size="12" fill="#e9e2fb">${esc(s.observation)}</text>
+    <rect x="116" y="14" rx="11" width="${bubW.toFixed(0)}" height="28"
+          fill="${bubbleBg}" fill-opacity="0.95" stroke="${accent}" stroke-opacity="0.45" stroke-width="1"/>
+    <rect x="120" y="16" rx="6"  width="${(bubW-8).toFixed(0)}" height="6"
+          fill="white" fill-opacity="0.05"/>
+    <path d="M124 42 q -7 17 -26 22 q 19 -2 30 -12 z" fill="${bubbleBg}" fill-opacity="0.95"/>
+    <text x="130" y="33" font-size="12" fill="#e9e2fb">${esc(s.observation)}</text>
   </g>
 
   <!-- Title: the PRODUCT, not the nickname -->
