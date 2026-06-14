@@ -370,7 +370,7 @@
     // pet does zoomies + spin + jump to match the energy
     await new Promise((r) => setTimeout(r, 400));
     for (let i = 0; i < 3; i++) {
-      if (phase !== "home" || petState !== "idle") break;
+      if (phase !== "home" || (petState !== "idle" && petState !== "happy")) break;
       startMove("run");
       await new Promise((r) => setTimeout(r, moveDur * 1000 + 160));
     }
@@ -711,6 +711,7 @@
   // bond-tier ceremony banner (set when the bond deepens between launches)
   let bondCeremony = $state<string | null>(null);
   let birthday = $state(false); // party hat for the day-we-met anniversary
+  let breakthroughActive = $state(false);
 
   // bridge every pet-attached FX into the Alive (Pixi) renderer — one brain, two skins
   const aliveFx = $derived({
@@ -723,13 +724,16 @@
     atkCls: (attackMove?.cls ?? 2) as 1 | 2 | 3,
     dir,
     evoActive,
+    evoShowNew,
     evoFlash,
+    evoTarget,
     visitorId: visitor?.entry.id ?? null,
     visitorShiny: visitor?.shiny ?? false,
     visitorX: visitor?.x ?? 0,
     visitorFlip: visitor?.flip ?? false,
     eating,
-    birthday
+    birthday,
+    breakthrough: breakthroughActive
   });
 
   // ---- command palette (global Alt+Space): Raycast-for-emotions ----
@@ -1340,8 +1344,8 @@
 
   function reactBreakthrough() {
     poke();
-    aliveFx = { ...aliveFx, breakthrough: true };
-    setTimeout(() => { aliveFx = { ...aliveFx, breakthrough: false }; }, 2000);
+    breakthroughActive = true;
+    setTimeout(() => { breakthroughActive = false; }, 2000);
     if (petState === "idle") {
       petState = "happy";
       setTimeout(() => (petState = "idle"), 1100);
