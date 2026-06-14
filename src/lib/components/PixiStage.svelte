@@ -9,7 +9,7 @@
     Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
-  import { spriteUrl, fallbackUrl, dexEntry } from "$lib/sprites";
+  import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL } from "$lib/sprites";
   import { biomeForType } from "$lib/biomes";
 
   interface Props {
@@ -328,6 +328,22 @@
       let visitorTexId = -1; // which dex sprite is currently loaded for the visitor
       const visX = new Spring(0, 90, 16); // smooth walk-in / walk-off
 
+      const trainer = new Sprite(); // Ash, recalling/throwing during the switch ceremony
+      trainer.anchor.set(0.5, 1);
+      trainer.visible = false;
+      let trainerTex: Texture | null = null;
+      // Showdown's trainer png has no CORS header → WebGL can't upload it. Use the
+      // bundled same-origin copy (static/ash.png); fall back to the remote for <img>.
+      void (loadImg("/ash.png").then((i) => i ?? loadImg(TRAINER_URL))).then((img) => {
+        if (!img || destroyed) return;
+        try {
+          const tt = Texture.from(img);
+          if (tt.source) tt.source.scaleMode = "nearest";
+          trainerTex = tt;
+          trainer.texture = tt;
+        } catch { /* trainer is best-effort flavor — ceremony still works without it */ }
+      });
+
       const ball = new Graphics(); // Pokéball for the switch ceremony
       ball.visible = false;
       const burst = new Graphics(); // release flash + ring
@@ -359,7 +375,7 @@
       scene.addChild(back, orb, reflect, waves, lantern, flies, biomeMask);
       // order: scene → backdrop → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, platform, visitorSprite, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, platform, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
       );
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
@@ -771,24 +787,53 @@
         const sw = F.switchFx;
         if (sw !== prevSwitch) { prevSwitch = sw; ceremonyT = 0; }
         if (sw !== "none") ceremonyT += dt;
+        // Ash stands at the left and throws (parity with Classic's trainer). The ball
+        // leaves/returns to his hand; the pet recalls into it and the new form bursts out.
+        trainer.visible = false;
+        const trX = w * 0.18;
+        const trGY = groundY() + 4;
+        const handX = trX + size * 0.24;
+        const handY = trGY - size * 0.6;
+        const showTrainer = (x: number, rot: number) => {
+          if (!trainerTex) return;
+          trainer.visible = true;
+          trainer.x = x;
+          trainer.y = trGY;
+          trainer.rotation = rot;
+          const ts = (size * 0.95) / Math.max(trainerTex.width || 1, trainerTex.height || 1);
+          trainer.scale.set(ts);
+        };
         if (sw === "recall") {
           const p = Math.min(1, ceremonyT / 0.48);
           petScaleMul = 1 - p * 0.85;
           tint = 0xff5a4d;
           mesh.alpha = 1 - p * 0.55;
+          showTrainer(-w * 0.2 + (trX + w * 0.2) * p, 0); // Ash walks in
         } else if (sw === "ballout" || sw === "gap" || sw === "throw") {
           petVisible = false;
-          if (sw !== "gap") {
+          if (sw === "ballout") {
+            showTrainer(trX, 0);
             drawBall(ball, size * 0.16);
-            const arc = sw === "ballout" ? Math.min(1, ceremonyT / 0.44) : Math.min(1, ceremonyT / 0.68);
-            ball.x = sw === "ballout" ? posX.value - arc * (w * 0.7) : posX.value + (1 - arc) * (w * 0.7);
-            ball.y = sw === "ballout" ? bodyCY + arc * arc * 50 : bodyCY - Math.sin(arc * Math.PI) * 80;
-            ball.rotation = arc * (sw === "ballout" ? 9 : 15);
+            const arc = Math.min(1, ceremonyT / 0.44); // pet → hand
+            ball.x = posX.value + (handX - posX.value) * arc;
+            ball.y = bodyCY + (handY - bodyCY) * arc;
+            ball.rotation = arc * 9;
+            ball.visible = true;
+          } else if (sw === "gap") {
+            showTrainer(trX, -0.18); // wind up (lean back)
+          } else {
+            showTrainer(trX, 0.18); // lean into the throw
+            drawBall(ball, size * 0.16);
+            const arc = Math.min(1, ceremonyT / 0.68); // hand → pet, with an arc
+            ball.x = handX + (posX.value - handX) * arc;
+            ball.y = handY + (bodyCY - handY) * arc - Math.sin(arc * Math.PI) * 70;
+            ball.rotation = arc * 16;
             ball.visible = true;
           }
         } else if (sw === "release") {
           const p = Math.min(1, ceremonyT / 0.62);
           petScaleMul = Math.min(1, p * 1.5); // new form grows out
+          showTrainer(trX - w * 0.4 * p, 0.18 * (1 - p)); // Ash heads off
           if (p < 0.55) {
             const rr = size * (0.2 + p);
             burst.clear();
