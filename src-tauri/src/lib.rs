@@ -1,5 +1,6 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -185,6 +186,155 @@ fn gpu_stat() -> GpuStat {
     }
     s
 }
+
+// ── Flow Awareness (working-tree save cadence) ─────────────────────
+// We can't see your editor, but `git status`/`git diff` over the watched repo
+// reveal the TEXTURE of a session — saves, churn — without an IDE extension and
+// while honouring .gitignore (no node_modules noise). The frontend turns this
+// into flow / struggle / breakthrough companionship.
+fn git_capture(repo: &PathBuf, args: &[&str]) -> String {
+    let mut c = std::process::Command::new("git");
+    c.current_dir(repo).args(args);
+    #[cfg(windows)]
+    c.creation_flags(CREATE_NO_WINDOW);
+    c.output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
+}
+
+/// Poll the watched repo's working tree every 6s; emit `repo-active` (with the
+/// dirty-file count) whenever the uncommitted state changes — i.e. you saved.
+fn spawn_repo_activity_watcher(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut last = String::new();
+        let mut primed = false; // skip the first sight so we don't fire on launch
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(6));
+            let repo = match handle.state::<Mutex<GitWatch>>().lock() {
+                Ok(g) => g.repo.clone(),
+                Err(_) => continue,
+            };
+            let Some(repo) = repo else {
+                last.clear();
+                primed = false;
+                continue;
+            };
+            // porcelain = which files are dirty; numstat = how much (changes on
+            // every save, even re-saving the same already-dirty file)
+            let snap = format!(
+                "{}\n{}",
+                git_capture(&repo, &["status", "--porcelain"]),
+                git_capture(&repo, &["diff", "--numstat"])
+            );
+            if !primed {
+                last = snap;
+                primed = true;
+                continue;
+            }
+            if snap != last {
+                last = snap.clone();
+                let dirty = snap.lines().filter(|l| !l.trim().is_empty()).count() as u32;
+                let _ = handle.emit("repo-active", dirty);
+            }
+        }
+    });
+}
+
+// ── Builder State: foreground-app rhythm (flow vs. friction) ───────
+// We read ONLY the foreground process NAME (never the window title, keystrokes,
+// or any content) so the companion can sense effort density across the whole
+// machine — a Kaggle notebook, a debug session, docs-reading — not just git.
+// Opt-out via `set_flow_aware(false)`.
+struct FlowAware(AtomicBool);
+
+#[tauri::command]
+fn set_flow_aware(state: tauri::State<'_, FlowAware>, on: bool) {
+    state.0.store(on, Ordering::Relaxed);
+}
+
+fn app_category(proc_name: &str) -> &'static str {
+    const EDITORS: &[&str] = &[
+        "code.exe", "cursor.exe", "devenv.exe", "idea64.exe", "pycharm64.exe", "sublime_text.exe",
+        "rider64.exe", "clion64.exe", "webstorm64.exe", "goland64.exe", "studio64.exe",
+        "windsurf.exe", "zed.exe",
+    ];
+    const TERMS: &[&str] = &[
+        "windowsterminal.exe", "wt.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe",
+        "alacritty.exe", "wezterm-gui.exe", "kitty.exe",
+    ];
+    const BROWSERS: &[&str] = &[
+        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "arc.exe", "zen.exe",
+        "vivaldi.exe",
+    ];
+    if EDITORS.contains(&proc_name) || proc_name.contains("idea") || proc_name.contains("pycharm") {
+        "editor"
+    } else if TERMS.contains(&proc_name) {
+        "terminal"
+    } else if BROWSERS.contains(&proc_name) {
+        "browser"
+    } else {
+        "other"
+    }
+}
+
+#[cfg(windows)]
+fn foreground_proc() -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd == 0 {
+            return None;
+        }
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return None;
+        }
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h == 0 {
+            return None;
+        }
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len);
+        CloseHandle(h);
+        if ok == 0 {
+            return None;
+        }
+        let s = String::from_utf16_lossy(&buf[..len as usize]);
+        s.rsplit(|c| c == '\\' || c == '/').next().map(|x| x.to_lowercase())
+    }
+}
+
+/// Poll the foreground app every 4s; emit `focus-app` (the category) when it
+/// changes. The frontend turns the rhythm into flow / friction companionship.
+#[cfg(windows)]
+fn spawn_focus_watcher(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut last = String::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            if !handle.state::<FlowAware>().0.load(Ordering::Relaxed) {
+                continue; // opted out — never look
+            }
+            let cat = foreground_proc().map(|p| app_category(&p)).unwrap_or("other");
+            if cat != last {
+                last = cat.to_string();
+                let _ = handle.emit("focus-app", cat);
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn spawn_focus_watcher(_handle: tauri::AppHandle) {}
 
 // ── Training Awareness via log-watch ───────────────────────────────
 // The user points us at a training log file OR a folder (we follow the
@@ -421,12 +571,16 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Mutex::new(GitWatch::default()))
         .manage(Mutex::new(LogWatch::default()))
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear])
+        .manage(FlowAware(AtomicBool::new(true)))
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());
             // Training Awareness: start the background log watcher.
             spawn_log_watcher(app.handle().clone());
+            // Flow Awareness: working-tree save cadence + foreground-app rhythm.
+            spawn_repo_activity_watcher(app.handle().clone());
+            spawn_focus_watcher(app.handle().clone());
             // Tray: the companion rests here instead of quitting — it never truly leaves.
             let show = MenuItem::with_id(app, "show", "Show Hearthmon", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Hide to tray", true, None::<&str>)?;

@@ -22,6 +22,8 @@
     // Training awareness
     trainAware: boolean;
     onToggleTrain: (on: boolean) => void;
+    flowAware: boolean;
+    onToggleFlow: (on: boolean) => void;
     logPath: string; // watched log file/folder ("" = off)
     trainStatus: string; // live "running · epoch 12 · loss 0.34" / "watching…"
     onSetLog: (path: string) => void;
@@ -35,7 +37,7 @@
     localPath, remoteUrl, hasToken,
     onSetLocal, onStopLocal, onSetRemote, onStopRemote,
     onSaveToken, onClearToken, onTest, onShowcase, onCard, onClose,
-    trainAware, onToggleTrain, logPath, trainStatus, onSetLog, onStopLog,
+    trainAware, onToggleTrain, flowAware, onToggleFlow, logPath, trainStatus, onSetLog, onStopLog,
     onTestTrain, onTestCrash, gpuAvailable, gpu
   }: Props = $props();
 
@@ -179,6 +181,18 @@
       </div>
     {/if}
   {/if}
+
+  <!-- ─── flow / focus sensing (privacy-safe: app NAMES only) ─── -->
+  <h3>Flow sensing</h3>
+  <label class="gpurow">
+    <input type="checkbox" checked={flowAware} onchange={(e) => onToggleFlow((e.target as HTMLInputElement).checked)} />
+    <span>Notice when I'm in flow vs. stuck</span>
+  </label>
+  <p class="hint">
+    Reads only the <strong>foreground app's name</strong> + your repo's save rhythm — never window
+    titles, keystrokes, or content. Stays quiet during deep focus; a rare gentle line when you've
+    clearly been grinding. All local.
+  </p>
 
   <!-- ─── shareable showcase card ─── -->
   <button class="showcase" onclick={onShowcase}>📣 Showcase card — share your journey</button>

@@ -10,7 +10,8 @@ export type MemoryKind =
   | "note"
   | "letter"
   | "praise" // kind words others said — the "Someone Believed In You" archive
-  | "chapter"; // a named period (Life RPG) — read_at doubles as the close date
+  | "chapter" // a named period (Life RPG) — read_at doubles as the close date
+  | "arc"; // an auto-detected "chapter moment" — a dense stretch of building
 export type Mood = "good" | "stressed" | "tired" | "low" | "frustrated" | "uncertain";
 
 export interface Memory {
@@ -118,6 +119,19 @@ export async function oldMilestone(minDaysAgo = 30): Promise<Memory | null> {
   const rows = await d.select<Memory[]>(
     `SELECT * FROM memories
      WHERE kind IN ('win','learned','survived') AND text IS NOT NULL AND text != ''
+       AND created_at < datetime('now','localtime','-' || $1 || ' days')
+     ORDER BY RANDOM() LIMIT 1`,
+    [minDaysAgo]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+/** A past "chapter moment" (a dense building stretch) at least N days old. */
+export async function oldArc(minDaysAgo = 7): Promise<Memory | null> {
+  const d = await getDb();
+  const rows = await d.select<Memory[]>(
+    `SELECT * FROM memories
+     WHERE kind = 'arc' AND text IS NOT NULL AND text != ''
        AND created_at < datetime('now','localtime','-' || $1 || ' days')
      ORDER BY RANDOM() LIMIT 1`,
     [minDaysAgo]

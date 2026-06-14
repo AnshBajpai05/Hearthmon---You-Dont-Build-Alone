@@ -24,6 +24,7 @@
   import CodePanel from "$lib/components/CodePanel.svelte";
   import CommandBar from "$lib/components/CommandBar.svelte";
   import YearInReview from "$lib/components/YearInReview.svelte";
+  import JourneyMovie from "$lib/components/JourneyMovie.svelte";
   import Showcase from "$lib/components/Showcase.svelte";
   import FutureSelf from "$lib/components/FutureSelf.svelte";
   import TodayFelt from "$lib/components/TodayFelt.svelte";
@@ -60,6 +61,7 @@
     bumpCounter,
     unreadLetter,
     allMemories,
+    oldArc,
     type Memory
   } from "$lib/db";
   import type { Mood, MemoryKind } from "$lib/db";
@@ -115,7 +117,14 @@
     personaAmbient,
     ALONGSIDE_STAGES,
     alongsideLine,
-    projectStayedLine
+    projectStayedLine,
+    projectRevisitLine,
+    flowLines,
+    frictionStuckLines,
+    frictionBounceLines,
+    breakthroughLines,
+    chapterMomentLines,
+    arcCallbackLine
   } from "$lib/lines";
   import type { CompanionMode } from "$lib/lines";
   import {
@@ -156,7 +165,8 @@
     | "wrapped"
     | "showcase"
     | "future"
-    | "today";
+    | "today"
+    | "movie";
   // the full Ash sequence: recall beam → ball returns → "Name, go!" → thrown ball arcs in → release
   type SwitchFx = "none" | "recall" | "ballout" | "gap" | "throw" | "release";
 
@@ -1041,12 +1051,138 @@
     await setMeta("train_log_path", "");
   }
 
+  // ---- Builder CONTEXT Engine: infer CONTEXT (never emotion) from many weak,
+  // privacy-safe signals, and respond with gentle PROBABILITY — never certainty.
+  // The superpower isn't "it knows what I feel"; it's "it quietly notices how
+  // hard I'm trying." So we only act when several weak signals ALIGN, and we
+  // speak observationally ("this one seems stubborn"), never "you're frustrated".
+  const FLOW_GAP = 8 * 60_000; // a quiet stretch this long ends the work burst
+  const FLOW_MIN_SAVES = 4;
+  const FLOW_MIN_MS = 6 * 60_000;
+  const FLOW_DECAY = 4 * 60_000; // flow fades this long after the last save
+  const BREAKTHROUGH_MS = 12 * 60_000; // a commit after this much churn = hard-won
+  let lastSaveAt = 0;
+  let workStart = 0;
+  let saveCount = 0;
+  let flowSaid = false;
+  let lastFlowCue = 0;
+  let lastFrictionCue = 0;
+  // foreground-app rhythm (process NAMES only — never titles/keystrokes/content)
+  let flowAware = $state(true);
+  let curCat = ""; // editor / terminal / browser / other
+  let curCatSince = 0;
+  let switchTimes: number[] = []; // recent app-switch timestamps
+
+  const activeNow = () => Date.now() - lastSaveAt < FLOW_DECAY;
+  // deep focus = sustained editing OR a long editor/terminal dwell (no commits needed)
+  const flowActive = () => activeNow() && saveCount >= FLOW_MIN_SAVES;
+  const editorFlow = () =>
+    (curCat === "editor" || curCat === "terminal") && Date.now() - curCatSince > FLOW_MIN_MS;
+  const deepWork = () => flowActive() || editorFlow();
+  // waiting mode (the ML moat): a run is going and you've stepped back — keep watch
+  const waitingMode = () => trainingActive && Date.now() - lastSaveAt > 5 * 60_000;
+
+  // FRICTION confidence (0..1) — fused from weak signals so a tutorial or doc-read
+  // (no saves) never trips it. Only real building does.
+  function frictionConfidence(): { c: number; bouncing: boolean } {
+    const now = Date.now();
+    if (!activeNow()) return { c: 0, bouncing: false };
+    const thrash = switchTimes.filter((t) => now - t < 3 * 60_000).length;
+    const burstMin = workStart ? (now - workStart) / 60_000 : 0;
+    let c = 0;
+    if (saveCount >= 4) c += 0.3; // you're actually EDITING (not watching)
+    if (burstMin >= 20) c += 0.25; // sustained at it
+    if (thrash >= 4) c += 0.3; // bouncing between apps
+    if (saveCount >= 8 && burstMin >= 25) c += 0.15; // grinding
+    return { c, bouncing: thrash >= 4 };
+  }
+
+  // evaluate context after any signal; act only on aligned, high-confidence friction
+  function evalContext() {
+    const now = Date.now();
+    const { c, bouncing } = frictionConfidence();
+    if (c >= 0.7 && now - lastFrictionCue > 60 * 60_000 && !focusMode && companionMode !== "just_there") {
+      lastFrictionCue = now;
+      fidget("perk"); // the pet just moves a little closer
+      const l = pick(bouncing ? frictionBounceLines : frictionStuckLines);
+      say(l, 8000);
+      announce(l);
+    }
+  }
+
+  // foreground app changed — update rhythm, then re-evaluate context
+  function onFocusApp(cat: string) {
+    if (!flowAware) return;
+    const now = Date.now();
+    if (cat === curCat) return;
+    switchTimes.push(now);
+    switchTimes = switchTimes.filter((t) => now - t < 3 * 60_000);
+    curCat = cat;
+    curCatSince = now;
+    evalContext();
+  }
+
+  async function setFlowAware(on: boolean) {
+    flowAware = on;
+    await setMeta("flow_aware", on ? "1" : "0");
+    try {
+      await invoke("set_flow_aware", { on });
+    } catch {
+      /* not under Tauri */
+    }
+  }
+
+  // a working-tree change (you saved). The strongest "real building" signal.
+  function noteBuilderActivity() {
+    const now = Date.now();
+    if (now - lastSaveAt > FLOW_GAP) {
+      workStart = now; // a fresh burst of work
+      saveCount = 0;
+      flowSaid = false;
+    }
+    lastSaveAt = now;
+    saveCount += 1;
+    void bumpEffort(1); // chapter memory: this day's effort density
+    // deep-focus onset: said once, then the companionship is the SILENCE
+    if (!flowSaid && saveCount >= FLOW_MIN_SAVES && now - workStart > FLOW_MIN_MS) {
+      flowSaid = true;
+      if (now - lastFlowCue > 3 * 3600_000 && !focusMode && companionMode !== "just_there") {
+        lastFlowCue = now;
+        say(pick(flowLines), 6000);
+      }
+    }
+    evalContext();
+  }
+
+  function reactBreakthrough() {
+    poke();
+    if (petState === "idle") {
+      petState = "happy";
+      setTimeout(() => (petState = "idle"), 1100);
+    }
+    if (focusMode || companionMode === "just_there") return;
+    const l = pick(breakthroughLines);
+    runDelight("fireworks", 3200);
+    fixFanfare();
+    say(l, 9000);
+    announce(l);
+    void setMeta("bt_day", new Date().toISOString().slice(0, 10)); // flavours today's chapter
+    void bumpEffort(15); // a hard-won win weighs heavily toward a chapter
+  }
+
   // A detected commit (local reflog or a remote push). Counts toward milestones.
   async function onCommit(message: string) {
     const n = await bumpCounter("commits");
+    // a commit that ENDS a long, high-effort burst is hard-won — celebrate the arc
+    const hardWon = workStart > 0 && Date.now() - workStart > BREAKTHROUGH_MS && saveCount >= 5;
     if (MILESTONES.includes(n)) reactGit("milestone", milestoneQuip(n));
+    else if (hardWon) reactBreakthrough();
     else reactGit(FIX_RE.test(message) ? "fix" : "commit");
+    workStart = 0; // a commit ends the current burst
+    saveCount = 0;
+    flowSaid = false;
     void bumpProjectDay(); // "alongside you": this counts as a day on the project
+    void bumpEffort(5); // chapter memory: commits weigh into the day's density
   }
 
   // ---- "Alongside you": long-term awareness of the project you keep at ----
@@ -1094,28 +1230,103 @@
 
   // on launch: if we moved on from a project we stuck with, honour it once;
   // otherwise greet the ongoing one. At most one of these per launch.
+  // one reflective line per launch, by priority: moved-on → chapter callback →
+  // revisit-after-absence → ongoing-project greet.
   async function alongsideLaunch() {
     const p = activeProject;
     const cur = p ? projSlug(p) : "";
     const prevSlug = (await getMeta("proj_current_slug")) ?? "";
     const prevName = (await getMeta("proj_current_name")) ?? "";
+    const curLastDay = cur ? ((await getMeta(`proj_${cur}_lastday`)) ?? "") : "";
     if (cur) {
       await setMeta("proj_current_slug", cur);
       await setMeta("proj_current_name", p);
     }
+    const canSpeak = !focusMode && companionMode !== "just_there";
+    // 1) you moved on from a project you stuck with — honour it once
     if (prevSlug && prevSlug !== cur) {
       const prevDays = Number((await getMeta(`proj_${prevSlug}_days`)) ?? 0);
       if (prevDays >= 5 && (await getMeta(`proj_${prevSlug}_closed`)) !== "1") {
         await setMeta(`proj_${prevSlug}_closed`, "1");
-        if (!focusMode && companionMode !== "just_there") {
+        if (canSpeak) {
           const line = projectStayedLine(prevName || prevSlug);
           say(line, 9000);
           announce(line);
-          return; // one line per launch
+          return;
         }
       }
     }
-    await alongsideCheck(); // else: greet the project we're still on
+    // 2) a rare, sacred callback to a past chapter moment
+    if (await maybeArcCallback()) return;
+    // 3) returning to a project after a long absence
+    if (cur && curLastDay) {
+      const gapDays = (Date.now() - new Date(curLastDay).getTime()) / 86400_000;
+      if (gapDays >= 14 && canSpeak) {
+        const line = projectRevisitLine(p);
+        say(line, 8000);
+        announce(line);
+        return;
+      }
+    }
+    // 4) otherwise, greet the project we're still on
+    await alongsideCheck();
+  }
+
+  // ---- Chapter Memory Engine: a CHAPTER is a day of real effort density (saves +
+  // commits + breakthroughs), kept once/day as a rare `arc` memory the pet can
+  // quietly recall as SHARED MEMORY weeks later. Sacred — never productivity spam.
+  // Internally each chapter has a kind (sprint / long_night / breakthrough); the
+  // user only ever experiences the quiet remembering. ----
+  const CHAPTER_THRESHOLD = 60; // effort points in one day = a chapter worth keeping
+  async function bumpEffort(points: number) {
+    const today = new Date().toISOString().slice(0, 10);
+    if ((await getMeta("effort_day")) !== today) {
+      await setMeta("effort_day", today);
+      await setMeta("effort_pts", "0");
+    }
+    const e = Number((await getMeta("effort_pts")) ?? 0) + points;
+    await setMeta("effort_pts", String(e));
+    if (e >= CHAPTER_THRESHOLD && (await getMeta("arc_day")) !== today) {
+      await setMeta("arc_day", today); // at most one chapter per day
+      await recordChapterMoment();
+    }
+  }
+
+  async function recordChapterMoment() {
+    const proj = activeProject || "this";
+    const today = new Date().toISOString().slice(0, 10);
+    const hour = new Date().getHours();
+    // classify internally — never surfaced as a label, only flavours the recall
+    const kind =
+      (await getMeta("bt_day")) === today
+        ? "breakthrough"
+        : hour >= 22 || hour < 5
+          ? "long_night"
+          : "sprint";
+    await addMemory("arc", { text: `${kind}|${proj}` }); // kept for later shared memory
+    if (focusMode || companionMode === "just_there") return;
+    runDelight("star", 2600);
+    const l = pick(chapterMomentLines);
+    say(l, 9000);
+    announce(l);
+  }
+
+  // rare, sacred recollection of a past chapter — shared memory, never data recall.
+  async function maybeArcCallback(): Promise<boolean> {
+    if (bondTierNow < 2) return false; // earned at Trusted Friend+
+    const last = Number((await getMeta("last_arc_callback")) ?? 0);
+    if (Date.now() - last < 12 * 86400_000) return false;
+    const arc = await oldArc(7);
+    if (!arc?.text) return false;
+    await setMeta("last_arc_callback", String(Date.now()));
+    if (focusMode || companionMode === "just_there") return true; // handled, but quiet
+    const sep = arc.text.indexOf("|");
+    const kind = sep > 0 ? arc.text.slice(0, sep) : "sprint";
+    const proj = sep > 0 ? arc.text.slice(sep + 1) : arc.text;
+    const l = arcCallbackLine(proj, kind);
+    say(l, 10000);
+    announce(l);
+    return true;
   }
 
   // ---- GitHub remote polling: a single repo, OR a whole account ----
@@ -1524,6 +1735,8 @@
       setMode(companionMode);
       room = (await getMeta("room")) ?? "none"; // cozy-room theme
       trainAware = (await getMeta("train_aware")) !== "0"; // training awareness (default on)
+      flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
+      try { await invoke("set_flow_aware", { on: flowAware }); } catch { /* not under Tauri */ }
       {
         const lp = (await getMeta("train_log_path")) ?? "";
         if (lp) {
@@ -1821,6 +2034,13 @@
     listen<string>("train-log", (e) => onTrainLine(e.payload)).then((un) => (unlistenTrain = un));
     listen<string>("train-newfile", (e) => onNewRun(e.payload)).then((un) => (unlistenNewRun = un));
 
+    // flow awareness: working-tree saves emitted by the Rust activity watcher
+    let unlistenActive: (() => void) | undefined;
+    listen<number>("repo-active", () => noteBuilderActivity()).then((un) => (unlistenActive = un));
+    // flow awareness: foreground-app rhythm (process names only)
+    let unlistenFocus: (() => void) | undefined;
+    listen<string>("focus-app", (e) => onFocusApp(e.payload)).then((un) => (unlistenFocus = un));
+
     // global command palette — Alt+Space from anywhere summons the quick log bar
     register("Alt+Space", (e) => {
       if (e && typeof e === "object" && "state" in e && (e as { state?: string }).state === "Released") return;
@@ -1847,6 +2067,8 @@
       unlistenCommit?.();
       unlistenTrain?.();
       unlistenNewRun?.();
+      unlistenActive?.();
+      unlistenFocus?.();
       clearInterval(remotePollTimer);
       clearInterval(toddlerTimer);
       unregister("Alt+Space").catch(() => {});
@@ -1874,12 +2096,12 @@
   function wanderTick() {
     if (busy()) return;
     const r = Math.random();
-    if (comfortMode) {
-      // calmer presence: only slow drifts and the occasional glance — no zoomies,
-      // no attacks, no jumps. Just quietly here. (Comfort overrides Fun mode.)
+    if (comfortMode || deepWork() || waitingMode()) {
+      // calmer presence: while you're in flow / a run is going / comfort, the pet settles —
+      // only slow drifts and the occasional glance. Quiet company, no zoomies.
       if (r < 0.18) startMove("walk");
       else if (r < 0.24) dir = dir === 1 ? -1 : 1;
-      else if (r < 0.255) runDelight("rain", 9000); // soft rain suits the mood
+      else if (r < 0.255 && comfortMode) runDelight("rain", 9000); // soft rain suits a heavy mood
       return;
     }
     if (companionMode === "fun") {
@@ -1931,6 +2153,7 @@
   // aloud) so it stays gentle and non-intrusive.
   function murmurTick() {
     if (busy() || petState === "sleeping") return;
+    if (deepWork()) return; // you're deep in it — the company is the silence
     if (focusMode || companionMode === "just_there") return; // stay quiet
     if (Math.random() > 0.18) return; // rare on purpose
     const now = new Date();
@@ -2449,6 +2672,8 @@
         {gpu}
         {trainAware}
         onToggleTrain={(on) => void setTrainAware(on)}
+        {flowAware}
+        onToggleFlow={(on) => void setFlowAware(on)}
         {logPath}
         {trainStatus}
         onSetLog={(p) => void setLogPath(p)}
@@ -2460,6 +2685,16 @@
 
     {#if panel === "wrapped"}
       <YearInReview {petName} {dexId} shiny={isShiny} onClose={() => (panel = "none")} />
+    {/if}
+
+    {#if panel === "movie"}
+      <JourneyMovie
+        {petName}
+        {dexId}
+        shiny={isShiny}
+        temperament={petTemperament?.summary ?? ""}
+        onClose={() => (panel = "none")}
+      />
     {/if}
 
     {#if panel === "showcase"}

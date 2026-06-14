@@ -141,6 +141,76 @@ export function alongsideLine(stage: number, project: string): string {
     default: return `Still here, still on ${project}. I like that about you.`;
   }
 }
+// ---- Flow awareness (working-tree save cadence) ----
+// said ONCE when you drop into deep work — then the companion goes quiet (the
+// presence IS the silence). Never naggy.
+export const flowLines = [
+  "You're in it. I'll keep quiet.",
+  "Deep focus — I'll just be here.",
+  "Flow state. I've got the quiet covered.",
+  "You're locked in. I'll hold the space."
+];
+// OBSERVATIONAL, never emotional — we notice the EFFORT, never claim the feeling.
+// "stuck" pattern: lots of editing over a long stretch, no commit landing.
+export const frictionStuckLines = [
+  "This one seems stubborn.",
+  "Looks like you've been deep in this one.",
+  "Knotty problem, huh? You'll untangle it.",
+  "You've been at this a while. I'm right here."
+];
+// "bouncing" pattern: lots of back-and-forth between apps WHILE editing.
+export const frictionBounceLines = [
+  "You've been bouncing between things a lot.",
+  "Lot of back-and-forth on this one.",
+  "Chasing this across a few windows, huh?"
+];
+// a commit that ENDED a long struggle — hard-won, celebrated louder than a
+// routine commit. the companion witnessed the fight.
+export const breakthroughLines = [
+  "THAT'S the one. You cracked it.",
+  "After all that — you got it. I saw the fight.",
+  "Breakthrough. That was hard-won.",
+  "You stayed with it till it broke open. Proud of that."
+];
+
+// ---- Chapter Memory: a day worth remembering (effort density) ----
+// said when a chapter is quietly kept — companion warmth, never "productivity".
+export const chapterMomentLines = [
+  "Today's one I'll remember.",
+  "A lot happened today. I was here for it.",
+  "We went a long way today. I'll hold onto this one.",
+  "Today felt like one of the big ones."
+];
+// a rare, sacred recollection — shared memory, NOT data recall. Internally the
+// chapter has a kind (sprint / long_night / breakthrough) but the user only ever
+// experiences quiet remembering.
+export function arcCallbackLine(project: string, kind = "sprint"): string {
+  const night = [
+    "We've spent a lot of late nights with this one.",
+    `This room feels different from those early ${project} nights.`
+  ];
+  const breakthrough = [
+    "We've cracked some hard things together.",
+    "We've carried a few things together now."
+  ];
+  const general = [
+    "We've carried a few things together now.",
+    `We've gone a long way with ${project}.`,
+    "We've put real time into this, you and me."
+  ];
+  const bank = kind === "long_night" ? night : kind === "breakthrough" ? breakthrough : general;
+  return bank[Math.floor(Math.random() * bank.length)];
+}
+// returning to a project after a long gap — observational, warm.
+export function projectRevisitLine(project: string): string {
+  const bank = [
+    `Been a while since we touched ${project}.`,
+    `${project} again — good to be back in it.`,
+    `We're back on ${project}. I remember this one.`
+  ];
+  return bank[Math.floor(Math.random() * bank.length)];
+}
+
 // fired once when you move on from a project you stuck with — honours the effort.
 export function projectStayedLine(project: string): string {
   const bank = [

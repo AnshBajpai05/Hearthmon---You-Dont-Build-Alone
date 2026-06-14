@@ -94,7 +94,7 @@
   const CATS: CatDef[] = [
     {
       id: "memory", icon: "🧠", name: "Memory",
-      tagline: "Mood · Today · Jar · Journey · Recap · Future · Note",
+      tagline: "Mood · Today · Jar · Journey · Recap · Movie · Future · Note",
       angle: 270, labelSide: "bottom", dirHint: 0,
       items: [
         { id: "mood",    icon: "🙂", label: "Mood" },
@@ -102,6 +102,7 @@
         { id: "jar",     icon: "🫙", label: "Good Jar" },
         { id: "journey", icon: "📖", label: "Journey" },
         { id: "recap",   icon: "🎞️", label: "Recap" },
+        { id: "movie",   icon: "🎬", label: "Movie" },
         { id: "future",  icon: "🔮", label: "Future" },
         { id: "note",    icon: "✉️",  label: "Leave Note" },
       ],
@@ -238,7 +239,7 @@
   // ─── action dispatch ─────────────────────────────────────
   function doSub(catId: CatId, itemId: string) {
     const closeAfter = new Set([
-      "memory:mood", "memory:today", "memory:jar", "memory:journey", "memory:recap", "memory:future", "memory:note",
+      "memory:mood", "memory:today", "memory:jar", "memory:journey", "memory:recap", "memory:movie", "memory:future", "memory:note",
       "care:feed", "care:pet", "care:evolve", "care:vault",
       "play:battle", "play:switch", "play:random",
       "system:code", "system:quit",
@@ -253,6 +254,7 @@
       case "memory:jar":     onTogglePanel("jar");     break;
       case "memory:journey": onTogglePanel("journey"); break;
       case "memory:recap":   onTogglePanel("wrapped");  break;
+      case "memory:movie":   onTogglePanel("movie");   break;
       case "memory:future":  onTogglePanel("future");  break;
       case "memory:note":    onTogglePanel("note");    break;
       // Care
