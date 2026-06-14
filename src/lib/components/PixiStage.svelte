@@ -78,9 +78,17 @@
       const W = () => a.screen.width;
       const H = () => a.screen.height;
       const horizon = () => H() * 0.62;
-      // centered when there's no full biome (parity with Classic); low (standing on
-      // the shore) when the landscape habitat is on
-      const groundY = () => H() * (habitat ? 0.82 : 0.56);
+      // pet feet baseline: globe → the sphere's shoreline; full landscape → low;
+      // no biome → centered (parity with Classic)
+      const groundY = () => {
+        const w = W();
+        const h = H();
+        if (habitat && (bgStyle === "orb" || bgStyle === "square")) {
+          const gR = Math.min(w, h) * 0.42;
+          return h * 0.46 - gR + gR * 2 * 0.6; // globe horizon
+        }
+        return h * (habitat ? 0.82 : 0.56);
+      };
 
       // ════ SCENE LAYERS ════
       const back = new Graphics();
@@ -187,24 +195,24 @@
       zzz.anchor.set(0.5);
       zzz.visible = false;
 
-      // biome scene grouped so it can be CLIPPED to the backdrop (habitat-in-sphere)
+      // biome scene grouped so it can be CLIPPED to the backdrop (habitat-in-sphere).
+      // The mask is a CHILD of scene → Pixi uses it as a clip and never draws it
+      // (adding it to the stage was what rendered the stray white square).
       const scene = new Container();
-      scene.addChild(back, orb, reflect, waves, lantern, flies);
       const biomeMask = new Graphics();
-      // order: scene (maskable) → mask → backdrop → shadow → pet → hearts/zzz
-      a.stage.addChild(scene, biomeMask, platform, petShadow, mesh, hearts, zzz);
+      scene.addChild(back, orb, reflect, waves, lantern, flies, biomeMask);
+      // order: scene (maskable) → backdrop → shadow → pet → hearts/zzz
+      a.stage.addChild(scene, platform, petShadow, mesh, hearts, zzz);
 
-      // backdrop under the pet (orb sphere / ground platform / off) — Classic parity
-      let prevBg = "";
-      function drawPlatform() {
+      // backdrop (orb sphere / square card / ground platform / off) — radius driven
+      function drawPlatform(br: number) {
         platform.clear();
         if (bgStyle === "orb") {
-          platform.circle(0, 0, size * 0.52).fill({ color: lightCol, alpha: 0.1 });
-          platform.circle(0, 0, size * 0.36).fill({ color: lightCol, alpha: 0.08 });
+          platform.circle(0, 0, br).fill({ color: lightCol, alpha: 0.1 });
+          platform.circle(0, 0, br * 0.7).fill({ color: lightCol, alpha: 0.08 });
         } else if (bgStyle === "square") {
-          const s = size * 0.52;
-          platform.roundRect(-s, -s, s * 2, s * 2, 18).fill({ color: lightCol, alpha: 0.1 });
-          platform.roundRect(-s * 0.72, -s * 0.72, s * 1.44, s * 1.44, 14).fill({ color: lightCol, alpha: 0.07 });
+          platform.roundRect(-br, -br, br * 2, br * 2, 22).fill({ color: lightCol, alpha: 0.1 });
+          platform.roundRect(-br * 0.72, -br * 0.72, br * 1.44, br * 1.44, 16).fill({ color: lightCol, alpha: 0.07 });
         } else if (bgStyle === "ground") {
           platform.ellipse(0, 0, size * 0.5, size * 0.13).fill({ color: lightCol, alpha: 0.14 });
         }
@@ -312,95 +320,120 @@
 
       const data = posBuf ? posBuf.data : new Float32Array(0);
       let t = 0;
+      let vpSig = ""; // repaint the gradient only when the viewport changes
       const tick = (ticker: { deltaMS: number }) => {
         const dt = Math.min(0.05, ticker.deltaMS / 1000);
         t += dt;
         const w = W();
         const h = H();
-        const hz = horizon();
 
-        // ── Classic-parity background: opacity · habitat biome · backdrop · clip ──
+        // ── viewport: full widget, OR a globe centered in the widget ───────────
+        const globe = habitat && (bgStyle === "orb" || bgStyle === "square");
+        const gR = Math.min(w, h) * 0.42;
+        const gcx = w / 2;
+        const gcy = h * 0.46;
+        const vpx = globe ? gcx - gR : 0;
+        const vpy = globe ? gcy - gR : 0;
+        const vpw = globe ? gR * 2 : w;
+        const vph = globe ? gR * 2 : h;
+        const HZ = vpy + vph * (globe ? 0.6 : 0.62); // horizon
+        const vpBottom = vpy + vph;
+        const skyH = HZ - vpy;
+
+        // opacity · biome visibility · translucency
         a.stage.alpha = opacity;
         scene.visible = habitat;
-        scene.alpha = 0.9; // slightly translucent — reads like glass / see-through
-        if (bgStyle !== prevBg) {
-          prevBg = bgStyle;
-          drawPlatform();
-        }
+        scene.alpha = 0.9;
+
+        // backdrop: the globe shell (habitat-in-sphere) or a small pad around the pet
+        const bx = globe ? gcx : posX.value;
+        const by = globe ? gcy : posY.value - size * 0.3;
+        const br = globe ? gR : size * 0.52;
+        drawPlatform(br);
         platform.visible = bgStyle !== "off";
+        platform.x = bgStyle === "ground" ? posX.value : bx;
+        platform.y = bgStyle === "ground" ? groundY() + 4 : by;
         petShadow.visible = bgStyle !== "off" || habitat;
-        const platY = bgStyle === "ground" ? groundY() + 4 : posY.value - size * 0.3;
-        platform.x = posX.value;
-        platform.y = platY;
-        // habitat-in-sphere: clip the biome to the backdrop shape (snow-globe)
-        if (habitat && (bgStyle === "orb" || bgStyle === "square")) {
+
+        // clip the biome to the backdrop shape — full vista INSIDE the globe
+        biomeMask.clear();
+        if (globe) {
           scene.mask = biomeMask;
-          biomeMask.clear();
-          const r = size * 0.52;
-          if (bgStyle === "square") biomeMask.roundRect(posX.value - r, platY - r, r * 2, r * 2, 18).fill(0xffffff);
-          else biomeMask.circle(posX.value, platY, r).fill(0xffffff);
+          if (bgStyle === "square") biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
+          else biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
         } else {
           scene.mask = null;
         }
 
-        // light orb parallax
-        orb.x = w * 0.74 + Math.sin(t * 0.18) * 6;
-        orb.y = h * 0.2 + Math.sin(t * 0.12) * 3;
+        // sky + ground gradient inside the viewport (repaint on change)
+        const sig = `${vpx | 0},${vpy | 0},${vpw | 0},${vph | 0}`;
+        if (sig !== vpSig) {
+          vpSig = sig;
+          back.clear();
+          band(vpx, vpy, vpw, HZ - vpy, sky0, sky1, 14);
+          band(vpx, HZ, vpw, vpBottom - HZ, grd0, grd1, 8);
+        }
 
-        // water-only: reflection column + rolling waves
+        // light orb (moon/sun) within the viewport, parallax
+        orb.x = vpx + vpw * 0.74 + Math.sin(t * 0.18) * 6;
+        orb.y = vpy + vph * 0.2 + Math.sin(t * 0.12) * 3;
+
+        // water-only: reflection + rolling waves
         if (hasWater) {
           reflect.clear();
           for (let i = 0; i < 10; i++) {
-            const yy = hz + i * ((h - hz) / 10);
+            const yy = HZ + i * ((vpBottom - HZ) / 10);
             const sway = Math.sin(t * 2 + i * 0.7) * (3 + i);
             const wdt = 26 - i * 1.6 + Math.sin(t * 3 + i) * 3;
             reflect.ellipse(orb.x + sway, yy, Math.max(3, wdt), 2).fill({ color: lightCol, alpha: 0.16 - i * 0.012 });
           }
           waves.clear();
           for (let r = 0; r < 6; r++) {
-            const yy = hz + 6 + r * ((h - hz - 6) / 6);
-            waves.moveTo(0, yy);
-            for (let x = 0; x <= w; x += 26) waves.lineTo(x, yy + Math.sin(x * 0.045 + t * 1.6 + r * 0.9) * (1.6 + r * 0.5));
+            const yy = HZ + 6 + r * ((vpBottom - HZ - 6) / 6);
+            waves.moveTo(vpx, yy);
+            for (let x = vpx; x <= vpx + vpw; x += 26) waves.lineTo(x, yy + Math.sin(x * 0.045 + t * 1.6 + r * 0.9) * (1.6 + r * 0.5));
             waves.stroke({ color: lightCol, width: 1, alpha: Math.max(0.04, 0.13 - r * 0.015) });
           }
         }
 
-        // particles by kind
+        // particles within the viewport
         for (const f of P) {
           if (pkind === "snow") {
             f.prog = (f.prog + dt * 0.08 * f.sp) % 1;
-            f.g.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp;
-            f.g.y = f.prog * h;
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp;
+            f.g.y = vpy + f.prog * vph;
             f.g.alpha = part.alpha;
           } else if (pkind === "ember") {
             f.prog = (f.prog + dt * 0.12 * f.sp) % 1;
-            f.g.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp * 0.4;
-            f.g.y = h - f.prog * (h - hz * 0.4);
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp * 0.4;
+            f.g.y = vpBottom - f.prog * (vph * 0.6);
             f.g.alpha = (1 - f.prog) * part.alpha;
           } else if (pkind === "star") {
-            f.g.x = f.bx * w;
-            f.g.y = f.by * hz;
+            f.g.x = vpx + f.bx * vpw;
+            f.g.y = vpy + f.by * skyH;
             f.g.alpha = part.alpha * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * (1 + f.sp) + f.ph)));
           } else if (pkind === "spark") {
             const phase = (t * f.sp + f.ph) % 1.2;
-            f.g.x = f.bx * w + Math.sin(t * 9 + f.ph) * 2;
-            f.g.y = f.by * hz;
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * 9 + f.ph) * 2;
+            f.g.y = vpy + f.by * skyH;
             f.g.alpha = phase < 0.08 ? part.alpha : phase < 0.16 ? part.alpha * 0.3 : phase < 0.24 ? part.alpha : 0;
           } else if (pkind === "mist") {
-            f.g.x = (((f.bx + t * 0.012 * f.sp) % 1) + 1) % 1 * w;
-            f.g.y = (0.55 + f.by * 0.4) * h;
+            f.g.x = vpx + ((((f.bx + t * 0.012 * f.sp) % 1) + 1) % 1) * vpw;
+            f.g.y = vpy + (0.55 + f.by * 0.4) * vph;
             f.g.alpha = part.alpha * (0.5 + 0.5 * Math.sin(t * 0.6 + f.ph));
           } else {
             // firefly / pollen / dust — gentle drift (+ blink for firefly)
-            f.g.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp;
-            f.g.y = f.by * hz * 0.95 + Math.cos(t * f.sp * 0.8 + f.ph) * f.amp * 0.6;
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp;
+            f.g.y = vpy + f.by * skyH * 1.05 + Math.cos(t * f.sp * 0.8 + f.ph) * f.amp * 0.6;
             f.g.alpha = pkind === "firefly" ? 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * (1.6 + f.sp) + f.ph)) : part.alpha;
           }
         }
 
-        // lantern flicker
+        // lantern within the viewport
+        lantern.x = vpx + vpw * 0.14;
+        lantern.y = vpBottom - vph * 0.08;
         lantern.alpha = 0.82 + Math.sin(t * 9) * 0.05 + Math.sin(t * 23) * 0.03;
-        lantern.scale.set(1 + Math.sin(t * 7) * 0.015);
+        lantern.scale.set((globe ? 0.7 : 1) * (1 + Math.sin(t * 7) * 0.015));
 
         // ---- pet ----
         const sleeping = petState === "sleeping";
