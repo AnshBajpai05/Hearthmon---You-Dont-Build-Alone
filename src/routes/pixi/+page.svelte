@@ -5,12 +5,14 @@
   import PixiStage from "$lib/components/PixiStage.svelte";
 
   const mons = [
-    { id: 131, name: "Lapras" },
-    { id: 25, name: "Pikachu" },
-    { id: 448, name: "Lucario" },
-    { id: 1, name: "Bulbasaur" },
-    { id: 197, name: "Umbreon" },
-    { id: 143, name: "Snorlax" }
+    { id: 131, name: "Lapras" }, // water → Moonlit Shore (waves + fireflies)
+    { id: 6, name: "Charizard" }, // fire → embers
+    { id: 471, name: "Glaceon" }, // ice → snow
+    { id: 25, name: "Pikachu" }, // electric → neon sparks
+    { id: 1, name: "Bulbasaur" }, // grass → greenhouse pollen
+    { id: 149, name: "Dragonite" }, // dragon → stargazing
+    { id: 197, name: "Umbreon" }, // dark → moonlit attic mist
+    { id: 143, name: "Snorlax" } // normal → cozy corner
   ];
   let i = $state(0);
   let shiny = $state(false);

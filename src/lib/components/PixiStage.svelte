@@ -1,22 +1,16 @@
 <script lang="ts">
-  // V2 — unified Pixi stage: ONE Application holding the biome scene AND the
-  // mesh pet in a single ticker (replaces the two stacked sandbox canvases).
-  // This is the shape that drops into the real widget later. Scene is Moonlit
-  // Shore for now; the biome will become data-driven next.
+  // V2 — unified, DATA-DRIVEN Pixi stage: one Application holding a biome scene
+  // (derived from biomes.ts via the pet's type) + the mesh-warp pet, in a single
+  // ticker. Moonlit Shore is the gold standard; every other type renders from
+  // its palette + light + particle kind. This is the shape that drops into the
+  // real widget.
   import { onMount } from "svelte";
   import {
-    Application,
-    Assets,
-    Container,
-    Graphics,
-    MeshPlane,
-    Text,
-    FillGradient,
-    Rectangle,
-    type Texture
+    Application, Assets, Container, Graphics, MeshPlane, Text, FillGradient, Rectangle, type Texture
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
-  import { spriteUrl, fallbackUrl } from "$lib/sprites";
+  import { spriteUrl, fallbackUrl, dexEntry } from "$lib/sprites";
+  import { biomeForType } from "$lib/biomes";
 
   interface Props {
     dexId: number;
@@ -28,13 +22,31 @@
   let host: HTMLDivElement;
   let app: Application | null = null;
 
+  const hexNum = (h: string) => parseInt(h.replace("#", ""), 16);
+  function rgba(s: string): { color: number; alpha: number } {
+    const m = s.match(/rgba?\(([^)]+)\)/);
+    if (!m) return { color: 0xffffff, alpha: 1 };
+    const p = m[1].split(",").map((x) => parseFloat(x.trim()));
+    return { color: ((p[0] & 255) << 16) | ((p[1] & 255) << 8) | (p[2] & 255), alpha: p[3] ?? 1 };
+  }
+
   onMount(() => {
     let destroyed = false;
     let cleanup: (() => void) | null = null;
 
     (async () => {
       const a = new Application();
-      await a.init({ background: 0x0d1422, antialias: true, resizeTo: host });
+      const biome = biomeForType(dexEntry(dexId)?.type ?? "normal");
+      const sky0 = hexNum(biome.wall[0]);
+      const sky1 = hexNum(biome.wall[1]);
+      const grd0 = hexNum(biome.floor[0]);
+      const grd1 = hexNum(biome.floor[1]);
+      const lightCol = hexNum(biome.light);
+      const part = rgba(biome.particleColor);
+      const hasWater = biome.ground === "water";
+      const pkind = biome.particle; // firefly|ember|pollen|spark|dust|snow|star|mist
+
+      await a.init({ background: sky1, antialias: true, resizeTo: host });
       if (destroyed) {
         a.destroy(true);
         return;
@@ -45,17 +57,16 @@
       const W = () => a.screen.width;
       const H = () => a.screen.height;
       const horizon = () => H() * 0.62;
-      const groundY = () => H() * 0.84; // where the pet stands (wet sand)
+      const groundY = () => H() * 0.84;
 
-      // ════ SCENE LAYERS (back → front, all in this one stage) ════
+      // ════ SCENE LAYERS ════
       const back = new Graphics();
-      const moon = new Container();
-      const glow = new Graphics();
-      for (let i = 4; i >= 1; i--) glow.circle(0, 0, 10 + i * 9).fill({ color: 0xbcd2ff, alpha: 0.06 });
-      const disc = new Graphics().circle(0, 0, 13).fill({ color: 0xeef4ff, alpha: 0.95 });
-      moon.addChild(glow, disc);
-      const reflect = new Graphics();
-      const waves = new Graphics();
+      const orb = new Container(); // the biome's light source (moon / sun / lamp)
+      const halo = new Graphics();
+      for (let i = 4; i >= 1; i--) halo.circle(0, 0, 10 + i * 9).fill({ color: lightCol, alpha: 0.06 });
+      orb.addChild(halo, new Graphics().circle(0, 0, 13).fill({ color: lightCol, alpha: 0.92 }));
+      const reflect = new Graphics(); // water reflection (water biomes only)
+      const waves = new Graphics(); // sea (water biomes only)
       const lantern = new Graphics();
       for (let i = 5; i >= 1; i--) lantern.circle(0, 0, 6 + i * 10).fill({ color: 0xffb066, alpha: 0.05 });
       lantern.circle(0, 0, 5).fill({ color: 0xffd9a0, alpha: 0.85 });
@@ -66,15 +77,24 @@
         const hz = horizon();
         back.clear();
         const sky = new FillGradient(0, 0, 0, hz);
-        sky.addColorStop(0, 0x243056);
-        sky.addColorStop(0.6, 0x161d38);
-        sky.addColorStop(1, 0x10172e);
+        sky.addColorStop(0, sky0);
+        sky.addColorStop(1, sky1);
         back.rect(0, 0, w, hz).fill(sky);
-        const sea = new FillGradient(0, hz, 0, h);
-        sea.addColorStop(0, 0x1b2c4a);
-        sea.addColorStop(1, 0x0a1322);
-        back.rect(0, hz, w, h - hz).fill(sea);
+        const grd = new FillGradient(0, hz, 0, h);
+        grd.addColorStop(0, grd0);
+        grd.addColorStop(1, grd1);
+        back.rect(0, hz, w, h - hz).fill(grd);
       }
+
+      // ════ PARTICLES (kind-driven) ════
+      const flies = new Container();
+      const PSIZE = pkind === "mist" ? 7 : pkind === "star" || pkind === "spark" ? 1.5 : 2.2;
+      const P = Array.from({ length: pkind === "mist" ? 7 : 14 }, () => {
+        const g = new Graphics().circle(0, 0, PSIZE).fill({ color: part.color, alpha: part.alpha });
+        if (pkind === "firefly" || pkind === "ember") g.circle(0, 0, PSIZE * 2).fill({ color: part.color, alpha: part.alpha * 0.25 });
+        flies.addChild(g);
+        return { g, bx: Math.random(), by: Math.random(), ph: Math.random() * 6.28, sp: 0.3 + Math.random() * 0.6, amp: 6 + Math.random() * 16, prog: Math.random() };
+      });
 
       // ════ PET (mesh-warp) ════
       let tex: Texture;
@@ -112,29 +132,10 @@
 
       const petShadow = new Graphics();
       petShadow.ellipse(0, 0, pw * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
-
-      const flies = new Container();
-      const FLY = Array.from({ length: 7 }, () => ({
-        c: (() => {
-          const c = new Container();
-          c.addChild(
-            new Graphics().circle(0, 0, 4).fill({ color: 0xffef9c, alpha: 0.25 }),
-            new Graphics().circle(0, 0, 1.4).fill({ color: 0xfff3b0, alpha: 0.95 })
-          );
-          flies.addChild(c);
-          return c;
-        })(),
-        bx: 0.12 + Math.random() * 0.76,
-        by: 0.3 + Math.random() * 0.34,
-        ph: Math.random() * 6.28,
-        sp: 0.4 + Math.random() * 0.5,
-        amp: 8 + Math.random() * 14
-      }));
-
       const hearts = new Container();
 
-      // stage order: sky → moon → reflection → waves → lantern → shadow → pet → fireflies → hearts
-      a.stage.addChild(back, moon, reflect, waves, lantern, petShadow, mesh, flies, hearts);
+      // order: sky → orb → reflection → waves → lantern → shadow → pet → particles → hearts
+      a.stage.addChild(back, orb, reflect, waves, lantern, petShadow, mesh, flies, hearts);
 
       // ════ MOTION STATE ════
       const posX = new Spring(W() / 2, 120, 16);
@@ -216,8 +217,8 @@
 
       const layout = () => {
         paintBack();
-        moon.x = W() * 0.74;
-        moon.y = H() * 0.2;
+        orb.x = W() * 0.74;
+        orb.y = H() * 0.2;
         lantern.x = W() * 0.14;
         lantern.y = groundY() - 6;
         if (mode !== "drag") {
@@ -238,30 +239,62 @@
         const h = H();
         const hz = horizon();
 
-        // ---- scene ----
-        moon.x = w * 0.74 + Math.sin(t * 0.18) * 6;
-        moon.y = h * 0.2 + Math.sin(t * 0.12) * 3;
-        reflect.clear();
-        for (let i = 0; i < 10; i++) {
-          const yy = hz + i * ((h - hz) / 10);
-          const sway = Math.sin(t * 2 + i * 0.7) * (3 + i);
-          const wdt = 26 - i * 1.6 + Math.sin(t * 3 + i) * 3;
-          reflect.ellipse(moon.x + sway, yy, Math.max(3, wdt), 2).fill({ color: 0xcfe0ff, alpha: 0.16 - i * 0.012 });
-        }
-        waves.clear();
-        for (let r = 0; r < 6; r++) {
-          const yy = hz + 6 + r * ((h - hz - 6) / 6);
-          waves.moveTo(0, yy);
-          for (let x = 0; x <= w; x += 26) {
-            waves.lineTo(x, yy + Math.sin(x * 0.045 + t * 1.6 + r * 0.9) * (1.6 + r * 0.5));
+        // light orb parallax
+        orb.x = w * 0.74 + Math.sin(t * 0.18) * 6;
+        orb.y = h * 0.2 + Math.sin(t * 0.12) * 3;
+
+        // water-only: reflection column + rolling waves
+        if (hasWater) {
+          reflect.clear();
+          for (let i = 0; i < 10; i++) {
+            const yy = hz + i * ((h - hz) / 10);
+            const sway = Math.sin(t * 2 + i * 0.7) * (3 + i);
+            const wdt = 26 - i * 1.6 + Math.sin(t * 3 + i) * 3;
+            reflect.ellipse(orb.x + sway, yy, Math.max(3, wdt), 2).fill({ color: lightCol, alpha: 0.16 - i * 0.012 });
           }
-          waves.stroke({ color: 0x9fc0ee, width: 1, alpha: Math.max(0.04, 0.14 - r * 0.015) });
+          waves.clear();
+          for (let r = 0; r < 6; r++) {
+            const yy = hz + 6 + r * ((h - hz - 6) / 6);
+            waves.moveTo(0, yy);
+            for (let x = 0; x <= w; x += 26) waves.lineTo(x, yy + Math.sin(x * 0.045 + t * 1.6 + r * 0.9) * (1.6 + r * 0.5));
+            waves.stroke({ color: lightCol, width: 1, alpha: Math.max(0.04, 0.13 - r * 0.015) });
+          }
         }
-        for (const f of FLY) {
-          f.c.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp;
-          f.c.y = f.by * hz + Math.cos(t * f.sp * 0.8 + f.ph) * (f.amp * 0.6);
-          f.c.alpha = 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * (1.6 + f.sp) + f.ph));
+
+        // particles by kind
+        for (const f of P) {
+          if (pkind === "snow") {
+            f.prog = (f.prog + dt * 0.08 * f.sp) % 1;
+            f.g.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp;
+            f.g.y = f.prog * h;
+            f.g.alpha = part.alpha;
+          } else if (pkind === "ember") {
+            f.prog = (f.prog + dt * 0.12 * f.sp) % 1;
+            f.g.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp * 0.4;
+            f.g.y = h - f.prog * (h - hz * 0.4);
+            f.g.alpha = (1 - f.prog) * part.alpha;
+          } else if (pkind === "star") {
+            f.g.x = f.bx * w;
+            f.g.y = f.by * hz;
+            f.g.alpha = part.alpha * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * (1 + f.sp) + f.ph)));
+          } else if (pkind === "spark") {
+            const phase = (t * f.sp + f.ph) % 1.2;
+            f.g.x = f.bx * w + Math.sin(t * 9 + f.ph) * 2;
+            f.g.y = f.by * hz;
+            f.g.alpha = phase < 0.08 ? part.alpha : phase < 0.16 ? part.alpha * 0.3 : phase < 0.24 ? part.alpha : 0;
+          } else if (pkind === "mist") {
+            f.g.x = (((f.bx + t * 0.012 * f.sp) % 1) + 1) % 1 * w;
+            f.g.y = (0.55 + f.by * 0.4) * h;
+            f.g.alpha = part.alpha * (0.5 + 0.5 * Math.sin(t * 0.6 + f.ph));
+          } else {
+            // firefly / pollen / dust — gentle drift (+ blink for firefly)
+            f.g.x = f.bx * w + Math.sin(t * f.sp + f.ph) * f.amp;
+            f.g.y = f.by * hz * 0.95 + Math.cos(t * f.sp * 0.8 + f.ph) * f.amp * 0.6;
+            f.g.alpha = pkind === "firefly" ? 0.35 + 0.45 * (0.5 + 0.5 * Math.sin(t * (1.6 + f.sp) + f.ph)) : part.alpha;
+          }
         }
+
+        // lantern flicker
         lantern.alpha = 0.82 + Math.sin(t * 9) * 0.05 + Math.sin(t * 23) * 0.03;
         lantern.scale.set(1 + Math.sin(t * 7) * 0.015);
 
