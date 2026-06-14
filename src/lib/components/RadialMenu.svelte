@@ -17,7 +17,7 @@
     roaming:      boolean;
     companionMode: CompanionMode;
     nightForced:  boolean;
-    bgStyle:      "orb" | "ground" | "off";
+    bgStyle:      "orb" | "square" | "ground" | "off";
     weatherKind:  WeatherKind;
     soundPanelOpen: boolean;
     // action callbacks — all owned by +page.svelte

@@ -195,10 +195,10 @@
   let nightForced = $state(false); // manual moon toggle, persisted
   let isWinter = $state(false); // Dec–Feb seasonal snow
   // backdrop style: glossy "orb" sphere · "ground" curved platform · "off"
-  let bgStyle = $state<"orb" | "ground" | "off">("orb");
+  let bgStyle = $state<"orb" | "square" | "ground" | "off">("orb");
   const curType = $derived(dexEntry(dexId)?.type ?? "normal");
   async function cycleBg() {
-    bgStyle = bgStyle === "orb" ? "ground" : bgStyle === "ground" ? "off" : "orb";
+    bgStyle = bgStyle === "orb" ? "square" : bgStyle === "square" ? "ground" : bgStyle === "ground" ? "off" : "orb";
     await setMeta("bg_style", bgStyle);
   }
 
@@ -1839,7 +1839,7 @@
         toddlerTimer = setInterval(() => void toddlerHop(), 6500);
       }
       nightForced = (await getMeta("night_forced")) === "1";
-      bgStyle = (await getMeta("bg_style") as ("orb" | "ground" | "off") | null) ?? "orb";
+      bgStyle = (await getMeta("bg_style") as ("orb" | "square" | "ground" | "off") | null) ?? "orb";
       widgetOpacity = Number((await getMeta("widget_opacity")) ?? 1) || 1;
       evoCount = Number((await getMeta("evo_count")) ?? 0) || 0;
       refreshComfort();
@@ -2871,6 +2871,24 @@
             >
           {/each}
         </div>
+      {:else if bgStyle === "square"}
+        <!-- Rounded card backdrop -->
+        <div
+          class="typebg typebg-square"
+          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; background: {backgroundFor(
+            curType,
+            dexId
+          )}; width: {imgSize + 70}px; height: {imgSize + 70}px; opacity: calc(0.5 * {widgetOpacity})"
+          aria-hidden="true"
+        >
+          {#each Array(5) as _, i (i)}
+            <span
+              class="mote"
+              style="left: {12 + i * 19}%; animation-delay: {i * 1.1}s; animation-duration: {6 +
+                (i % 3) * 2}s">{TYPE_FX[curType]?.emoji ?? '✦'}</span
+            >
+          {/each}
+        </div>
       {/if}
     {/if}
 
@@ -3042,6 +3060,9 @@
             size={imgSize}
             {petState}
             calm={comfortMode || deepWork()}
+            habitat={habitatOn}
+            {bgStyle}
+            opacity={widgetOpacity}
             onTap={onPetTap}
             onStroke={onPetStroke}
             onBackgroundDown={beginWindowDrag}
@@ -4510,6 +4531,24 @@
     background-image: radial-gradient(rgba(255,255,255,0.55) 0.6px, transparent 0.7px);
     background-size: 9px 9px;
     opacity: 0.18;
+  }
+
+  /* Square: a rounded card, centered on the pet */
+  .typebg-square {
+    top: 52%;
+    transform: translate(-50%, -50%);
+    border-radius: 22px;
+    box-shadow:
+      0 0 26px 2px color-mix(in srgb, var(--tc) 45%, transparent),
+      inset 0 3px 10px rgba(255, 255, 255, 0.16),
+      inset 0 -10px 22px rgba(0, 0, 0, 0.3);
+  }
+  .typebg-square::after {
+    content: "";
+    position: absolute; inset: 0; border-radius: 22px;
+    background-image: radial-gradient(rgba(255,255,255,0.5) 0.6px, transparent 0.7px);
+    background-size: 9px 9px;
+    opacity: 0.14;
   }
 
   /* Ground: flat elliptical platform sitting at the pet's feet */

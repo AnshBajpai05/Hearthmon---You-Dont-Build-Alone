@@ -18,6 +18,9 @@
     size?: number;
     petState?: string; // brain bridge: "idle" | "sleeping" | "happy" | …
     calm?: boolean; // comfort / deep-flow → settle (no zoomies)
+    habitat?: boolean; // biome scene on/off (Classic's habitat toggle)
+    bgStyle?: "orb" | "square" | "ground" | "off"; // pet backdrop (Classic's 🌿 cycle)
+    opacity?: number; // widget transparency slider (--wo)
     onTap?: () => void; // bridge to the shared brain (parity with Classic)
     onStroke?: () => void;
     onBackgroundDown?: () => void; // empty-space press → drag the window
@@ -28,6 +31,9 @@
     size = 230,
     petState = "idle",
     calm = false,
+    habitat = false,
+    bgStyle = "orb",
+    opacity = 1,
     onTap,
     onStroke,
     onBackgroundDown
@@ -60,7 +66,8 @@
       const hasWater = biome.ground === "water";
       const pkind = biome.particle; // firefly|ember|pollen|spark|dust|snow|star|mist
 
-      await a.init({ background: sky1, antialias: true, resizeTo: host });
+      // transparent — so the desktop shows through (parity with the see-through widget)
+      await a.init({ backgroundAlpha: 0, antialias: true, resizeTo: host });
       if (destroyed) {
         a.destroy(true);
         return;
@@ -71,7 +78,9 @@
       const W = () => a.screen.width;
       const H = () => a.screen.height;
       const horizon = () => H() * 0.62;
-      const groundY = () => H() * 0.84;
+      // centered when there's no full biome (parity with Classic); low (standing on
+      // the shore) when the landscape habitat is on
+      const groundY = () => H() * (habitat ? 0.82 : 0.56);
 
       // ════ SCENE LAYERS ════
       const back = new Graphics();
@@ -170,6 +179,7 @@
         console.error("[PixiStage] mesh deform unavailable; scale-only fallback:", err);
       }
 
+      const platform = new Graphics(); // pet backdrop (orb / ground / off)
       const petShadow = new Graphics();
       petShadow.ellipse(0, 0, pw * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
       const hearts = new Container();
@@ -177,8 +187,28 @@
       zzz.anchor.set(0.5);
       zzz.visible = false;
 
-      // order: sky → orb → reflection → waves → lantern → shadow → pet → particles → hearts
-      a.stage.addChild(back, orb, reflect, waves, lantern, petShadow, mesh, flies, hearts, zzz);
+      // biome scene grouped so it can be CLIPPED to the backdrop (habitat-in-sphere)
+      const scene = new Container();
+      scene.addChild(back, orb, reflect, waves, lantern, flies);
+      const biomeMask = new Graphics();
+      // order: scene (maskable) → mask → backdrop → shadow → pet → hearts/zzz
+      a.stage.addChild(scene, biomeMask, platform, petShadow, mesh, hearts, zzz);
+
+      // backdrop under the pet (orb sphere / ground platform / off) — Classic parity
+      let prevBg = "";
+      function drawPlatform() {
+        platform.clear();
+        if (bgStyle === "orb") {
+          platform.circle(0, 0, size * 0.52).fill({ color: lightCol, alpha: 0.1 });
+          platform.circle(0, 0, size * 0.36).fill({ color: lightCol, alpha: 0.08 });
+        } else if (bgStyle === "square") {
+          const s = size * 0.52;
+          platform.roundRect(-s, -s, s * 2, s * 2, 18).fill({ color: lightCol, alpha: 0.1 });
+          platform.roundRect(-s * 0.72, -s * 0.72, s * 1.44, s * 1.44, 14).fill({ color: lightCol, alpha: 0.07 });
+        } else if (bgStyle === "ground") {
+          platform.ellipse(0, 0, size * 0.5, size * 0.13).fill({ color: lightCol, alpha: 0.14 });
+        }
+      }
 
       // ════ MOTION STATE ════
       const posX = new Spring(W() / 2, 120, 16);
@@ -288,6 +318,30 @@
         const w = W();
         const h = H();
         const hz = horizon();
+
+        // ── Classic-parity background: opacity · habitat biome · backdrop · clip ──
+        a.stage.alpha = opacity;
+        scene.visible = habitat;
+        scene.alpha = 0.9; // slightly translucent — reads like glass / see-through
+        if (bgStyle !== prevBg) {
+          prevBg = bgStyle;
+          drawPlatform();
+        }
+        platform.visible = bgStyle !== "off";
+        petShadow.visible = bgStyle !== "off" || habitat;
+        const platY = bgStyle === "ground" ? groundY() + 4 : posY.value - size * 0.3;
+        platform.x = posX.value;
+        platform.y = platY;
+        // habitat-in-sphere: clip the biome to the backdrop shape (snow-globe)
+        if (habitat && (bgStyle === "orb" || bgStyle === "square")) {
+          scene.mask = biomeMask;
+          biomeMask.clear();
+          const r = size * 0.52;
+          if (bgStyle === "square") biomeMask.roundRect(posX.value - r, platY - r, r * 2, r * 2, 18).fill(0xffffff);
+          else biomeMask.circle(posX.value, platY, r).fill(0xffffff);
+        } else {
+          scene.mask = null;
+        }
 
         // light orb parallax
         orb.x = w * 0.74 + Math.sin(t * 0.18) * 6;
