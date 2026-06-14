@@ -6,7 +6,7 @@
   // real widget.
   import { onMount } from "svelte";
   import {
-    Application, Assets, Container, Graphics, MeshPlane, Text, FillGradient, Rectangle, type Texture
+    Application, Assets, Container, Graphics, MeshPlane, Text, Rectangle, type Texture
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl, dexEntry } from "$lib/sprites";
@@ -73,19 +73,23 @@
       for (let i = 5; i >= 1; i--) lantern.circle(0, 0, 6 + i * 10).fill({ color: 0xffb066, alpha: 0.05 });
       lantern.circle(0, 0, 5).fill({ color: 0xffd9a0, alpha: 0.85 });
 
+      // gradient via stacked rects (no FillGradient — avoids Pixi-version API drift)
+      const lerpCol = (c0: number, c1: number, t: number) => {
+        const r = Math.round(((c0 >> 16) & 255) + (((c1 >> 16) & 255) - ((c0 >> 16) & 255)) * t);
+        const g = Math.round(((c0 >> 8) & 255) + (((c1 >> 8) & 255) - ((c0 >> 8) & 255)) * t);
+        const b = Math.round((c0 & 255) + ((c1 & 255) - (c0 & 255)) * t);
+        return (r << 16) | (g << 8) | b;
+      };
+      function band(x: number, y: number, w: number, h: number, c0: number, c1: number, n: number) {
+        for (let i = 0; i < n; i++) back.rect(x, y + (h * i) / n, w, h / n + 1).fill({ color: lerpCol(c0, c1, i / n) });
+      }
       function paintBack() {
         const w = W();
         const h = H();
         const hz = horizon();
         back.clear();
-        const sky = new FillGradient(0, 0, 0, hz);
-        sky.addColorStop(0, sky0);
-        sky.addColorStop(1, sky1);
-        back.rect(0, 0, w, hz).fill(sky);
-        const grd = new FillGradient(0, hz, 0, h);
-        grd.addColorStop(0, grd0);
-        grd.addColorStop(1, grd1);
-        back.rect(0, hz, w, h - hz).fill(grd);
+        band(0, 0, w, hz, sky0, sky1, 14);
+        band(0, hz, w, h - hz, grd0, grd1, 8);
       }
 
       // ════ PARTICLES (kind-driven) ════
@@ -111,26 +115,36 @@
       const GX = 7;
       const GY = 8;
       const mesh = new MeshPlane({ texture: tex, verticesX: GX, verticesY: GY });
-      const posBuf = mesh.geometry.getBuffer("aPosition");
-      const baseV = Float32Array.from(posBuf.data as Float32Array);
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (let i = 0; i < baseV.length; i += 2) {
-        minX = Math.min(minX, baseV[i]);
-        maxX = Math.max(maxX, baseV[i]);
-        minY = Math.min(minY, baseV[i + 1]);
-        maxY = Math.max(maxY, baseV[i + 1]);
-      }
-      const pw = maxX - minX || 1;
-      const ph = maxY - minY || 1;
-      const pcx = (minX + maxX) / 2;
-      const uv = new Float32Array(baseV.length);
-      for (let i = 0; i < baseV.length; i += 2) uv[i + 1] = (baseV[i + 1] - minY) / ph;
+      const texW = tex.width || 96;
+      const texH = tex.height || 96;
+      const pw = texW;
+      const ph = texH;
+      const pcx = texW / 2;
+      const maxY = texH; // plane spans 0..texW, 0..texH
       const petScale = size / Math.max(pw, ph);
-      mesh.pivot.set(pcx, maxY);
+      mesh.pivot.set(pcx, maxY); // feet at the bottom
       mesh.scale.set(petScale);
       mesh.eventMode = "static";
       mesh.cursor = "grab";
-      mesh.hitArea = new Rectangle(minX, minY, pw, ph);
+      mesh.hitArea = new Rectangle(0, 0, texW, texH);
+
+      // vertex deform is OPTIONAL — if the buffer API differs by Pixi version, the
+      // pet still renders (scale-only breath/squash). Never let it blank the stage.
+      let deformable = false;
+      let posBuf: { data: Float32Array; update: () => void } | null = null;
+      let baseV = new Float32Array(0);
+      let uv = new Float32Array(0);
+      try {
+        const b = mesh.geometry.getBuffer("aPosition") as unknown as { data: Float32Array; update: () => void };
+        baseV = Float32Array.from(b.data);
+        if (baseV.length < 4) throw new Error("no vertices");
+        uv = new Float32Array(baseV.length);
+        for (let i = 0; i < baseV.length; i += 2) uv[i + 1] = baseV[i + 1] / texH;
+        posBuf = b;
+        deformable = true;
+      } catch (err) {
+        console.error("[PixiStage] mesh deform unavailable; scale-only fallback:", err);
+      }
 
       const petShadow = new Graphics();
       petShadow.ellipse(0, 0, pw * 0.46, 7).fill({ color: 0x000000, alpha: 0.34 });
@@ -236,7 +250,7 @@
       const ro = new ResizeObserver(layout);
       ro.observe(host);
 
-      const data = posBuf.data as Float32Array;
+      const data = posBuf ? posBuf.data : new Float32Array(0);
       let t = 0;
       const tick = (ticker: { deltaMS: number }) => {
         const dt = Math.min(0.05, ticker.deltaMS / 1000);
@@ -342,17 +356,24 @@
           (sleeping ? 0.032 * Math.sin(t * 1.0) : 0.022 * Math.sin(t * 1.7)) +
           (petFrames > 0 ? 0.02 * Math.sin(t * 26) : 0);
         const shear = lean.value * pw * 0.22;
-        for (let i = 0; i < baseV.length; i += 2) {
-          const bx = baseV[i];
-          const by = baseV[i + 1];
-          const v = uv[i + 1];
-          const belly = Math.sin(v * Math.PI);
-          const sy = 1 + breathe - sq * 0.16;
-          const sx = 1 + sq * 0.16 * belly;
-          data[i] = pcx + (bx - pcx) * sx + jiggle * Math.sin(v * 6 + t * 14) * (0.4 + 0.6 * belly) + (1 - v) * shear;
-          data[i + 1] = maxY - (maxY - by) * sy;
+        if (deformable && posBuf) {
+          for (let i = 0; i < baseV.length; i += 2) {
+            const bx = baseV[i];
+            const by = baseV[i + 1];
+            const v = uv[i + 1];
+            const belly = Math.sin(v * Math.PI);
+            const sy = 1 + breathe - sq * 0.16;
+            const sx = 1 + sq * 0.16 * belly;
+            data[i] = pcx + (bx - pcx) * sx + jiggle * Math.sin(v * 6 + t * 14) * (0.4 + 0.6 * belly) + (1 - v) * shear;
+            data[i + 1] = maxY - (maxY - by) * sy;
+          }
+          posBuf.update();
+          mesh.rotation = 0;
+        } else {
+          // no vertex access — breathe/squash/lean via transform only
+          mesh.scale.set(petScale * (1 + sq * 0.16), petScale * (1 + breathe - sq * 0.16));
+          mesh.rotation = lean.value * 0.4;
         }
-        posBuf.update();
         mesh.x = posX.value;
         mesh.y = posY.value;
         mesh.alpha = sleeping ? 0.84 : 1; // dim a touch while asleep
@@ -390,7 +411,7 @@
         document.removeEventListener("visibilitychange", onVis);
         ro.disconnect();
       };
-    })();
+    })().catch((e) => console.error("[PixiStage] init failed:", e));
 
     return () => {
       destroyed = true;
