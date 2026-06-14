@@ -370,7 +370,7 @@
     // pet does zoomies + spin + jump to match the energy
     await new Promise((r) => setTimeout(r, 400));
     for (let i = 0; i < 3; i++) {
-      if (phase !== "home" || (petState !== "idle" && petState !== "happy")) break;
+      if (phase !== "home") break;
       startMove("run");
       await new Promise((r) => setTimeout(r, moveDur * 1000 + 160));
     }
@@ -1151,7 +1151,7 @@
   let saveCount = 0;
   let flowSaid = false;
   let lastFlowCue = 0;
-  let lastFrictionCue = 0;
+  let lastFrictionCue = $state(0);
   // foreground-app rhythm (process NAMES only — never titles/keystrokes/content)
   let flowAware = $state(true);
   let curCat = ""; // editor / terminal / browser / other
