@@ -279,13 +279,18 @@ export function buildCard(s: CardState): string {
         66%     { transform: translateX(3px)  scale(0.78); opacity: 0.2; }
         74%     { transform: translateX(0)    scale(1);    opacity: 0.32; }
       }
-      /* heart on hover — only fires when the SVG is interactive (opened directly /
-         embedded as <object>); GitHub renders the README card as <img> (no hover). */
-      .heart { opacity: 0; transform-box: fill-box; transform-origin: center; }
-      svg:hover .heart { animation: heartPop 1.1s ease-out; }
-      @keyframes heartPop {
+      /* a heart drifts up every ~12s — CSS-only so it animates on GitHub (README
+         cards render as <img>, which has no hover/pointer events) */
+      .heart {
+        opacity: 0;
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: heartFloat 12s ease-out infinite;
+      }
+      @keyframes heartFloat {
         0%   { opacity: 0; transform: translateY(0) scale(0.4); }
-        25%  { opacity: 1; transform: translateY(-8px) scale(1.1); }
+        3%   { opacity: 1; transform: translateY(-8px) scale(1.1); }
+        10%  { opacity: 0; transform: translateY(-34px) scale(0.8); }
         100% { opacity: 0; transform: translateY(-34px) scale(0.8); }
       }
 
@@ -399,7 +404,7 @@ export function buildCard(s: CardState): string {
     </g>
   </g>
 
-  <!-- Affection heart (on hover, where supported) -->
+  <!-- Affection heart — drifts up every ~12s (visible on GitHub) -->
   <text class="heart" x="78" y="88" font-size="20" text-anchor="middle" fill="#ff7aa8">❤</text>
 
   <!-- Current partner, labelled right under the companion -->
