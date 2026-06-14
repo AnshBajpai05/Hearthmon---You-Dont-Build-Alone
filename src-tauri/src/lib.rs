@@ -336,6 +336,93 @@ fn spawn_focus_watcher(handle: tauri::AppHandle) {
 #[cfg(not(windows))]
 fn spawn_focus_watcher(_handle: tauri::AppHandle) {}
 
+// ── Music awareness: read system AUDIO OUTPUT (opt-in) ─────────────
+// We capture the system's playback via WASAPI loopback and emit ONLY ephemeral
+// energy bands (bass / mid / high / level) ~30×/s. No audio is recorded, stored,
+// or transmitted — the raw samples never leave the callback. Off by default;
+// the companion only listens when the user turns it on (`set_audio_aware`).
+struct AudioAware(AtomicBool);
+
+#[tauri::command]
+fn set_audio_aware(state: tauri::State<'_, AudioAware>, on: bool) {
+    state.0.store(on, Ordering::Relaxed);
+}
+
+#[cfg(windows)]
+fn build_loopback(handle: &tauri::AppHandle) -> Option<cpal::Stream> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    let host = cpal::default_host();
+    let device = host.default_output_device()?; // loopback = INPUT stream on OUTPUT device
+    let supported = device.default_output_config().ok()?;
+    if supported.sample_format() != cpal::SampleFormat::F32 {
+        return None; // shared-mode Windows output is virtually always f32
+    }
+    let cfg = supported.config();
+    let sr = cfg.sample_rate.0 as f32;
+    let ch = cfg.channels.max(1) as usize;
+    let a1 = 1.0 - (-2.0 * std::f32::consts::PI * 200.0 / sr).exp(); // bass cutoff ~200Hz
+    let a2 = 1.0 - (-2.0 * std::f32::consts::PI * 2000.0 / sr).exp(); // mid/high split ~2kHz
+    let (mut lp1, mut lp2) = (0f32, 0f32);
+    let (mut sb, mut sm, mut sh, mut n) = (0f32, 0f32, 0f32, 0u32);
+    let mut peak = 0.0008f32; // slow AGC so quiet and loud songs both read 0..1
+    let mut last = std::time::Instant::now();
+    let h = handle.clone();
+    let stream = device
+        .build_input_stream(
+            &cfg,
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                for frame in data.chunks(ch) {
+                    let x = frame.iter().copied().sum::<f32>() / ch as f32;
+                    lp1 += a1 * (x - lp1);
+                    lp2 += a2 * (x - lp2);
+                    let bass = lp1;
+                    let mid = lp2 - lp1;
+                    let high = x - lp2;
+                    sb += bass * bass;
+                    sm += mid * mid;
+                    sh += high * high;
+                    n += 1;
+                }
+                if n > 0 && last.elapsed().as_millis() >= 33 {
+                    let nn = n as f32;
+                    let (b, m, hi) = ((sb / nn).sqrt(), (sm / nn).sqrt(), (sh / nn).sqrt());
+                    let lvl = (b + m + hi) / 3.0;
+                    peak = (peak * 0.999).max(lvl).max(0.0008);
+                    let nz = |v: f32| (v / peak).clamp(0.0, 1.0);
+                    let _ = h.emit("audio-bands", (nz(b), nz(m), nz(hi), nz(lvl)));
+                    sb = 0.0; sm = 0.0; sh = 0.0; n = 0;
+                    last = std::time::Instant::now();
+                }
+            },
+            move |e| eprintln!("[hearthmon] audio stream error: {e}"),
+            None,
+        )
+        .ok()?;
+    stream.play().ok()?;
+    Some(stream)
+}
+
+/// Hold the loopback stream alive only while the user has music-awareness on.
+/// The cpal Stream is !Send, so it's built and dropped on this owning thread.
+#[cfg(windows)]
+fn spawn_audio_watcher(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut stream: Option<cpal::Stream> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let want = handle.state::<AudioAware>().0.load(Ordering::Relaxed);
+            if want && stream.is_none() {
+                stream = build_loopback(&handle);
+            } else if !want && stream.is_some() {
+                stream = None; // drop → capture stops immediately
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn spawn_audio_watcher(_handle: tauri::AppHandle) {}
+
 // ── Training Awareness via log-watch ───────────────────────────────
 // The user points us at a training log file OR a folder (we follow the
 // newest file in it). We tail appended lines and emit `train-log` for each;
@@ -601,7 +688,8 @@ pub fn run() {
         .manage(Mutex::new(GitWatch::default()))
         .manage(Mutex::new(LogWatch::default()))
         .manage(FlowAware(AtomicBool::new(true)))
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware])
+        .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());
@@ -610,6 +698,8 @@ pub fn run() {
             // Flow Awareness: working-tree save cadence + foreground-app rhythm.
             spawn_repo_activity_watcher(app.handle().clone());
             spawn_focus_watcher(app.handle().clone());
+            // Music awareness: idle until the user opts in (set_audio_aware true).
+            spawn_audio_watcher(app.handle().clone());
             // Tray: the companion rests here instead of quitting — it never truly leaves.
             let show = MenuItem::with_id(app, "show", "Show Hearthmon", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Hide to tray", true, None::<&str>)?;

@@ -27,6 +27,9 @@
     onStroke?: () => void;
     onBackgroundDown?: () => void; // empty-space press → drag the window
     fx?: AliveFx; // pet-attached FX bridged from the shared brain (parity with Classic)
+    audioEnergy?: number; // 0..1 smoothed system-audio loudness (music awareness)
+    audioBeat?: number; // increments on each detected beat
+    audioStrength?: number; // 0..1 strength of the latest beat
   }
   // every FX signal Classic renders on its DOM pet, bridged for the Pixi body
   export interface AliveFx {
@@ -66,7 +69,10 @@
     onTap,
     onStroke,
     onBackgroundDown,
-    fx = NO_FX
+    fx = NO_FX,
+    audioEnergy = 0,
+    audioBeat = 0,
+    audioStrength = 0
   }: Props = $props();
 
   let host: HTMLDivElement;
@@ -641,6 +647,11 @@
       let rareKind = "";
       let rareProg = 0;
       let rareDur = 1;
+      // ── music-awareness state ──
+      let prevAudioBeat = 0;
+      let beatT = 0; // remaining beat-pulse visibility
+      let beatS = 0; // strength of the current beat pulse
+      let beatStrike = false; // a strong beat asked for a lightning strike
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -744,6 +755,21 @@
         const h = H();
         const F = fx ?? NO_FX;
         const sleeping = petState === "sleeping";
+
+        // music: a beat → a WEIGHTED tiny reaction (most pass as influence; some delight)
+        if (audioBeat !== prevAudioBeat) {
+          prevAudioBeat = audioBeat;
+          const s = audioStrength;
+          const busy = F.switchFx !== "none" || F.evoActive || F.attacking;
+          if (!busy && !sleeping && (Math.random() < 0.08 + s * 0.5 || s > 0.85)) {
+            squash.nudge(0.5 + s * 1.6); // a little body bounce on the beat
+            beatT = 0.32;
+            beatS = s;
+            if (petType === "electric") petLight = Math.max(petLight, 0.25 + 0.45 * s);
+            if (petType === "electric" && s > 0.82) beatStrike = true; // a drop → strike
+          }
+        }
+        beatT = Math.max(0, beatT - dt);
 
         // replay the Showdown GIF by cycling decoded frames onto the canvas texture
         if (frames.length > 1 && petCtx) {
@@ -888,6 +914,14 @@
         rareG.clear();
         petLight *= Math.exp(-dt / 0.13); // illumination from a strike fades fast
         if (ambKind === "lightning") {
+          // a music drop forces a strike right now
+          if (beatStrike && strikeT <= 0) {
+            beatStrike = false;
+            strikeT = 0.4;
+            const x0 = vpx + vpw * (0.25 + Math.random() * 0.5);
+            boltPts = genBolt(x0, vpy, vpy + (HZ - vpy) * 0.95, vpw * 0.07);
+            boltBranch = genBolt(boltPts[6], boltPts[7], boltPts[7] + (HZ - vpy) * 0.4, vpw * 0.06);
+          }
           if (strikeT > 0) {
             strikeT -= dt;
             const life = Math.max(0, strikeT / 0.4);
@@ -898,7 +932,7 @@
               petLight = Math.max(petLight, life * 0.7); // the bolt lights the pet
             }
           } else {
-            boltT -= dt;
+            boltT -= dt * (1 + audioEnergy * 1.5); // louder music → the storm intensifies
             if (boltT <= 0) {
               boltT = 4 + Math.random() * 7;
               strikeT = 0.4;
@@ -938,6 +972,27 @@
             ambient.lineTo(ex - px * w1, ey - py * w1);
             ambient.lineTo(ox - px * w0, oy - py * w0);
             ambient.fill({ color: lightCol, alpha: 0.05 + 0.025 * Math.sin(t * 0.5 + i * 1.3) });
+          }
+        }
+
+        // music beat pulse: a quick type-flavored burst on a reacting beat (additive)
+        if (beatT > 0) {
+          const bp = beatT / 0.32; // 1→0
+          const cx = posX.value;
+          const cy = posY.value - petPxRef * 0.55;
+          if (petType === "electric") {
+            ambient.circle(cx - petPxRef * 0.13, cy, 2 + 3 * bp).fill({ color: 0xfff3a0, alpha: bp * 0.9 });
+            ambient.circle(cx + petPxRef * 0.13, cy, 2 + 3 * bp).fill({ color: 0xfff3a0, alpha: bp * 0.9 });
+          } else if (petType === "fire") {
+            for (let i = 0; i < 3; i++)
+              ambient.circle(cx + (i - 1) * petPxRef * 0.18, cy + petPxRef * 0.25 - (1 - bp) * 22, 1.6 + 1.6 * bp).fill({ color: 0xffb061, alpha: bp * 0.85 });
+          } else if (hasWater) {
+            const rr = petPxRef * 0.5 * (1 - bp) + 8;
+            ambient.ellipse(cx, posY.value, rr, rr * 0.3).stroke({ color: lightCol, width: 2, alpha: bp * 0.5 });
+          } else if (petType === "psychic" || petType === "fairy") {
+            ambient.circle(cx, cy, petPxRef * 0.55 * (1 - bp) + 6).stroke({ color: 0xd9c2ff, width: 2, alpha: bp * 0.55 });
+          } else {
+            ambient.circle(cx, cy, petPxRef * 0.45 * (1 - bp) + 6).stroke({ color: lightCol, width: 1.5, alpha: bp * 0.4 });
           }
         }
 
@@ -988,7 +1043,7 @@
         // idle hops — but not while sleeping, settled, or mid-ceremony/attack
         const busyFx = F.switchFx !== "none" || F.evoActive || F.attacking;
         if (mode === "idle" && !sleeping && !calm && !busyFx) {
-          nextHop -= dt;
+          nextHop -= dt * (1 + audioEnergy * 0.8); // livelier music → a touch more spring
           if (nextHop <= 0) {
             nextHop = 5 + Math.random() * 6;
             hop(200);
@@ -1146,7 +1201,9 @@
         mesh.tint = tint;
         mesh.visible = petVisible;
         mesh.x = posX.value;
-        mesh.y = posY.value + floatBob;
+        // a tiny energy "vibe" bob — subtle (max ~2.5px), only with audible music
+        const vibe = audioEnergy > 0.12 && !sleeping ? Math.sin(t * 9) * audioEnergy * 2.5 : 0;
+        mesh.y = posY.value + floatBob - vibe;
         if (sw !== "recall") mesh.alpha = F.evoActive ? 1 : (sleeping ? 0.84 : 1) * fireFlick;
 
         // zzz while sleeping

@@ -24,6 +24,8 @@
     onToggleTrain: (on: boolean) => void;
     flowAware: boolean;
     onToggleFlow: (on: boolean) => void;
+    audioAware: boolean;
+    onToggleAudio: (on: boolean) => void;
     logPath: string; // watched log file/folder ("" = off)
     trainStatus: string; // live "running · epoch 12 · loss 0.34" / "watching…"
     onSetLog: (path: string) => void;
@@ -37,7 +39,7 @@
     localPath, remoteUrl, hasToken,
     onSetLocal, onStopLocal, onSetRemote, onStopRemote,
     onSaveToken, onClearToken, onTest, onShowcase, onCard, onClose,
-    trainAware, onToggleTrain, flowAware, onToggleFlow, logPath, trainStatus, onSetLog, onStopLog,
+    trainAware, onToggleTrain, flowAware, onToggleFlow, audioAware, onToggleAudio, logPath, trainStatus, onSetLog, onStopLog,
     onTestTrain, onTestCrash, gpuAvailable, gpu
   }: Props = $props();
 
@@ -192,6 +194,19 @@
     Reads only the <strong>foreground app's name</strong> + your repo's save rhythm — never window
     titles, keystrokes, or content. Stays quiet during deep focus; a rare gentle line when you've
     clearly been grinding. All local.
+  </p>
+
+  <!-- ─── music awareness (privacy-safe: ephemeral energy only) ─── -->
+  <h3>Music awareness</h3>
+  <label class="gpurow">
+    <input type="checkbox" checked={audioAware} onchange={(e) => onToggleAudio((e.target as HTMLInputElement).checked)} />
+    <span>Vibe with my music</span>
+  </label>
+  <p class="hint">
+    Senses your <strong>system audio's energy</strong> (loudness · bass · beat) so the companion
+    settles to calm tracks and perks up to hype ones — the odd beat-drop a tiny delight. Reads only
+    those numbers in the moment; <strong>no audio is recorded, stored, or sent</strong>. Off by
+    default, all local. Windows only.
   </p>
 
   <!-- ─── shareable showcase card ─── -->

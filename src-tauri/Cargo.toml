@@ -34,4 +34,8 @@ windows-sys = { version = "0.52", features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_Threading",
 ] }
+# Music awareness: WASAPI loopback of system OUTPUT (opt-in; ephemeral energy only,
+# never records or stores audio). Building an INPUT stream on the default OUTPUT
+# device gives loopback capture on Windows.
+cpal = "0.15"
 

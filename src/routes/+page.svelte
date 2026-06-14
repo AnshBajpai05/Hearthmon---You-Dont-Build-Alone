@@ -1160,6 +1160,34 @@
     }
   }
 
+  // ── Music awareness (opt-in): the companion subtly vibes with your system audio ─
+  // Only ephemeral energy bands arrive from Rust (bass/mid/high/level) — never audio.
+  // Companion first, visualizer second: energy nudges idle softly; beats are WEIGHTED
+  // so most pass as invisible influence and only some become a tiny delight.
+  let audioAware = $state(false);
+  let audioEnergy = $state(0); // smoothed overall loudness 0..1
+  let audioBeat = $state(0); // increments on each detected beat (PixiStage reacts)
+  let audioStrength = $state(0); // 0..1 strength of the latest beat (drops ≈ 1)
+  let _bassAvg = 0;
+  let _lastBeatAt = 0;
+  function onAudioBands(b: number, m: number, _h: number, lvl: number) {
+    audioEnergy = +(audioEnergy + 0.18 * (lvl - audioEnergy)).toFixed(3);
+    _bassAvg += 0.08 * (b - _bassAvg); // running bass floor
+    const now = performance.now();
+    // onset: a bass spike above the floor, with a refractory gap (no 140bpm seizure)
+    if (b > _bassAvg * 1.35 + 0.06 && now - _lastBeatAt > 180) {
+      _lastBeatAt = now;
+      audioStrength = Math.min(1, (b - _bassAvg) / Math.max(0.12, _bassAvg)) * (0.6 + 0.4 * m);
+      audioBeat++;
+    }
+  }
+  async function setAudioAware(on: boolean) {
+    audioAware = on;
+    await setMeta("audio_aware", on ? "1" : "0");
+    try { await invoke("set_audio_aware", { on }); } catch { /* not under Tauri */ }
+    if (!on) { audioEnergy = 0; audioStrength = 0; }
+  }
+
   // a working-tree change (you saved). The strongest "real building" signal.
   function noteBuilderActivity() {
     const now = Date.now();
@@ -1894,6 +1922,7 @@
       renderMode = (await getMeta("render_mode")) === "alive" ? "alive" : "classic"; // renderer choice
       flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
       try { await invoke("set_flow_aware", { on: flowAware }); } catch { /* not under Tauri */ }
+      if ((await getMeta("audio_aware")) === "1") await setAudioAware(true); // music awareness (default off)
       {
         const lp = (await getMeta("train_log_path")) ?? "";
         if (lp) {
@@ -2197,6 +2226,9 @@
     // flow awareness: foreground-app rhythm (process names only)
     let unlistenFocus: (() => void) | undefined;
     listen<string>("focus-app", (e) => onFocusApp(e.payload)).then((un) => (unlistenFocus = un));
+    // music awareness: ephemeral energy bands [bass, mid, high, level] (opt-in)
+    let unlistenAudio: (() => void) | undefined;
+    listen<[number, number, number, number]>("audio-bands", (e) => onAudioBands(...e.payload)).then((un) => (unlistenAudio = un));
 
     // global command palette — Alt+Space from anywhere summons the quick log bar
     register("Alt+Space", (e) => {
@@ -2226,6 +2258,7 @@
       unlistenNewRun?.();
       unlistenActive?.();
       unlistenFocus?.();
+      unlistenAudio?.();
       clearInterval(remotePollTimer);
       clearInterval(toddlerTimer);
       unregister("Alt+Space").catch(() => {});
@@ -2831,6 +2864,8 @@
         onToggleTrain={(on) => void setTrainAware(on)}
         {flowAware}
         onToggleFlow={(on) => void setFlowAware(on)}
+        {audioAware}
+        onToggleAudio={(on) => void setAudioAware(on)}
         {logPath}
         {trainStatus}
         onSetLog={(p) => void setLogPath(p)}
@@ -3159,6 +3194,9 @@
           onStroke={onPetStroke}
           onBackgroundDown={beginWindowDrag}
           fx={aliveFx}
+          {audioEnergy}
+          {audioBeat}
+          {audioStrength}
         />
       </div>
     {/if}

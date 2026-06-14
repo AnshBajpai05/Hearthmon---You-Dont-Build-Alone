@@ -55,6 +55,13 @@ Classic is NOT replaced. Hearthmon ships **two renderers over one shared brain**
       pulse · dragon/flying winged-shadow flyover · ice aurora · default shooting-star
 - [x] **creature lighting** — a lightning strike (and superstrike) momentarily lights the PET's body
       (blue-white tint flash), not just the sky
+- [x] **music awareness (opt-in)** — Rust WASAPI loopback of system OUTPUT (cpal, Windows; build an
+      INPUT stream on the default OUTPUT device) emits ONLY ephemeral energy bands (bass/mid/high/level)
+      ~30×/s; **no audio recorded/stored/sent**, off by default (toggle in Code panel). Frontend does
+      beat onset (bass spike + refractory) + smoothed energy. Companion-first: energy softly nudges
+      idle (spring/vibe), beats are WEIGHTED (most pass as influence) → tiny per-type pulses (electric
+      cheek-spark + drop=strike · fire ember puff · water ripple · psychic/fairy aura · others soft
+      ring); louder music intensifies the storm cadence. `set_audio_aware` cmd + `audio-bands` event.
 - [ ] deeper window-scene detail (parallax interior) · weather-API / audio-reactive ambience (opt-in,
       separate feature) · time-of-day depth — optional, not parity gaps
 - ❌ **declined on principle:** object/proximity recognition ("toddler mode") needs a camera → violates
