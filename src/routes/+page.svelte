@@ -1340,6 +1340,8 @@
 
   function reactBreakthrough() {
     poke();
+    aliveFx = { ...aliveFx, breakthrough: true };
+    setTimeout(() => { aliveFx = { ...aliveFx, breakthrough: false }; }, 2000);
     if (petState === "idle") {
       petState = "happy";
       setTimeout(() => (petState = "idle"), 1100);
@@ -3324,6 +3326,7 @@
           {petState}
           {bubble}
           calm={comfortMode || deepWork()}
+          flowContext={waitingMode() ? "waiting" : (Date.now() - lastFrictionCue < 30 * 60_000) ? "friction" : deepWork() ? "focus" : "none"}
           habitat={habitatOn}
           {habitatShape}
           {bgStyle}

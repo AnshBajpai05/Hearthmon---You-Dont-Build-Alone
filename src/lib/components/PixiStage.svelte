@@ -19,6 +19,7 @@
     petState?: string; // brain bridge: "idle" | "sleeping" | "happy" | …
     bubble?: string; // the spoken line (speech bubble), parity with Classic
     calm?: boolean; // comfort / deep-flow → settle (no zoomies)
+    flowContext?: "none" | "waiting" | "friction" | "focus"; // embodies context engine
     habitat?: boolean; // biome scene on/off (Classic's habitat toggle)
     habitatShape?: "full" | "sphere" | "square"; // biome SHAPE — independent of backdrop
     bgStyle?: "orb" | "square" | "ground" | "off"; // pet backdrop (Classic's 🌿 cycle)
@@ -49,11 +50,12 @@
     visitorFlip: boolean;
     eating: boolean;
     birthday: boolean;
+    breakthrough: boolean; // triggers a brief environmental bloom
   }
   const NO_FX: AliveFx = {
     switchFx: "none", attacking: false, atkKind: null, atkColor: "#ffffff", atkEmoji: "✨",
     atkName: "", atkCls: 2, dir: -1, evoActive: false, evoFlash: false, visitorId: null,
-    visitorShiny: false, visitorX: 0, visitorFlip: false, eating: false, birthday: false
+    visitorShiny: false, visitorX: 0, visitorFlip: false, eating: false, birthday: false, breakthrough: false
   };
   let {
     dexId,
@@ -62,6 +64,7 @@
     petState = "idle",
     bubble = "",
     calm = false,
+    flowContext = "none",
     habitat = false,
     habitatShape = "full",
     bgStyle = "orb",
@@ -622,6 +625,7 @@
       let jiggle = 0;
       let petEnergy = 1; // smoothed environmental coupling parameter
       let hopBurstT = 0; // tiny burst when jumping
+      let prevBreakthrough = false;
       let mode: "idle" | "drag" | "pet" = "idle";
       let downAt: { x: number; y: number; t: number } | null = null;
       let lastPt: { x: number; y: number } | null = null;
@@ -844,13 +848,13 @@
           scene.mask = biomeMask;
           if (habitatShape === "square") {
             biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
-            for (let i = 1; i <= 6; i++) {
-              vignetteG.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: 0x0f0b14, alpha: 0.18 - i * 0.025, width: i * 8, alignment: 1 });
+            for (let i = 1; i <= 12; i++) {
+              vignetteG.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: 0x0f0b14, alpha: 0.08 - i * 0.006, width: i * 16, alignment: 1 });
             }
           } else {
             biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
-            for (let i = 1; i <= 6; i++) {
-              vignetteG.circle(gcx, gcy, gR).stroke({ color: 0x0f0b14, alpha: 0.18 - i * 0.025, width: i * 8, alignment: 1 });
+            for (let i = 1; i <= 12; i++) {
+              vignetteG.circle(gcx, gcy, gR).stroke({ color: 0x0f0b14, alpha: 0.08 - i * 0.006, width: i * 16, alignment: 1 });
             }
           }
         } else {
@@ -884,36 +888,42 @@
           for (let r = 0; r < 6; r++) {
             const yy = HZ + 6 + r * ((vpBottom - HZ - 6) / 6);
             waves.moveTo(vpx, yy);
-            for (let x = vpx; x <= vpx + vpw; x += 26) waves.lineTo(x, yy + Math.sin(x * 0.045 + t * 1.6 + r * 0.9) * (1.6 + r * 0.5));
+            const distToPet = Math.max(0, 1 - Math.abs(yy - (vpBottom - vph * 0.2)) / (vph * 0.3));
+            const localTurbulence = distToPet * (jiggle * 1.5 + Math.sin(t * 3.4) * envBreath * 0.5);
+            for (let x = vpx; x <= vpx + vpw; x += 26) waves.lineTo(x, yy + Math.sin(x * 0.045 + t * 1.6 + r * 0.9 + localTurbulence) * (1.6 + r * 0.5 + distToPet * Math.abs(jiggle)));
             waves.stroke({ color: lightCol, width: 1, alpha: Math.max(0.04, 0.13 - r * 0.015) });
           }
         }
 
         // particles within the viewport
         for (const f of P) {
+          const distToPet = Math.max(0, 1 - Math.abs(vpx + f.bx * vpw - posX.value) / 100);
+          const surgeX = distToPet * jiggle * 0.3;
+          const surgeY = distToPet * Math.abs(jiggle) * 0.2;
+
           if (pkind === "snow") {
             f.prog = (f.prog + dt * 0.08 * f.sp) % 1;
-            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp;
-            f.g.y = vpy + f.prog * vph;
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp + surgeX * 2;
+            f.g.y = vpy + f.prog * vph - surgeY * 10;
             f.g.alpha = part.alpha;
           } else if (pkind === "ember") {
             f.prog = (f.prog + dt * 0.12 * f.sp) % 1;
-            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp * 0.4;
-            f.g.y = vpBottom - f.prog * (vph * 0.6);
-            f.g.alpha = (1 - f.prog) * part.alpha;
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp * 0.4 + surgeX * 3;
+            f.g.y = vpBottom - f.prog * (vph * 0.6) - surgeY * 15;
+            f.g.alpha = (1 - f.prog) * part.alpha * (1 + distToPet * Math.abs(jiggle) * 0.5);
           } else if (pkind === "star") {
             f.g.x = vpx + f.bx * vpw;
             f.g.y = vpy + f.by * skyH;
             f.g.alpha = part.alpha * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * (1 + f.sp) + f.ph)));
           } else if (pkind === "spark") {
             const phase = (t * f.sp + f.ph) % 1.2;
-            f.g.x = vpx + f.bx * vpw + Math.sin(t * 9 + f.ph) * 2;
-            f.g.y = vpy + f.by * skyH;
+            f.g.x = vpx + f.bx * vpw + Math.sin(t * 9 + f.ph) * 2 + surgeX;
+            f.g.y = vpy + f.by * skyH - surgeY * 5;
             f.g.alpha = phase < 0.08 ? part.alpha : phase < 0.16 ? part.alpha * 0.3 : phase < 0.24 ? part.alpha : 0;
           } else if (pkind === "mist") {
-            f.g.x = vpx + ((((f.bx + t * 0.012 * f.sp) % 1) + 1) % 1) * vpw;
-            f.g.y = vpy + (0.55 + f.by * 0.4) * vph;
-            f.g.alpha = part.alpha * (0.5 + 0.5 * Math.sin(t * 0.6 + f.ph));
+            f.g.x = vpx + ((((f.bx + t * 0.012 * f.sp) % 1) + 1) % 1) * vpw + surgeX * 4;
+            f.g.y = vpy + (0.55 + f.by * 0.4) * vph - surgeY * 5;
+            f.g.alpha = part.alpha * (0.5 + 0.5 * Math.sin(t * 0.6 + f.ph)) * (1 + distToPet * envBreath * 0.5);
           } else {
             // firefly / pollen / dust — gentle drift (+ blink for firefly)
             f.g.x = vpx + f.bx * vpw + Math.sin(t * f.sp + f.ph) * f.amp;
@@ -931,7 +941,17 @@
         // ── type-driven premium ambient within the viewport ──
         // ── environmental coupling & inertia ──
         // smooth target energy: sleep=0.2, idle=1, happy/excited=1.8+
-        const targetEnergy = (sleeping ? 0.2 : 1) + (petState === "happy" ? 0.8 : 0) + Math.min(1.5, jiggle * 0.15 + Math.abs(squash.value) * 0.05);
+        let targetEnergy = (sleeping ? 0.2 : 1) + (petState === "happy" ? 0.8 : 0) + Math.min(1.5, jiggle * 0.15 + Math.abs(squash.value) * 0.05);
+        if (flowContext === "focus") targetEnergy *= 0.5; // deeply calm
+        else if (flowContext === "waiting") targetEnergy *= 0.7; // slower watch
+        else if (flowContext === "friction") targetEnergy *= 1.15; // slightly warmer/more active
+        
+        if (fx.breakthrough && !prevBreakthrough) {
+          hopBurstT = 1.0;
+          petEnergy = 2.5; // immediate spike
+        }
+        prevBreakthrough = fx.breakthrough;
+
         if (targetEnergy - petEnergy > 0.5) hopBurstT = 0.5; // Trigger tiny response burst
         hopBurstT = Math.max(0, hopBurstT - dt);
         petEnergy += (targetEnergy - petEnergy) * (dt / 0.4); // momentum / delayed response
@@ -1406,7 +1426,6 @@
           }
           bubbleC.visible = true;
           bubbleC.x = Math.max(bubbleH, Math.min(w - bubbleH, posX.value));
-          // above the head, but clamped fully on-screen (big pets pushed it off the top)
           bubbleC.y = Math.max(bubbleH + 10, posY.value - petPx * 0.95) + Math.sin(t * 2) * 1.5;
         } else {
           bubbleC.visible = false;
@@ -1414,12 +1433,15 @@
         }
 
         const lift = Math.max(0, groundY() - posY.value);
-        petShadow.x = posX.value;
+        petShadow.x = posX.value - (lean.value * 0.3);
         petShadow.y = groundY() + 3;
         // Grounding polish: shadow softens with breath/flare, settles when sleeping
+        const sq = squash.value / 220;
         const k = curScale * (1 - Math.min(0.45, lift / 130) + sq * 0.1) * (1 + envBreath * 0.05);
-        petShadow.scale.set(k, k);
-        petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160)) * (sleeping ? 1.2 : 1) * (1 - envBreath * 0.15);
+        const shadowStretchX = 1 + Math.abs(sq) * 0.2 + Math.abs(jiggle) * 0.08;
+        const shadowStretchY = 1 - Math.abs(sq) * 0.1;
+        petShadow.scale.set(k * shadowStretchX, k * shadowStretchY);
+        petShadow.alpha = 0.34 * (1 - Math.min(0.6, lift / 160)) * (sleeping ? 1.2 : 1) * (1 - envBreath * 0.15) * (1 + sq * 0.2);
 
         for (const child of [...hearts.children]) {
           const hh = child as unknown as { _life: number; y: number; alpha: number; destroy: () => void };
