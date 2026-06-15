@@ -841,16 +841,19 @@
         // a habitat (avoids a double-bubble).
         const shelf = globe && bgStyle === "ground";
         platform.visible = shelf || (bgStyle !== "off" && !habitat);
+        platform.blendMode = shelf ? "add" : "normal"; // glowing base vs. flat pad
         if (shelf) {
-          const sw = gR * 1.18;
-          const sy = gcy + gR * 0.9; // at the sphere's base
+          // a LUMINOUS base the sphere rests in (premium) — biome light color, additive
+          // so it glows over the dark rim instead of hiding behind it
+          const sw = gR * 1.25;
+          const sy = gcy + gR * 0.82;
           platform.clear();
           platform.x = 0;
           platform.y = 0;
-          platform.ellipse(gcx, sy + gR * 0.07, sw * 0.8, gR * 0.06).fill({ color: 0x000000, alpha: 0.3 }); // contact shadow
-          platform.ellipse(gcx, sy, sw, gR * 0.17).fill({ color: grd1, alpha: 0.96 }); // ground slab
-          platform.ellipse(gcx, sy, sw * 0.82, gR * 0.12).fill({ color: grd0, alpha: 0.8 }); // lit top
-          platform.ellipse(gcx, sy - gR * 0.02, sw * 0.5, gR * 0.05).fill({ color: lightCol, alpha: 0.08 }); // sheen
+          platform.ellipse(gcx, sy, sw * 1.08, gR * 0.22).fill({ color: lightCol, alpha: 0.1 }); // outer glow
+          platform.ellipse(gcx, sy, sw * 0.9, gR * 0.16).fill({ color: lightCol, alpha: 0.16 });
+          platform.ellipse(gcx, sy, sw * 0.66, gR * 0.11).fill({ color: lightCol, alpha: 0.28 }); // bright basin
+          platform.ellipse(gcx, sy - gR * 0.015, sw * 0.46, gR * 0.045).fill({ color: 0xffffff, alpha: 0.32 }); // hot core
         } else if (bgStyle === "ground") {
           drawPlatform(petPx * 0.6);
           platform.x = posX.value;
