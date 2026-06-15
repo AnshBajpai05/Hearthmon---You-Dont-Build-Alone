@@ -838,9 +838,9 @@
         // opacity · biome visibility · translucency
         a.stage.alpha = opacity;
         scene.visible = habitat;
-        // globe = glassy (desktop shows through); full landscape stays solid. Pet is
-        // NOT in `scene`, so it keeps full opacity either way. Lower 0.6 → more see-through.
-        scene.alpha = globe ? 0.6 : 0.9;
+        // globe = lightly glassy; full landscape solid. Pet is NOT in `scene` so it
+        // stays fully opaque. Brightness is mostly the gradient lift `L` + vignette below.
+        scene.alpha = globe ? 0.78 : 0.9;
 
         // backdrop. SPECIAL: globe habitat + ground bg → a ground SHELF UNDER the sphere
         // (premium "snow-globe resting on a surface"). Otherwise the pad is hidden under
@@ -887,12 +887,12 @@
           if (habitatShape === "square") {
             biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
             for (let i = 1; i <= 12; i++) {
-              vignetteG.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: 0x0f0b14, alpha: 0.08 - i * 0.006, width: i * 16, alignment: 1 });
+              vignetteG.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: 0x0f0b14, alpha: 0.045 - i * 0.0035, width: i * 16, alignment: 1 });
             }
           } else {
             biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
             for (let i = 1; i <= 12; i++) {
-              vignetteG.circle(gcx, gcy, gR).stroke({ color: 0x0f0b14, alpha: 0.08 - i * 0.006, width: i * 16, alignment: 1 });
+              vignetteG.circle(gcx, gcy, gR).stroke({ color: 0x0f0b14, alpha: 0.045 - i * 0.0035, width: i * 16, alignment: 1 });
             }
           }
         } else {
@@ -905,8 +905,10 @@
         if (sig !== vpSig) {
           vpSig = sig;
           back.clear();
-          band(vpx, vpy, vpw, HZ - vpy, sky0, sky1, 14);
-          band(vpx, HZ, vpw, vpBottom - HZ, grd0, grd1, 8);
+          // lift the globe interior toward light so the sphere isn't murky/dark
+          const L = globe ? 0.28 : 0;
+          band(vpx, vpy, vpw, HZ - vpy, lerpCol(sky0, 0xffffff, L), lerpCol(sky1, 0xffffff, L), 14);
+          band(vpx, HZ, vpw, vpBottom - HZ, lerpCol(grd0, 0xffffff, L), lerpCol(grd1, 0xffffff, L), 8);
         }
 
         // light orb (moon/sun) within the viewport, parallax
