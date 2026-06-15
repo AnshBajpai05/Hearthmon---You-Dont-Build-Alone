@@ -356,6 +356,10 @@
       baseGlow.filters = [new BlurFilter({ strength: 14, quality: 3 })];
       baseGlow.blendMode = "add";
       baseGlow.visible = false;
+      const rimGlow = new Graphics(); // soft light-colored glow on the habitat boundary
+      rimGlow.filters = [new BlurFilter({ strength: 8, quality: 3 })];
+      rimGlow.blendMode = "add";
+      rimGlow.visible = false;
       const petShadow = new Graphics();
       drawShadow = () => {
         petShadow.clear();
@@ -564,7 +568,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, baseGlow, platform, vignetteG, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, baseGlow, platform, vignetteG, rimGlow, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
       );
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
@@ -882,23 +886,28 @@
         // clip the biome to the habitat SHAPE — full vista INSIDE the globe
         biomeMask.clear();
         vignetteG.clear();
+        rimGlow.clear();
         if (globe) {
           scene.mask = biomeMask;
+          const rimA = 0.22 + 0.07 * Math.sin(t * 1.5); // same light colour as the ground glow
           if (habitatShape === "square") {
             biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
             for (let i = 1; i <= 12; i++) {
               vignetteG.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: 0x0f0b14, alpha: 0.045 - i * 0.0035, width: i * 16, alignment: 1 });
             }
+            rimGlow.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).stroke({ color: lightCol, width: 3, alpha: rimA });
           } else {
             biomeMask.circle(gcx, gcy, gR).fill(0xffffff);
             for (let i = 1; i <= 12; i++) {
               vignetteG.circle(gcx, gcy, gR).stroke({ color: 0x0f0b14, alpha: 0.045 - i * 0.0035, width: i * 16, alignment: 1 });
             }
+            rimGlow.circle(gcx, gcy, gR).stroke({ color: lightCol, width: 3, alpha: rimA });
           }
         } else {
           scene.mask = null;
         }
         vignetteG.visible = globe;
+        rimGlow.visible = globe;
 
         // sky + ground gradient inside the viewport (repaint on change)
         const sig = `${vpx | 0},${vpy | 0},${vpw | 0},${vph | 0}`;
