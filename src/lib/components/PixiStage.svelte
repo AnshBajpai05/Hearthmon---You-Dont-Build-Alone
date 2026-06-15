@@ -838,7 +838,9 @@
         // opacity · biome visibility · translucency
         a.stage.alpha = opacity;
         scene.visible = habitat;
-        scene.alpha = 0.9;
+        // globe = glassy (desktop shows through); full landscape stays solid. Pet is
+        // NOT in `scene`, so it keeps full opacity either way. Lower 0.6 → more see-through.
+        scene.alpha = globe ? 0.6 : 0.9;
 
         // backdrop. SPECIAL: globe habitat + ground bg → a ground SHELF UNDER the sphere
         // (premium "snow-globe resting on a surface"). Otherwise the pad is hidden under
@@ -856,7 +858,7 @@
           baseGlow.clear();
           baseGlow.x = 0;
           baseGlow.y = 0;
-          baseGlow.ellipse(gcx, sy, sw * 0.95, gR * 0.19).fill({ color: lightCol, alpha: 0.42 * gl }); // soft glow
+          baseGlow.ellipse(gcx, sy, sw * 0.5, gR * 0.10).fill({ color: lightCol, alpha: 0.42 * gl }); // soft glow
           platform.clear();
           platform.x = 0;
           platform.y = 0;
