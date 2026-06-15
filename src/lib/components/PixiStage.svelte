@@ -847,13 +847,17 @@
           // so it glows over the dark rim instead of hiding behind it
           const sw = gR * 1.25;
           const sy = gcy + gR * 0.82;
+          const gl = 0.9 + 0.1 * Math.sin(t * 1.5); // gentle "emitting" pulse
           platform.clear();
           platform.x = 0;
           platform.y = 0;
-          platform.ellipse(gcx, sy, sw * 1.08, gR * 0.22).fill({ color: lightCol, alpha: 0.1 }); // outer glow
-          platform.ellipse(gcx, sy, sw * 0.9, gR * 0.16).fill({ color: lightCol, alpha: 0.16 });
-          platform.ellipse(gcx, sy, sw * 0.66, gR * 0.11).fill({ color: lightCol, alpha: 0.28 }); // bright basin
-          platform.ellipse(gcx, sy - gR * 0.015, sw * 0.46, gR * 0.045).fill({ color: 0xffffff, alpha: 0.32 }); // hot core
+          platform.ellipse(gcx, sy, sw * 1.85, gR * 0.4).fill({ color: lightCol, alpha: 0.04 * gl }); // outermost emitted glow
+          platform.ellipse(gcx, sy, sw * 1.55, gR * 0.33).fill({ color: lightCol, alpha: 0.055 * gl });
+          platform.ellipse(gcx, sy, sw * 1.28, gR * 0.26).fill({ color: lightCol, alpha: 0.08 * gl });
+          platform.ellipse(gcx, sy, sw * 1.05, gR * 0.2).fill({ color: lightCol, alpha: 0.12 * gl });
+          platform.ellipse(gcx, sy, sw * 0.82, gR * 0.14).fill({ color: lightCol, alpha: 0.2 });
+          platform.ellipse(gcx, sy, sw * 0.6, gR * 0.1).fill({ color: lightCol, alpha: 0.3 }); // bright basin
+          platform.ellipse(gcx, sy - gR * 0.015, sw * 0.42, gR * 0.045).fill({ color: 0xffffff, alpha: 0.34 }); // hot core
         } else if (bgStyle === "ground") {
           drawPlatform(petPx * 0.6);
           platform.x = posX.value;
