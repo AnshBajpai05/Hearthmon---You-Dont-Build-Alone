@@ -238,8 +238,11 @@
         } catch { return false; }
       };
 
-      const petCanvas = document.createElement("canvas");
-      const petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
+      // NOTE: a FRESH canvas is made per reload (below). Reusing one canvas made
+      // Texture.from return Pixi's CACHED CanvasSource at the OLD size → the pet came
+      // out too wide / too shrunk after a form switch until a manual refresh.
+      let petCanvas = document.createElement("canvas");
+      let petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
       let visCX = 48, visCY = 48, contentW = 96, contentH = 96;
       
       let tex: Texture = Texture.EMPTY;
@@ -274,8 +277,11 @@
           natH = staticImg.naturalHeight || 96;
         }
 
+        // fresh canvas each reload → Texture.from gives a NEW source at the right size
+        petCanvas = document.createElement("canvas");
         petCanvas.width = natW;
         petCanvas.height = natH;
+        petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
         visCX = natW / 2; visCY = natH / 2; contentW = natW; contentH = natH;
         if (petCtx) {
           petCtx.clearRect(0, 0, natW, natH);
@@ -300,6 +306,7 @@
           } catch {}
         }
         
+        const oldTex = tex;
         try {
           tex = Texture.from(animated && petCtx ? petCanvas : (staticImg as HTMLImageElement));
         } catch { return; }
@@ -333,7 +340,10 @@
           a.stage.addChildAt(mesh, idx);
           oldMesh.destroy({ children: true });
         }
-        
+        if (oldTex && oldTex !== Texture.EMPTY && oldTex !== tex) {
+          try { oldTex.destroy(true); } catch { /* freed with its source */ }
+        }
+
         drawShadow();
         applyBiome(newDex);
       };

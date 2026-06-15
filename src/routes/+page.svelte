@@ -331,7 +331,7 @@
 
   // For BIG celebrations: fires repeated bursts of `kind` every 2.5s for `totalMs`.
   // Each burst is a fresh animation so it never gets stuck on the guard.
-  let _burstInterval: ReturnType<typeof setInterval> | undefined;
+  let _burstInterval = $state<ReturnType<typeof setInterval> | undefined>(undefined);
   let _burstEndTimer: ReturnType<typeof setTimeout> | undefined;
   function runDelightBurst(kind: "star" | "fireworks", totalMs: number, burstMs = 2500) {
     clearInterval(_burstInterval);
@@ -2090,6 +2090,7 @@
       evoCount = Number((await getMeta("evo_count")) ?? 0) || 0;
       refreshComfort();
       refreshAutostart();
+      void checkStartupLaunch(); // boot-launched? ask before settling in
       for (const ch of ["voice", "cry", "fx"] as Channel[]) {
         const saved = await getMeta(`vol_${ch}`);
         if (saved !== null) {
@@ -2919,6 +2920,22 @@
     }
     await refreshAutostart();
   }
+
+  // ---- startup "ask first" ----  when Windows boot-launches us (autostart adds a
+  // --autostarted arg), greet and ASK before settling in. "Not now" quietly quits.
+  let startupAsk = $state(false);
+  async function checkStartupLaunch() {
+    try {
+      if (await invoke<boolean>("is_autostart_launch")) startupAsk = true;
+    } catch { /* not under Tauri */ }
+  }
+  function startupYes() {
+    startupAsk = false; // settle in — the presence system handles the greeting
+  }
+  async function startupNo() {
+    startupAsk = false;
+    try { await invoke("quit_app"); } catch { /* ignore */ }
+  }
 </script>
 
 <svelte:window onkeydown={onShortcut} onmousemove={onMouseLook} />
@@ -3049,6 +3066,19 @@
 
     {#if cmdOpen}
       <CommandBar onRun={runCommand} onClose={() => (cmdOpen = false)} />
+    {/if}
+
+    {#if startupAsk}
+      <div class="startup-ask" role="dialog" aria-label="Start Hearthmon?">
+        <div class="sa-card">
+          <img class="sa-pet" src={spriteUrl(dexId, isShiny)} alt="" onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(dexId))} />
+          <p class="sa-q">Morning — want me around today?</p>
+          <div class="sa-btns">
+            <button class="sa-yes" onclick={startupYes}>Yes, stay</button>
+            <button class="sa-no" onclick={startupNo}>Not now</button>
+          </div>
+        </div>
+      </div>
     {/if}
 
     {#if isNight}
@@ -4384,6 +4414,67 @@
   }
 
   /* ---- bond-tier ceremony banner ---- */
+  /* startup "ask first" prompt (boot-launch) */
+  .startup-ask {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(8, 6, 16, 0.62);
+    backdrop-filter: blur(3px);
+  }
+  .sa-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 22px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #1d1733, #15112a);
+    border: 1px solid color-mix(in srgb, var(--tc, #f0b66a) 45%, transparent);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    max-width: 220px;
+    text-align: center;
+  }
+  .sa-pet {
+    width: 64px;
+    height: 64px;
+    image-rendering: pixelated;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.4));
+  }
+  .sa-q {
+    margin: 0;
+    font-size: 13.5px;
+    color: #f6f1ff;
+    font-weight: 600;
+  }
+  .sa-btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 2px;
+  }
+  .sa-btns button {
+    border: none;
+    border-radius: 9px;
+    padding: 7px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .sa-yes {
+    background: var(--tc, #f0b66a);
+    color: #1a1208;
+  }
+  .sa-no {
+    background: rgba(255, 255, 255, 0.08);
+    color: #b9aee0;
+  }
+  .sa-no:hover { background: rgba(255, 255, 255, 0.14); }
+  .sa-yes:hover { filter: brightness(1.08); }
+
   .bondceremony {
     position: absolute;
     inset: 0;

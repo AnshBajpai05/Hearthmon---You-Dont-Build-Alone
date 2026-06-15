@@ -348,6 +348,20 @@ fn set_audio_aware(state: tauri::State<'_, AudioAware>, on: bool) {
     state.0.store(on, Ordering::Relaxed);
 }
 
+// ── Startup: was this launch triggered by Windows autostart? ───────
+// Autostart registers the app with a `--autostarted` arg (see init); the frontend
+// reads this to ASK before fully showing — "start Hearthmon now?" — so boot-launch
+// stays a choice, not an ambush.
+#[tauri::command]
+fn is_autostart_launch() -> bool {
+    std::env::args().any(|a| a == "--autostarted")
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg(windows)]
 fn build_loopback(handle: &tauri::AppHandle) -> Option<cpal::Stream> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -680,7 +694,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
-            None,
+            Some(vec!["--autostarted"]), // tag boot-launches so we can ASK before showing
         ))
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
@@ -689,7 +703,7 @@ pub fn run() {
         .manage(Mutex::new(LogWatch::default()))
         .manage(FlowAware(AtomicBool::new(true)))
         .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware])
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());
