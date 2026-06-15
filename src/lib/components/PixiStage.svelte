@@ -217,26 +217,8 @@
       let natW = 96, natH = 96;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ImageDecoderCtor = (globalThis as unknown as { ImageDecoder?: any }).ImageDecoder;
-      const decodeGif = async (url: string): Promise<boolean> => {
-        if (!ImageDecoderCtor) return false;
-        try {
-          const resp = await fetch(url, { mode: "cors" });
-          if (!resp.ok) return false;
-          const buf = await resp.arrayBuffer();
-          const dec = new ImageDecoderCtor({ data: buf, type: "image/gif" });
-          await dec.tracks.ready;
-          const count: number = dec.tracks.selectedTrack?.frameCount ?? 1;
-          for (let i = 0; i < count; i++) {
-            const { image } = await dec.decode({ frameIndex: i });
-            natW = image.displayWidth || image.codedWidth || natW;
-            natH = image.displayHeight || image.codedHeight || natH;
-            const bmp = await createImageBitmap(image);
-            frames.push({ bmp, dur: (image.duration ?? 90000) / 1e6 });
-            image.close();
-          }
-          return frames.length > 0;
-        } catch { return false; }
-      };
+      let reloadSeq = 0; // supersede token — a newer switch cancels an in-flight load
+      let petReady = true; // false while a sprite loads → the OLD pet is hidden (no mismatch)
 
       // NOTE: a FRESH canvas is made per reload (below). Reusing one canvas made
       // Texture.from return Pixi's CACHED CanvasSource at the OLD size → the pet came
@@ -259,33 +241,17 @@
       let gifAcc = 0; // time accumulator for GIF frame advance
       let frameIdx = 0; // current decoded GIF frame
 
-      const reloadPet = async (newDex: number, newShiny: boolean) => {
-        for (const f of frames) f.bmp.close();
-        frames.length = 0;
-        gifAcc = 0;
-        frameIdx = 0;
-        
-        let animated = await decodeGif(spriteUrl(newDex, newShiny));
-        if (destroyed) return;
-        
-        let staticImg: HTMLImageElement | null = null;
-        if (!animated) {
-          staticImg = (await loadImg(spriteUrl(newDex, newShiny))) ?? (await loadImg(fallbackUrl(newDex, newShiny)));
-          if (destroyed) return;
-          if (!staticImg) throw new Error("sprite load failed for dex " + newDex);
-          natW = staticImg.naturalWidth || 96;
-          natH = staticImg.naturalHeight || 96;
-        }
-
-        // fresh canvas each reload → Texture.from gives a NEW source at the right size
-        petCanvas = document.createElement("canvas");
+      // Build the mesh from whatever's been decoded so far (frame 0, or a static img),
+      // swap it in, and mark the pet ready. The rest of the GIF frames stream in after.
+      const buildPet = (newDex: number, animated: boolean, staticImg: HTMLImageElement | null) => {
+        petCanvas = document.createElement("canvas"); // fresh canvas → fresh-sized source
         petCanvas.width = natW;
         petCanvas.height = natH;
         petCtx = petCanvas.getContext("2d", { willReadFrequently: true });
         visCX = natW / 2; visCY = natH / 2; contentW = natW; contentH = natH;
         if (petCtx) {
           petCtx.clearRect(0, 0, natW, natH);
-          if (animated) petCtx.drawImage(frames[0].bmp, 0, 0);
+          if (animated && frames[0]) petCtx.drawImage(frames[0].bmp, 0, 0);
           else if (staticImg) petCtx.drawImage(staticImg, 0, 0, natW, natH);
           try {
             const dd = petCtx.getImageData(0, 0, natW, natH).data;
@@ -305,13 +271,11 @@
             }
           } catch {}
         }
-        
         const oldTex = tex;
         try {
           tex = Texture.from(animated && petCtx ? petCanvas : (staticImg as HTMLImageElement));
         } catch { return; }
         if (tex.source) tex.source.scaleMode = "nearest";
-
         const oldMesh = mesh;
         mesh = new MeshPlane({ texture: tex, verticesX: GX, verticesY: GY });
         const texW = tex.width || 96;
@@ -323,7 +287,6 @@
         mesh.eventMode = "static";
         mesh.cursor = "grab";
         mesh.hitArea = new Rectangle(0, 0, texW, texH);
-
         try {
           const b = mesh.geometry.getBuffer("aPosition") as unknown as { data: Float32Array; update: () => void };
           baseV = Float32Array.from(b.data);
@@ -331,10 +294,9 @@
           for (let i = 0; i < baseV.length; i += 2) uv[i + 1] = baseV[i + 1] / texH;
           posBuf = b;
           deformable = true;
-        } catch (err) {
+        } catch {
           deformable = false;
         }
-
         if (oldMesh && a.stage.children.includes(oldMesh)) {
           const idx = a.stage.getChildIndex(oldMesh);
           a.stage.addChildAt(mesh, idx);
@@ -343,9 +305,62 @@
         if (oldTex && oldTex !== Texture.EMPTY && oldTex !== tex) {
           try { oldTex.destroy(true); } catch { /* freed with its source */ }
         }
-
         drawShadow();
         applyBiome(newDex);
+        petReady = true; // new pet on screen — reveal it
+      };
+
+      const reloadPet = async (newDex: number, newShiny: boolean) => {
+        const seq = ++reloadSeq;
+        petReady = false; // hide the old pet until the new one is built (no mismatch)
+        for (const f of frames) f.bmp.close();
+        frames.length = 0;
+        gifAcc = 0;
+        frameIdx = 0;
+        const live = () => seq === reloadSeq && !destroyed; // a newer switch supersedes us
+
+        // ── animated path: decode FRAME 0, show it immediately, stream the rest ──
+        if (ImageDecoderCtor) {
+          try {
+            const resp = await fetch(spriteUrl(newDex, newShiny), { mode: "cors" });
+            if (!live()) return;
+            if (resp.ok) {
+              const buf = await resp.arrayBuffer();
+              if (!live()) return;
+              const dec = new ImageDecoderCtor({ data: buf, type: "image/gif" });
+              await dec.tracks.ready;
+              if (!live()) return;
+              const count: number = dec.tracks.selectedTrack?.frameCount ?? 1;
+              const f0 = await dec.decode({ frameIndex: 0 });
+              if (!live()) { f0.image.close(); return; }
+              natW = f0.image.displayWidth || f0.image.codedWidth || natW;
+              natH = f0.image.displayHeight || f0.image.codedHeight || natH;
+              frames.push({ bmp: await createImageBitmap(f0.image), dur: (f0.image.duration ?? 90000) / 1e6 });
+              f0.image.close();
+              buildPet(newDex, true, null); // ← pet visible NOW (static first frame)
+              // stream the remaining frames in the background; the tick animates as they arrive
+              void (async () => {
+                for (let i = 1; i < count; i++) {
+                  if (!live()) return;
+                  try {
+                    const { image } = await dec.decode({ frameIndex: i });
+                    frames.push({ bmp: await createImageBitmap(image), dur: (image.duration ?? 90000) / 1e6 });
+                    image.close();
+                  } catch { break; }
+                }
+              })();
+              return;
+            }
+          } catch { /* fall through to a static sprite */ }
+        }
+
+        // ── fallback: a single static image (no WebCodecs / decode failed) ──
+        const staticImg = (await loadImg(spriteUrl(newDex, newShiny))) ?? (await loadImg(fallbackUrl(newDex, newShiny)));
+        if (!live()) return;
+        if (!staticImg) { petReady = true; return; }
+        natW = staticImg.naturalWidth || 96;
+        natH = staticImg.naturalHeight || 96;
+        buildPet(newDex, false, staticImg);
       };
 
       await reloadPet(dexId, shiny);
@@ -1453,7 +1468,7 @@
         if (deformable && posBuf) mesh.scale.set(fScale * face, fScale);
         else mesh.scale.set(fScale * (1 + sq * 0.16) * face, fScale * (1 + breathe - sq * 0.16));
         mesh.tint = tint;
-        mesh.visible = petVisible;
+        mesh.visible = petVisible && petReady; // hide the old pet while a new one loads
         mesh.x = posX.value;
         // a tiny energy "vibe" bob — subtle (max ~2.5px), only with audible music
         const vibe = audioEnergy > 0.12 && !sleeping ? Math.sin(t * 9) * audioEnergy * 2.5 : 0;
