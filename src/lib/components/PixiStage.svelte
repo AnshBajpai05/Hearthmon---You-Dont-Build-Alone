@@ -6,7 +6,7 @@
   // real widget.
   import { onMount } from "svelte";
   import {
-    Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture
+    Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture, BlurFilter
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL } from "$lib/sprites";
@@ -352,6 +352,10 @@
       if (destroyed) return;
 
       const platform = new Graphics(); // pet backdrop (orb / ground / off)
+      const baseGlow = new Graphics(); // soft blurred glow under the sphere's ground base
+      baseGlow.filters = [new BlurFilter({ strength: 14, quality: 3 })];
+      baseGlow.blendMode = "add";
+      baseGlow.visible = false;
       const petShadow = new Graphics();
       drawShadow = () => {
         petShadow.clear();
@@ -560,7 +564,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, platform, vignetteG, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, baseGlow, platform, vignetteG, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
       );
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
@@ -841,23 +845,25 @@
         // a habitat (avoids a double-bubble).
         const shelf = globe && bgStyle === "ground";
         platform.visible = shelf || (bgStyle !== "off" && !habitat);
-        platform.blendMode = shelf ? "add" : "normal"; // glowing base vs. flat pad
+        platform.blendMode = shelf ? "add" : "normal";
+        baseGlow.visible = shelf;
         if (shelf) {
-          // a LUMINOUS base the sphere rests in (premium) — biome light color, additive
-          // so it glows over the dark rim instead of hiding behind it
-          const sw = gR * 1.25;
-          const sy = gcy + gR * 0.82;
-          const gl = 0.9 + 0.1 * Math.sin(t * 1.5); // gentle "emitting" pulse
+          // the 3-ring stack (biome-light colour) sitting at the sphere↔ground SEAM,
+          // with a soft BLURRED underglow behind it → glowing ringed base.
+          const sw = gR;
+          const sy = gcy + gR * 0.95; // between the sphere and the ground below
+          const gl = 0.85 + 0.15 * Math.sin(t * 1.5);
+          baseGlow.clear();
+          baseGlow.x = 0;
+          baseGlow.y = 0;
+          baseGlow.ellipse(gcx, sy, sw * 0.95, gR * 0.19).fill({ color: lightCol, alpha: 0.42 * gl }); // soft glow
           platform.clear();
           platform.x = 0;
           platform.y = 0;
-          platform.ellipse(gcx, sy, sw * 1.85, gR * 0.4).fill({ color: lightCol, alpha: 0.04 * gl }); // outermost emitted glow
-          platform.ellipse(gcx, sy, sw * 1.55, gR * 0.33).fill({ color: lightCol, alpha: 0.055 * gl });
-          platform.ellipse(gcx, sy, sw * 1.28, gR * 0.26).fill({ color: lightCol, alpha: 0.08 * gl });
-          platform.ellipse(gcx, sy, sw * 1.05, gR * 0.2).fill({ color: lightCol, alpha: 0.12 * gl });
-          platform.ellipse(gcx, sy, sw * 0.82, gR * 0.14).fill({ color: lightCol, alpha: 0.2 });
-          platform.ellipse(gcx, sy, sw * 0.6, gR * 0.1).fill({ color: lightCol, alpha: 0.3 }); // bright basin
-          platform.ellipse(gcx, sy - gR * 0.015, sw * 0.42, gR * 0.045).fill({ color: 0xffffff, alpha: 0.34 }); // hot core
+          platform.ellipse(gcx, sy, sw * 0.82, gR * 0.15).fill({ color: lightCol, alpha: 0.12 }); // ring 1
+          platform.ellipse(gcx, sy, sw * 0.56, gR * 0.1).fill({ color: lightCol, alpha: 0.2 }); // ring 2
+          platform.ellipse(gcx, sy, sw * 0.32, gR * 0.06).fill({ color: lightCol, alpha: 0.3 }); // ring 3
+          platform.ellipse(gcx, sy - gR * 0.01, sw * 0.16, gR * 0.03).fill({ color: 0xffffff, alpha: 0.35 }); // hot core
         } else if (bgStyle === "ground") {
           drawPlatform(petPx * 0.6);
           platform.x = posX.value;
