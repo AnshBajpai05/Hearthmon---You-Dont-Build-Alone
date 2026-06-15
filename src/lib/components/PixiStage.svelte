@@ -360,6 +360,9 @@
       rimGlow.filters = [new BlurFilter({ strength: 8, quality: 3 })];
       rimGlow.blendMode = "add";
       rimGlow.visible = false;
+      const petSep = new Graphics(); // soft dark halo behind the pet → silhouette reads first
+      petSep.filters = [new BlurFilter({ strength: 20, quality: 3 })];
+      petSep.visible = false;
       const petShadow = new Graphics();
       drawShadow = () => {
         petShadow.clear();
@@ -568,7 +571,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, baseGlow, platform, vignetteG, rimGlow, visitorSprite, trainer, petShadow, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, baseGlow, platform, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
       );
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
@@ -889,7 +892,7 @@
         rimGlow.clear();
         if (globe) {
           scene.mask = biomeMask;
-          const rimA = 0.22 + 0.07 * Math.sin(t * 1.5); // same light colour as the ground glow
+          const rimA = 0.35 + 0.12 * Math.sin(t * 1.1); // brightness kept; pulse calmer (subconscious)
           if (habitatShape === "square") {
             biomeMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
             for (let i = 1; i <= 12; i++) {
@@ -941,13 +944,26 @@
         petEnergy += (targetEnergy - petEnergy) * (dt / 0.4); // momentum / delayed response
         // normalized breathing sine (-1 to +1) that strictly matches the pet's lung speed
         const petBreath = Math.sin(t * (sleeping ? 1.0 : 1.7));
-        const envBreath = (petBreath * 0.5 + 0.5) * petEnergy; // 0 to 1, scaled by energy
+        const envBreath = (petBreath * 0.45 + 0.5) * petEnergy; // pulse amp trimmed ~10% → subconscious, not a visible effect
 
         ambient.clear();
         flash.clear();
         rareG.clear();
         hazeG.clear();
+        // +air: faint volumetric band lifting off the horizon → depth, not opacity
+        if (globe) {
+          hazeG.rect(vpx, HZ - vph * 0.22, vpw, vph * 0.34).fill({ color: lightCol, alpha: 0.028 });
+          hazeG.rect(vpx, HZ - vph * 0.1, vpw, vph * 0.2).fill({ color: lightCol, alpha: 0.022 });
+        }
         petLight *= Math.exp(-dt / 0.13); // illumination from a strike/beat fades fast
+
+        // creature-first: a soft dark halo behind the pet so the environment recedes and
+        // the silhouette reads cleanly (subtle; only when a habitat competes for attention)
+        petSep.clear();
+        petSep.visible = habitat;
+        if (habitat) {
+          petSep.ellipse(posX.value, posY.value - petPx * 0.45, petPx * 0.46, petPx * 0.6).fill({ color: 0x05040a, alpha: 0.16 });
+        }
 
         // water-only: reflection + rolling waves
         if (hasWater) {
