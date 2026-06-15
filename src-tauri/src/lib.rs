@@ -362,6 +362,13 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+// Dev builds load the Vite server (localhost) — registering THIS exe for autostart
+// would boot a broken "localhost refused" window. Only allow autostart on a release exe.
+#[tauri::command]
+fn is_dev_build() -> bool {
+    cfg!(debug_assertions)
+}
+
 #[cfg(windows)]
 fn build_loopback(handle: &tauri::AppHandle) -> Option<cpal::Stream> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -703,7 +710,7 @@ pub fn run() {
         .manage(Mutex::new(LogWatch::default()))
         .manage(FlowAware(AtomicBool::new(true)))
         .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app])
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, is_dev_build])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());

@@ -2916,8 +2916,16 @@
   }
   async function toggleAutostart() {
     try {
-      if (autostartOn) await disable();
-      else await enable();
+      if (autostartOn) {
+        await disable();
+      } else {
+        // a dev build boots to localhost (no Vite server at boot) → block it
+        if (await invoke<boolean>("is_dev_build").catch(() => false)) {
+          say("Build first (npm run tauri build), run that exe, then turn this on.", 7000);
+          return;
+        }
+        await enable();
+      }
     } catch {
       // plugin unavailable (e.g. web preview) — ignore
     }
