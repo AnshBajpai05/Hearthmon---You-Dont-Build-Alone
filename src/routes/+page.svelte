@@ -2004,14 +2004,18 @@
   onMount(() => {
     (async () => {
       scale = Number((await getMeta("pet_scale")) ?? 0) || 1.5;
-      // size the window for the pet, then restore saved position (or settle bottom-right)
+      // size the window for the pet, then place it. Windows boot-launch → settle at the
+      // default spot (bottom-right). A manual relaunch → return to the LAST place it sat.
       await fitWindow(true);
-      const savedX = await getMeta("win_x");
-      const savedY = await getMeta("win_y");
-      if (savedX !== null && savedY !== null) {
-        try {
-          await getCurrentWindow().setPosition(new PhysicalPosition(Number(savedX), Number(savedY)));
-        } catch { /* outside monitor bounds — keep default */ }
+      const boot = await checkStartupLaunch();
+      if (!boot) {
+        const savedX = await getMeta("win_x");
+        const savedY = await getMeta("win_y");
+        if (savedX !== null && savedY !== null) {
+          try {
+            await getCurrentWindow().setPosition(new PhysicalPosition(Number(savedX), Number(savedY)));
+          } catch { /* outside monitor bounds — keep default */ }
+        }
       }
 
       // drag-resize: when the window is resized by the corner grip, scale the pet to follow.
@@ -2090,7 +2094,6 @@
       evoCount = Number((await getMeta("evo_count")) ?? 0) || 0;
       refreshComfort();
       refreshAutostart();
-      void checkStartupLaunch(); // boot-launched? ask before settling in
       for (const ch of ["voice", "cry", "fx"] as Channel[]) {
         const saved = await getMeta(`vol_${ch}`);
         if (saved !== null) {
@@ -2924,10 +2927,14 @@
   // ---- startup "ask first" ----  when Windows boot-launches us (autostart adds a
   // --autostarted arg), greet and ASK before settling in. "Not now" quietly quits.
   let startupAsk = $state(false);
-  async function checkStartupLaunch() {
+  async function checkStartupLaunch(): Promise<boolean> {
     try {
-      if (await invoke<boolean>("is_autostart_launch")) startupAsk = true;
-    } catch { /* not under Tauri */ }
+      const boot = await invoke<boolean>("is_autostart_launch");
+      startupAsk = boot;
+      return boot;
+    } catch {
+      return false; // not under Tauri
+    }
   }
   function startupYes() {
     startupAsk = false; // settle in — the presence system handles the greeting

@@ -836,9 +836,22 @@
         scene.visible = habitat;
         scene.alpha = 0.9;
 
-        // backdrop: pet's pad (hidden when the full habitat is active to avoid double-bubble)
-        platform.visible = bgStyle !== "off" && !habitat;
-        if (bgStyle === "ground") {
+        // backdrop. SPECIAL: globe habitat + ground bg → a ground SHELF UNDER the sphere
+        // (premium "snow-globe resting on a surface"). Otherwise the pad is hidden under
+        // a habitat (avoids a double-bubble).
+        const shelf = globe && bgStyle === "ground";
+        platform.visible = shelf || (bgStyle !== "off" && !habitat);
+        if (shelf) {
+          const sw = gR * 1.18;
+          const sy = gcy + gR * 0.9; // at the sphere's base
+          platform.clear();
+          platform.x = 0;
+          platform.y = 0;
+          platform.ellipse(gcx, sy + gR * 0.07, sw * 0.8, gR * 0.06).fill({ color: 0x000000, alpha: 0.3 }); // contact shadow
+          platform.ellipse(gcx, sy, sw, gR * 0.17).fill({ color: grd1, alpha: 0.96 }); // ground slab
+          platform.ellipse(gcx, sy, sw * 0.82, gR * 0.12).fill({ color: grd0, alpha: 0.8 }); // lit top
+          platform.ellipse(gcx, sy - gR * 0.02, sw * 0.5, gR * 0.05).fill({ color: lightCol, alpha: 0.08 }); // sheen
+        } else if (bgStyle === "ground") {
           drawPlatform(petPx * 0.6);
           platform.x = posX.value;
           platform.y = groundY() + 4;
@@ -849,7 +862,7 @@
           platform.y = posY.value - (maxY - visCY) * curScale;
         }
         // ground bg bakes its own contact shadow into the disc → no separate shadow there
-        petShadow.visible = (bgStyle === "orb" || bgStyle === "square" || habitat) && bgStyle !== "ground";
+        petShadow.visible = shelf || ((bgStyle === "orb" || bgStyle === "square" || habitat) && bgStyle !== "ground");
 
         // clip the biome to the habitat SHAPE — full vista INSIDE the globe
         biomeMask.clear();
