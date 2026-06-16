@@ -8,6 +8,7 @@
   } from "@tauri-apps/api/window";
   import { listen } from "@tauri-apps/api/event";
   import { invoke } from "@tauri-apps/api/core";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import Pet from "$lib/components/Pet.svelte";
   import Bubble from "$lib/components/Bubble.svelte";
@@ -26,6 +27,7 @@
   import YearInReview from "$lib/components/YearInReview.svelte";
   import JourneyMovie from "$lib/components/JourneyMovie.svelte";
   import PixiStage from "$lib/components/PixiStage.svelte";
+  import { founderMark, FOUNDER_WHISPER, FOUNDER_WHISPER_ODDS } from "$lib/founder";
   import Showcase from "$lib/components/Showcase.svelte";
   import FutureSelf from "$lib/components/FutureSelf.svelte";
   import TodayFelt from "$lib/components/TodayFelt.svelte";
@@ -46,6 +48,7 @@
     previewSfx,
     previewSpeak,
     setSoundEnabled,
+    setSoundSuspended,
     setVolume,
     getVolumes,
     type Channel
@@ -128,7 +131,12 @@
     frictionBounceLines,
     breakthroughLines,
     chapterMomentLines,
-    arcCallbackLine
+    arcCallbackLine,
+    graceLine,
+    chapterIntroLine,
+    pauseNoteLine,
+    pauseNoteShort,
+    unlockLines
   } from "$lib/lines";
   import type { CompanionMode } from "$lib/lines";
   import {
@@ -180,6 +188,78 @@
   let petState = $state<PetState>("idle");
   // one brain, two renderers: Classic (CSS) · Alive (Pixi). Same systems, different skin.
   let renderMode = $state<"classic" | "alive">("classic");
+  // Washed-globe fix (WebView2 transparent-window quirk): the Pixi globe paints washed until the
+  // canvas is recreated. Cold boot is primed in onMount; here we cover COMPANION SWITCHES — the
+  // in-place reload re-washes, so on each real dexId change (not manual renderer toggles, which are
+  // already clean) we round-trip alive→classic→alive once to force a fresh, clean canvas.
+  let primedDex = -1;
+  let alivePrimeTimer: ReturnType<typeof setTimeout> | undefined;
+  // Force a fresh, clean Pixi canvas: round-trip alive→classic→alive (a real DOM gap so WebView2
+  // recomposites — the washed-globe fix). Direct sets → no meta write / no "Alive ✦" bubble.
+  function primeAliveRenderer() {
+    if (renderMode !== "alive") return;
+    setTimeout(() => (renderMode = "classic"), 250);
+    setTimeout(() => (renderMode = "alive"), 550);
+  }
+  // Debounced variant for continuous events (window resize fires many times mid-drag → re-prime
+  // once, after the drag settles).
+  function primeAliveDebounced() {
+    if (renderMode !== "alive") return;
+    clearTimeout(alivePrimeTimer);
+    alivePrimeTimer = setTimeout(primeAliveRenderer, 350);
+  }
+  $effect(() => {
+    if (phase !== "home" || renderMode !== "alive") return;
+    const d = dexId;
+    if (primedDex === -1) {
+      primedDex = d; // initial companion: the onMount boot prime handles it
+      return;
+    }
+    if (d !== primedDex) {
+      primedDex = d;
+      primeAliveRenderer(); // companion switch re-washes the in-place reload → clean canvas
+    }
+  });
+  // ── Chapter Access (secure_Hearthmon): the gate is DECIDED IN RUST. These are render hints
+  // only — flipping them in devtools grants nothing, the lock has no teeth in JS by design.
+  type ChapterStatus = {
+    phase: "full" | "grace" | "paused";
+    request_code: string;
+    expiry_ts: number;
+    grace_index: number;
+    nudge: "full" | "small" | "quiet";
+    has_end: boolean;
+  };
+  let chapterPhase = $state<"full" | "grace" | "paused">("full");
+  let chapterPaused = $derived(chapterPhase === "paused");
+  let chapterNudge = $state<"full" | "small" | "quiet">("full");
+  let chapterGraceIndex = $state(0);
+  let chapterHasEnd = $state(false); // trial/pass has an end → eligible for intro + grace tail
+  let requestCode = $state("");
+  let ghUser = $state("");
+  let codeRevealed = $state(false);
+  let passInput = $state("");
+  let passError = $state("");
+  let cardDismissed = $state(false); // hide the card this launch (chip can reopen)
+  let cardOpen = $state(false); // quiet-nudge: chip clicked → show full card
+  let showChapterCard = $derived(
+    chapterPaused && (chapterNudge === "quiet" ? cardOpen : !cardDismissed)
+  );
+  let showChapterChip = $derived(
+    chapterPaused && (chapterNudge === "quiet" ? !cardOpen : cardDismissed)
+  );
+  // Founder's Mark provenance — surfaced by clicking the woven signature (look closer → discover
+  // the founder). Demonstrable proof of lineage for authorship disputes; never auto-shown.
+  type Founder = {
+    founder: string;
+    handle: string;
+    build_ts: string;
+    git_commit: string;
+    origin_hash: string;
+    signature: string;
+  };
+  let founderInfo = $state<Founder | null>(null);
+  let founderShown = $state(false);
   let bubble = $state("");
   let panel = $state<Panel>("none");
   let switchFx = $state<SwitchFx>("none");
@@ -693,6 +773,111 @@
     if (bubbleTimer) clearTimeout(bubbleTimer);
     bubble = line;
     bubbleTimer = setTimeout(() => (bubble = ""), ms);
+  }
+
+  // ── Chapter Access handlers (secure_Hearthmon §5.3) ──
+  function revealRequestCode() {
+    // the machine read already happened in Rust; this only unhides the code (graceful ask)
+    codeRevealed = true;
+  }
+  async function copyRequestCode() {
+    try {
+      await navigator.clipboard.writeText(requestCode);
+      say("Copied ✦", 1800);
+    } catch {
+      /* clipboard unavailable — the code is still on screen to copy by hand */
+    }
+  }
+  async function emailBuilderCard() {
+    const subject = encodeURIComponent("Hearthmon Chapter Request");
+    const body = encodeURIComponent(
+      `Hi Ansh!\nGitHub: ${ghUser.trim()}\nRequest code: ${requestCode}`
+    );
+    const url = `mailto:anshbajpai2005@gmail.com?subject=${subject}&body=${body}`;
+    try {
+      await openUrl(url);
+    } catch {
+      try { window.location.href = url; } catch { /* offline draft only; no network either way */ }
+    }
+  }
+  async function submitBuilderPass() {
+    passError = "";
+    const code = passInput.trim();
+    if (!code) return;
+    try {
+      await invoke("submit_builder_pass", { passCode: code });
+      chapterPhase = "full";
+      cardDismissed = true;
+      cardOpen = false;
+      passInput = "";
+      say(pick(unlockLines), 6000);
+    } catch (e) {
+      passError =
+        e === "malformed"
+          ? "Hmm — that doesn't quite look like a builder pass."
+          : "That pass doesn't fit this device.";
+    }
+  }
+
+  // Founder's Mark: reveal the signed provenance (click the woven signature).
+  async function revealFounder(): Promise<void> {
+    try {
+      founderInfo = await invoke<Founder>("founder_mark");
+      founderShown = true;
+    } catch {
+      /* not under Tauri */
+    }
+  }
+  async function copyFounder(): Promise<void> {
+    if (!founderInfo) return;
+    const f = founderInfo;
+    const built = new Date(Number(f.build_ts) * 1000).toISOString();
+    const text = `Hearthmon — provenance\nFounder: ${f.founder} (@${f.handle})\nBuild: ${built}\nCommit: ${f.git_commit}\nOrigin: ${f.origin_hash}\nSignature: ${f.signature}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      say("Provenance copied ✦", 2000);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  // Load the Rust-decided chapter state (also inits the trial on a brand-new install).
+  async function loadChapterStatus(): Promise<void> {
+    try {
+      const cs = await invoke<ChapterStatus>("chapter_status");
+      chapterPhase = cs.phase;
+      chapterNudge = cs.nudge;
+      chapterGraceIndex = cs.grace_index;
+      chapterHasEnd = cs.has_end;
+      requestCode = cs.request_code;
+    } catch {
+      /* not under Tauri (browser/dev) → stays full */
+    }
+  }
+
+  // Awareness model: clarity ONCE up front, silence through full days, warm tail in grace.
+  // No daily countdown. Pause itself is handled by the card, not here. `delayMs` lets a
+  // greeting/welcome line play first.
+  async function chapterAwareness(delayMs = 0): Promise<void> {
+    if (!chapterHasEnd || chapterPhase === "paused") return;
+    let line: string | null = null;
+    let ms = 11000;
+    if (chapterPhase === "grace") {
+      const today = new Date().toISOString().slice(0, 10);
+      if ((await getMeta("chapter_remind_day")) !== today) {
+        await setMeta("chapter_remind_day", today); // once per calendar day, max
+        line = graceLine(chapterGraceIndex);
+        ms = 45000; // gentle 30–60s ambient bubble
+      }
+    } else if (!(await getMeta("chapter_intro_shown"))) {
+      await setMeta("chapter_intro_shown", "1"); // first-run heads-up, exactly once
+      line = chapterIntroLine();
+    }
+    if (line) {
+      const text = line;
+      if (delayMs > 0) setTimeout(() => say(text, ms), delayMs);
+      else say(text, ms);
+    }
   }
 
   // ---- soft failure recovery ----
@@ -2030,6 +2215,7 @@
           lastSetW = w;
           clearTimeout(scaleTimer);
           scaleTimer = setTimeout(() => setMeta("pet_scale", String(scale)), 400);
+          primeAliveDebounced(); // resizing re-washes the globe → re-prime a clean canvas once settled
         });
       } catch {
         // no window resize events available — fine
@@ -2101,7 +2287,24 @@
         }
       }
       vols = getVolumes();
+
+      // Chapter Access: evaluated ONCE here, at boot. The pet still renders normally; a pause
+      // only layers the dim + handshake card on top (the pet stays alive underneath).
+      await loadChapterStatus();
+
       phase = "home";
+      // WebView2 transparent-window quirk: the FIRST Pixi canvas paints washed; only a real
+      // unmount→remount clears it (what pressing V to Classic and back does). After the first
+      // canvas has mounted + composited (~500ms), auto round-trip once through Classic. Must be
+      // AFTER phase="home" (PixiStage doesn't exist before it). Direct sets → no meta write.
+      if (renderMode === "alive") {
+        setTimeout(() => { renderMode = "classic"; }, 500);
+        setTimeout(() => { renderMode = "alive"; }, 900);
+      }
+      void chapterAwareness(3500); // intro (once) / grace tail — after any greeting plays
+      if (!hasToken && (await getMeta("gh_onboard_skipped")) !== "1") {
+        ghOnboardAsk = true;
+      }
       // personality signal: which part of the day you tend to show up (once per launch)
       {
         const h0 = new Date().getHours();
@@ -2367,6 +2570,13 @@
     // music awareness: ephemeral energy bands [bass, mid, high, level] (opt-in)
     let unlistenAudio: (() => void) | undefined;
     listen<[number, number, number, number]>("audio-bands", (e) => onAudioBands(...e.payload)).then((un) => (unlistenAudio = un));
+    // hush all audio/speech whenever the window is hidden to the tray (X / tray-hide / re-show),
+    // so the companion never talks to an empty screen. Rust emits this on every hide/show.
+    let unlistenVisible: (() => void) | undefined;
+    listen<boolean>("hm-visible", (e) => setSoundSuspended(!e.payload)).then((un) => (unlistenVisible = un));
+    // safety net for MINIMIZE (neither hide path fires): WebView2 flips document.hidden.
+    const onVisDoc = () => setSoundSuspended(document.hidden);
+    document.addEventListener("visibilitychange", onVisDoc);
     // ~30s scheduler: pick a calm/chill/hype line based on slow-energy EMA
     const musicLineTimer = setInterval(maybeMusicLine, 30_000);
     // vibe tick: 2.5s animation driver while a music vibe is active
@@ -2401,6 +2611,8 @@
       unlistenActive?.();
       unlistenFocus?.();
       unlistenAudio?.();
+      unlistenVisible?.();
+      document.removeEventListener("visibilitychange", onVisDoc);
       clearInterval(remotePollTimer);
       clearInterval(toddlerTimer);
       clearInterval(musicLineTimer);
@@ -2454,6 +2666,14 @@
       else if (r < 0.83) dir = dir === 1 ? -1 : 1;
       return;
     }
+    // late night: a quieter companion — gentle drifts and sleepy glances, no runs/zoomies.
+    // (Fun mode above still overrides; comfort/flow already settled it earlier.)
+    if (isNight) {
+      if (r < 0.16) startMove("walk");
+      else if (r < 0.22) dir = dir === 1 ? -1 : 1;
+      else if (r < 0.235) fidget("blink");
+      return;
+    }
     // drift: a playful companion moves more; a calm one drifts gentler
     if (tempCalm) {
       if (r < 0.26) startMove("walk");
@@ -2493,6 +2713,8 @@
     if (busy() || petState === "sleeping") return;
     if (deepWork()) return; // you're deep in it — the company is the silence
     if (focusMode || companionMode === "just_there") return; // stay quiet
+    // Rare signature moment: the founder mark whispers once in a long while (~1/100 murmurs).
+    if (Math.random() < FOUNDER_WHISPER_ODDS) { say(FOUNDER_WHISPER, 30000); return; }
     if (Math.random() > 0.18) return; // rare on purpose
     const now = new Date();
     const ctx = {
@@ -2779,6 +3001,12 @@
     await initPresence({ say, setState: (s) => (petState = s) }, { greet: false });
     say(pick(firstMeetingClose), 9000);
     voiceCry(creature.dexId, creature.name, 0.25);
+    // Start the trial + give the one-time heads-up, sequenced after the welcome line.
+    await loadChapterStatus();
+    void chapterAwareness(10000);
+    if (!hasToken && (await getMeta("gh_onboard_skipped")) !== "1") {
+      ghOnboardAsk = true;
+    }
   }
 
   function onPetTap() {
@@ -2898,10 +3126,10 @@
       say(pick(endOfNightLines), 4000);
       petState = "sleeping";
       playVoiceClip("see-you-later", 0.85);
-      setTimeout(() => getCurrentWindow().hide(), 2600);
+      setTimeout(() => { getCurrentWindow().hide(); setSoundSuspended(true); }, 2600);
     } else {
       playVoiceClip("see-you-later", 0.85);
-      setTimeout(() => getCurrentWindow().hide(), 900);
+      setTimeout(() => { getCurrentWindow().hide(); setSoundSuspended(true); }, 900);
     }
   }
 
@@ -2950,6 +3178,17 @@
   async function startupNo() {
     startupAsk = false;
     try { await invoke("quit_app"); } catch { /* ignore */ }
+  }
+
+  // ---- github onboarding ----
+  let ghOnboardAsk = $state(false);
+  function ghOnboardYes() {
+    ghOnboardAsk = false;
+    panel = "code";
+  }
+  async function ghOnboardNo() {
+    ghOnboardAsk = false;
+    await setMeta("gh_onboard_skipped", "1");
   }
 </script>
 
@@ -3096,6 +3335,19 @@
       </div>
     {/if}
 
+    {#if ghOnboardAsk && !startupAsk}
+      <div class="startup-ask" role="dialog" aria-label="Add GitHub Token?">
+        <div class="sa-card">
+          <img class="sa-pet" src={spriteUrl(dexId, isShiny)} alt="" onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(dexId))} />
+          <p class="sa-q">I can sync with your GitHub to track your tasks and code. Add a token?</p>
+          <div class="sa-btns">
+            <button class="sa-yes" onclick={ghOnboardYes}>Add Token</button>
+            <button class="sa-no" onclick={ghOnboardNo}>Skip for now</button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     {#if isNight}
       <div class="nightveil" aria-hidden="true"></div>
       <span class="moon" aria-hidden="true">🌙</span>
@@ -3205,7 +3457,7 @@
       >
     {/if}
 
-    <div class="stage" class:pixihide={renderMode === "alive"}>
+    <div class="stage" class:pixihide={renderMode === "alive"} class:chapter-dim={chapterPaused}>
       {#if habitatOn}
         <!-- Type Habitat: a Tiny Living Sanctuary chosen by the pet's type -->
         <div
@@ -3238,6 +3490,12 @@
               style="left: {m.x}%; bottom: {m.y}%; width: {m.s}px; height: {m.s}px; background: {currentBiome.particleColor}; animation-delay: {m.d}s; animation-duration: {m.dur}s"
             ></span>
           {/each}
+          <!-- Founder's Mark: faint, woven in, revealed after a few seconds. Click → provenance. -->
+          <button
+            class="founder-mark"
+            style="color: {currentBiome.light}"
+            title="provenance"
+            onclick={revealFounder}>{founderMark(currentBiome.scene)}</button>
         </div>
         <!-- foreground vignette: sits in front of the pet → real depth -->
         <div class="roomfg" aria-hidden="true"></div>
@@ -3380,6 +3638,7 @@
           {habitatShape}
           {bgStyle}
           opacity={widgetOpacity}
+          dimmed={chapterPaused}
           onTap={onPetTap}
           onStroke={onPetStroke}
           onBackgroundDown={beginWindowDrag}
@@ -3388,6 +3647,72 @@
           {audioBeat}
           {audioStrength}
         />
+      </div>
+    {/if}
+
+    <!-- Chapter Access: the soft pause. Pet stays alive; only the room is quiet. A handshake,
+         never a paywall. Dismissible; close-to-tray & quit always work. -->
+    {#if showChapterChip}
+      <button class="chapter-chip" onclick={() => { cardOpen = true; cardDismissed = false; }}>
+        Builder pass available
+      </button>
+    {/if}
+    {#if showChapterCard}
+      <div class="chapter-card" class:compact={chapterNudge === "small"}>
+        <button class="chapter-x" aria-label="Not now" onclick={() => { cardDismissed = true; cardOpen = false; }}>×</button>
+        <p class="chapter-note">{chapterNudge === "small" ? pauseNoteShort : pauseNoteLine}</p>
+
+        <label class="chapter-field">
+          <span>GitHub username</span>
+          <input type="text" bind:value={ghUser} placeholder="your-handle" autocomplete="off" spellcheck="false" />
+        </label>
+
+        {#if !codeRevealed}
+          <button class="chapter-btn" disabled={!ghUser.trim()} onclick={revealRequestCode}>
+            Show my request code
+          </button>
+        {:else}
+          <div class="chapter-code">
+            <code>{requestCode}</code>
+            <button class="chapter-copy" onclick={copyRequestCode}>Copy</button>
+          </div>
+          <button class="chapter-btn" disabled={!ghUser.trim()} onclick={emailBuilderCard}>
+            Email Ansh
+          </button>
+        {/if}
+
+        <label class="chapter-field">
+          <span>Paste your builder pass</span>
+          <input
+            type="text"
+            bind:value={passInput}
+            placeholder="PASS-…"
+            autocomplete="off"
+            spellcheck="false"
+            onkeydown={(e) => { if (e.key === "Enter") submitBuilderPass(); }}
+          />
+        </label>
+        {#if passError}<p class="chapter-err">{passError}</p>{/if}
+        <button class="chapter-btn primary" disabled={!passInput.trim()} onclick={submitBuilderPass}>
+          Stay a while ✦
+        </button>
+      </div>
+    {/if}
+
+    <!-- Founder's Mark: signed provenance, revealed by clicking the woven signature. Proof of
+         lineage for authorship disputes — never auto-shown. -->
+    {#if founderShown && founderInfo}
+      <div class="founder-panel">
+        <button class="chapter-x" aria-label="Close" onclick={() => (founderShown = false)}>×</button>
+        <p class="founder-title">✦ Hearthmon</p>
+        <dl class="founder-grid">
+          <dt>Founder</dt><dd>{founderInfo.founder} · @{founderInfo.handle}</dd>
+          <dt>Built</dt><dd>{new Date(Number(founderInfo.build_ts) * 1000).toLocaleDateString()}</dd>
+          <dt>Commit</dt><dd class="mono">{founderInfo.git_commit}</dd>
+          <dt>Origin</dt><dd class="mono">{founderInfo.origin_hash}</dd>
+          <dt>Signature</dt><dd class="mono">{founderInfo.signature.slice(0, 24)}…</dd>
+        </dl>
+        <button class="chapter-btn" onclick={copyFounder}>Copy provenance</button>
       </div>
     {/if}
 
@@ -4219,6 +4544,221 @@
     z-index: 1; /* below chrome (radial 8–12, panels 5+) so menus stay clickable */
     pointer-events: auto; /* Alive renderer handles pet interaction + bg window-drag */
   }
+
+  /* ── Founder's Mark ── faint signature woven into the room, revealed after ~12s. */
+  .founder-mark {
+    position: absolute;
+    left: 9px;
+    bottom: 6px;
+    z-index: 2;
+    border: none;
+    background: none;
+    padding: 2px 3px;
+    font-family: inherit;
+    font-size: 7.5px;
+    letter-spacing: 0.05em;
+    font-style: italic;
+    white-space: nowrap;
+    color: inherit;
+    cursor: pointer;
+    pointer-events: auto;
+    opacity: 0;
+    animation: founderReveal 5s ease 12s forwards;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.4);
+  }
+  .founder-mark:hover {
+    opacity: 0.32 !important; /* surfaces when sought; faint otherwise */
+  }
+  @keyframes founderReveal {
+    to { opacity: 0.1; }
+  }
+  /* Founder's Mark provenance panel */
+  .founder-panel {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 15;
+    width: min(300px, 90%);
+    padding: 16px 16px 14px;
+    border-radius: 14px;
+    background: rgba(16, 18, 24, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
+    color: rgba(255, 255, 255, 0.9);
+    animation: chapterIn 0.4s ease both;
+  }
+  .founder-title {
+    margin: 0 0 10px;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.95);
+  }
+  .founder-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0 0 12px;
+    font-size: 11px;
+  }
+  .founder-grid dt {
+    color: rgba(255, 255, 255, 0.45);
+  }
+  .founder-grid dd {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.88);
+    word-break: break-all;
+  }
+  .founder-grid .mono {
+    font-family: ui-monospace, "Cascadia Code", monospace;
+    font-size: 10.5px;
+    color: rgba(170, 200, 255, 0.9);
+  }
+
+  /* ── Chapter Access: soft pause ── dim only the HABITAT (Classic). Pet stays bright. */
+  .stage .roombg,
+  .stage .roomfg {
+    transition: filter 1.2s ease;
+  }
+  .stage.chapter-dim .roombg,
+  .stage.chapter-dim .roomfg {
+    filter: grayscale(0.7) brightness(0.55);
+  }
+  .chapter-chip {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    z-index: 14;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(20, 22, 28, 0.6);
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 11px;
+    padding: 4px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    transition: opacity 0.4s ease;
+  }
+  .chapter-chip:hover {
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.32);
+  }
+  .chapter-card {
+    position: absolute;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    z-index: 14;
+    width: min(280px, 86%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 14px 13px;
+    border-radius: 14px;
+    background: rgba(18, 20, 26, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+    color: rgba(255, 255, 255, 0.92);
+    animation: chapterIn 0.5s ease both;
+  }
+  @keyframes chapterIn {
+    from { opacity: 0; transform: translate(-50%, 8px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+  }
+  .chapter-x {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    border: none;
+    background: none;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .chapter-x:hover {
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .chapter-note {
+    margin: 2px 14px 4px 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .chapter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .chapter-field input {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 8px;
+    padding: 6px 8px;
+    color: #fff;
+    font-size: 12.5px;
+    outline: none;
+  }
+  .chapter-field input:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+  .chapter-code {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chapter-code code {
+    flex: 1;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px dashed rgba(255, 255, 255, 0.22);
+  }
+  .chapter-copy {
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .chapter-btn {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 9px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, opacity 0.2s ease;
+  }
+  .chapter-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+  }
+  .chapter-btn.primary {
+    background: rgba(120, 170, 255, 0.22);
+    border-color: rgba(120, 170, 255, 0.4);
+  }
+  .chapter-btn.primary:hover:not(:disabled) {
+    background: rgba(120, 170, 255, 0.34);
+  }
+  .chapter-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .chapter-err {
+    margin: 0;
+    font-size: 11px;
+    color: #ff9b9b;
+  }
   /* idle: clip the pet/shadow/bubble to the orb so only the sphere shows.
      on hover the mask lifts, so controls and overflow return. */
   .widget.idle .stage {
@@ -5005,8 +5545,12 @@
 
   /* Ground: flat elliptical platform sitting at the pet's feet */
   .typebg-ground {
-    /* stage center ≈ 52% (padding-top shifts it slightly); feet = center + ~46% of psize */
-    top: calc(52% + var(--psize, 110px) * 0.36);
+    /* Anchor to the pet's true center, not a flat % of the stage. The pet is
+       flex-centered inside .stage, whose 18px padding-top shifts that center to
+       (50% + 9px). Hardcoding 52% only matched at one window height, so the disc
+       drifted UP off the feet when resizing smaller. Feet = center + psize/2; the
+       disc's half-height (psize*0.14) lands its midline on the feet. */
+    top: calc(50% + 9px + var(--psize, 110px) * 0.36);
     transform: translateX(-50%);
     /* flat ellipse — wide and shallow like a proper ground disc */
     height: calc(var(--psize, 110px) * 0.28);
