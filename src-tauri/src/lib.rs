@@ -16,6 +16,7 @@ fn show_main(app: &tauri::AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        app.state::<Visible>().0.store(true, Ordering::Relaxed); // resume the background watchers
         let _ = app.emit("hm-visible", true); // resume audio/speech (was suspended while hidden)
     }
 }
@@ -40,6 +41,10 @@ fn reflog_line_count(p: &PathBuf) -> usize {
         .unwrap_or(0)
 }
 
+/// Hearthmon's own rolling README status-card commit message — filtered out of the commit
+/// watcher (7.2) and reused by `push_card`, so the two can never drift apart.
+const CARD_COMMIT_MSG: &str = "chore: Hearthmon status card";
+
 /// A reflog line is `<old> <new> <name> <email> <ts> <tz>\t<action>: <message>`.
 /// Return the commit message only when the line records a *new commit* — not a
 /// checkout / reset / merge fast-forward / rebase step / pull.
@@ -49,7 +54,9 @@ fn parse_commit(line: &str) -> Option<String> {
         return None;
     }
     let msg = action.splitn(2, ": ").nth(1).unwrap_or("").trim();
-    if msg.is_empty() {
+    // Ignore Hearthmon's own rolling status-card commit so the companion never "celebrates"
+    // its own automated push (existing_issues.md 7.2).
+    if msg.is_empty() || msg == CARD_COMMIT_MSG {
         None
     } else {
         Some(msg.to_string())
@@ -83,6 +90,9 @@ fn spawn_git_watcher(handle: tauri::AppHandle) {
     // outlive their borrow across the loop body.
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(3));
+        if !handle.state::<Visible>().0.load(Ordering::Relaxed) {
+            continue; // hidden to tray → don't touch disk
+        }
 
         // snapshot the current watch target (no `state` local → no borrow that
         // outlives the guard; the lock temporary drops at the end of this stmt)
@@ -214,6 +224,9 @@ fn spawn_repo_activity_watcher(handle: tauri::AppHandle) {
         let mut primed = false; // skip the first sight so we don't fire on launch
         loop {
             std::thread::sleep(std::time::Duration::from_secs(6));
+            if !handle.state::<Visible>().0.load(Ordering::Relaxed) {
+                continue; // hidden to tray → don't spawn git / hit disk
+            }
             let repo = match handle.state::<Mutex<GitWatch>>().lock() {
                 Ok(g) => g.repo.clone(),
                 Err(_) => continue,
@@ -324,6 +337,9 @@ fn spawn_focus_watcher(handle: tauri::AppHandle) {
         let mut last = String::new();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(4));
+            if !handle.state::<Visible>().0.load(Ordering::Relaxed) {
+                continue; // hidden to tray → stop sampling the foreground
+            }
             if !handle.state::<FlowAware>().0.load(Ordering::Relaxed) {
                 continue; // opted out — never look
             }
@@ -350,6 +366,11 @@ struct AudioAware(AtomicBool);
 fn set_audio_aware(state: tauri::State<'_, AudioAware>, on: bool) {
     state.0.store(on, Ordering::Relaxed);
 }
+
+// Window visibility — flipped on show/hide so the background watchers can stop polling (disk
+// I/O + spawned git processes) while the app is hidden to tray. "Quit"/✕ only hide the window,
+// so without this they'd churn forever while the user thinks the app is closed (7.3).
+struct Visible(AtomicBool);
 
 // ── Startup: was this launch triggered by Windows autostart? ───────
 // Autostart registers the app with a `--autostarted` arg (see init); the frontend
@@ -434,7 +455,10 @@ fn spawn_audio_watcher(handle: tauri::AppHandle) {
         let mut stream: Option<cpal::Stream> = None;
         loop {
             std::thread::sleep(std::time::Duration::from_millis(300));
-            let want = handle.state::<AudioAware>().0.load(Ordering::Relaxed);
+            // capture only when opted in AND visible — drop the stream when hidden so we don't
+            // process audio for a window the user thinks is closed (7.3 / "silent while hidden")
+            let want = handle.state::<AudioAware>().0.load(Ordering::Relaxed)
+                && handle.state::<Visible>().0.load(Ordering::Relaxed);
             if want && stream.is_none() {
                 stream = build_loopback(&handle);
             } else if !want && stream.is_some() {
@@ -481,12 +505,22 @@ fn resolve_target(path: &PathBuf) -> Option<PathBuf> {
 /// Read bytes appended to `file` since `pos`; returns (text, new_len). Resets to
 /// the start if the file was truncated/rotated under us.
 fn read_from(file: &PathBuf, pos: u64) -> Option<(String, u64)> {
+    // Bound the allocation: a crashing trainer can dump a multi-GB traceback, and a suspended
+    // app can let a huge chunk accumulate. Never slurp more than MAX_READ in one tick — if a
+    // giant slice is pending, skip ahead and tail only its newest bytes (existing_issues.md §2).
+    const MAX_READ: u64 = 1 << 20; // 1 MiB
     let mut f = std::fs::File::open(file).ok()?;
     let len = f.metadata().ok()?.len();
-    let start = if pos > len { 0 } else { pos };
+    let start = if pos > len {
+        0 // file truncated/rotated under us → restart from the top
+    } else if len - pos > MAX_READ {
+        len - MAX_READ // huge backlog → jump to the tail so we can't OOM
+    } else {
+        pos
+    };
     f.seek(SeekFrom::Start(start)).ok()?;
     let mut bytes = Vec::new();
-    f.read_to_end(&mut bytes).ok()?;
+    f.take(len - start).read_to_end(&mut bytes).ok()?;
     Some((String::from_utf8_lossy(&bytes).to_string(), len))
 }
 
@@ -523,6 +557,9 @@ fn log_clear(state: tauri::State<'_, Mutex<LogWatch>>) {
 fn spawn_log_watcher(handle: tauri::AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
+        if !handle.state::<Visible>().0.load(Ordering::Relaxed) {
+            continue; // hidden to tray → don't tail the log
+        }
 
         let (path, file, pos) = match handle.state::<Mutex<LogWatch>>().lock() {
             Ok(g) => (g.path.clone(), g.file.clone(), g.pos),
@@ -603,11 +640,22 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
         .map(|s| s.success())
         .unwrap_or(false);
     if !rebased {
-        // a conflict — don't leave the repo mid-rebase; bail out of the integration
-        let _ = git_cmd(repo_path)
-            .args(["rebase", "--abort"])
-            .status();
+        // Conflict: we could NOT integrate the remote's changes. Abort to leave the repo clean
+        // and BAIL — force-pushing now would overwrite remote work we failed to merge (the fetch
+        // above already refreshed the lease baseline, so a bare --force-with-lease can't catch it).
+        // See existing_issues.md 7.1.
+        let _ = git_cmd(repo_path).args(["rebase", "--abort"]).status();
+        return Err("Remote and local have diverged — skipped the card push to avoid overwriting your repo.".into());
     }
+    // The remote SHA we just integrated onto. We pin the lease to THIS at push time so the
+    // force can only fast-forward over our own card commit, never clobber a commit that landed
+    // concurrently (a bare --force-with-lease leases against the just-fetched ref → always passes).
+    let lease_base = git_cmd(repo_path)
+        .args(["rev-parse", &format!("origin/{branch}")])
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let readme_path = repo_path.join("README.md");
     if let Ok(content) = std::fs::read_to_string(&readme_path) {
@@ -664,34 +712,45 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
 
     // To keep the profile clean, AMEND our own rolling card commit instead of
     // stacking a new commit every push — unless a real commit landed since.
-    const MSG: &str = "chore: Hearthmon status card";
     let last = git_cmd(repo_path)
         .args(["log", "-1", "--pretty=%s"])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
-    let amend = last == MSG;
+    let amend = last == CARD_COMMIT_MSG;
 
     let commit_args: Vec<&str> = if amend {
         vec!["commit", "--amend", "--no-edit"]
     } else {
-        vec!["commit", "-m", MSG]
+        vec!["commit", "-m", CARD_COMMIT_MSG]
     };
     let _ = git_cmd(repo_path)
         .args(&commit_args)
         .status();
 
-    let push_args: &[&str] = if amend {
-        &["push", "--force-with-lease"]
+    // Pin the lease to the integrated remote SHA (lease_base). A bare --force-with-lease leases
+    // against the just-fetched tracking ref, so it can never fail → silent clobber (7.1).
+    let lease_flag = lease_base.as_ref().map(|b| format!("--force-with-lease={branch}:{b}"));
+    let head_to_branch = format!("HEAD:{branch}");
+    let push_status = if amend {
+        match lease_flag.as_deref() {
+            Some(flag) => git_cmd(repo_path)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(["push", "origin", flag, &head_to_branch])
+                .status(),
+            None => git_cmd(repo_path)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .args(["push", "--force-with-lease"])
+                .status(),
+        }
     } else {
-        &["push", "-u", "origin", "HEAD"]
-    };
-    let push_status = git_cmd(repo_path)
-        .env("GIT_TERMINAL_PROMPT", "0") // fail fast instead of hanging on auth
-        .args(push_args)
-        .status()
-        .map_err(|e| e.to_string())?;
+        git_cmd(repo_path)
+            .env("GIT_TERMINAL_PROMPT", "0") // fail fast instead of hanging on auth
+            .args(["push", "-u", "origin", "HEAD"])
+            .status()
+    }
+    .map_err(|e| e.to_string())?;
 
     if !push_status.success() {
         return Err("Failed to 'git push' to GitHub.".into());
@@ -715,6 +774,7 @@ pub fn run() {
         .manage(Mutex::new(LogWatch::default()))
         .manage(FlowAware(AtomicBool::new(true)))
         .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
+        .manage(Visible(AtomicBool::new(true))) // window starts shown; watchers pause when hidden
         .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, is_dev_build, chapter::chapter_status, chapter::submit_builder_pass, chapter::founder_mark])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
@@ -742,6 +802,7 @@ pub fn run() {
                     "hide" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.hide();
+                            app.state::<Visible>().0.store(false, Ordering::Relaxed); // pause watchers
                             let _ = app.emit("hm-visible", false); // hush audio while hidden
                         }
                     }
@@ -768,6 +829,7 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                window.app_handle().state::<Visible>().0.store(false, Ordering::Relaxed); // pause watchers
                 let _ = window.emit("hm-visible", false); // hush audio while hidden
             }
         })

@@ -23,6 +23,7 @@
 - **Mechanism:** The log watcher seeks to the last known byte offset (`pos`) and executes `f.read_to_end(&mut bytes)` into a `Vec<u8>`. The bytes are then converted via `String::from_utf8_lossy`.
 - **Exact Fault:** `read_to_end` attempts to allocate a contiguous block of memory equal to the remaining file size. If a training script crashes and dumps a multi-gigabyte traceback, or if Hearthmon is suspended and a large log chunk accumulates, the next 2-second tick will attempt to allocate gigabytes of RAM in a single contiguous block.
 - **Impact:** The Rust allocator will fail, triggering an immediate `panic!("capacity overflow")` or an OS-level OOM kill, crashing the entire Tauri backend and terminating the application without warning.
+- **✅ FIXED 2026-06-16** — `read_from()` now caps each read at 1 MiB (`f.take(len - start)`) and, on a large backlog, seeks to the tail instead of `read_to_end`-ing the whole file. *(The secondary FlushFileBuffers/metadata-lag fault below is still open.)*
 - **Secondary Fault (Metadata Polling):** The log watcher relies on `std::fs::metadata(p).and_then(|m| m.modified())` to detect the newest log. In Windows, NTFS does not synchronously update the directory entry's `LastWriteTime` for a file actively opened in append mode unless the writing process explicitly calls `FlushFileBuffers()`. Hearthmon will severely lag behind real-time log events.
 
 ## 3. Coding Awareness (Git Reflog Watcher)
@@ -78,18 +79,21 @@
 - **Mechanism:** `push_card()` runs `git fetch origin`, then (on the rolling-card amend path) `git push --force-with-lease`.
 - **Exact Fault:** `--force-with-lease` with no explicit `<ref>:<expected>` compares against the local remote-tracking ref (`refs/remotes/origin/<branch>`). The `git fetch origin` executed seconds earlier *updates that very ref* to the current remote tip, so the lease always matches and the force always succeeds — even if a commit (e.g., a README edited directly on github.com) landed in between.
 - **Impact:** The safety of force-with-lease is defeated; it behaves like a plain `git push --force`. Any change pushed to that branch from elsewhere is silently overwritten by the background card amend. Automated, silent data loss on the **user's own repo**.
+- **✅ FIXED 2026-06-16** — if the pre-push `rebase` can't integrate the remote, `push_card` now aborts **and returns early** (no force-push); and the lease is pinned to the integrated SHA (`--force-with-lease=<branch>:<sha>` with an explicit `HEAD:<branch>` refspec) so a concurrent push can no longer be clobbered.
 
 ### 7.2 Auto-Push: the card's own amend self-triggers the commit watcher (FEEDBACK LOOP)
 - **Location:** `src-tauri/src/lib.rs` → `push_card()` + `parse_commit()` + `spawn_git_watcher()`
 - **Mechanism:** `push_card` writes a commit `chore: Hearthmon status card`; the reflog records `commit (amend): chore: Hearthmon status card`. `spawn_git_watcher` tails `.git/logs/HEAD` and `parse_commit()` fires on any action starting with `"commit"`.
 - **Exact Fault:** (a) If the Coding-Awareness repo is the same repo the card is pushed to, every automated card push appends a reflog `commit` line → the watcher emits `git-commit` with the card's message → the companion reacts to its **own** automated push as a "new commit" (false breakthrough/celebration). (b) `parse_commit` also accepts `commit (amend)` and `commit (initial)`, so amends inflate the perceived commit count.
 - **Impact:** Self-referential signal pollution; the pet celebrates its own status-card pushes. Directly undermines the soul rule that companionship signals must reflect real effort.
+- **✅ FIXED 2026-06-16** — the card message is now a shared `CARD_COMMIT_MSG` const and `parse_commit()` returns `None` for it, so the commit watcher never reacts to Hearthmon's own automated push.
 
 ### 7.3 Background watchers never pause when hidden-to-tray (BATTERY/IO)
 - **Location:** `src-tauri/src/lib.rs` → `spawn_git_watcher` / `spawn_repo_activity_watcher` / `spawn_log_watcher`
 - **Mechanism:** Each is a detached `loop { sleep; poll }`. The audio + speech path was taught to suspend on the `hm-visible=false` event (tray hide / window close), but these watchers were not.
 - **Exact Fault:** "Quit" and the window **X** only *hide* the app (the only real exit is tray → Quit). While hidden, `spawn_repo_activity_watcher` still spawns **two** `git` child processes every 6s, and the git/log watchers still hit disk every 2–3s, forever.
 - **Impact:** Continuous background disk I/O, `.git/index` stat-churn, and battery drain while the user believes the app is closed. Amplifies §3 on monorepos and violates the lightweight-widget principle.
+- **✅ FIXED 2026-06-16** — a managed `Visible(AtomicBool)` is flipped on show/hide/close; the git (3s), repo-activity (6s), log (2s) and focus (4s) loops `continue` while hidden, and the audio capture drops its stream. No disk I/O or git processes while tucked in the tray. *(Trade-off: live commits/logs are caught up on reopen, bounded by the §2 1 MiB cap.)*
 
 ### 7.4 Foreground process path truncated at 260 wchars
 - **Location:** `src-tauri/src/lib.rs` → `foreground_proc()`
@@ -120,6 +124,7 @@
 - **Mechanism:** `Database.load("sqlite:hearthmon.db")` with no `PRAGMA journal_mode=WAL` and no `PRAGMA busy_timeout`.
 - **Exact Fault:** In the default rollback-journal mode a writer blocks readers (and vice-versa); with no `busy_timeout`, a concurrent access returns `SQLITE_BUSY` immediately instead of waiting.
 - **Impact:** A write (`addMemory`) overlapping a long read (`allMemories(250)` or a 7.7 `RANDOM()` scan) can throw "database is locked" — a dropped memory or a rejected query. `WAL` + a few-second `busy_timeout` removes the whole class.
+- **✅ FIXED 2026-06-16** — `getDb()` now runs `PRAGMA journal_mode = WAL` and `PRAGMA busy_timeout = 3000` right after opening the database.
 
 ### 7.9 `bumpCounter` is a non-atomic read-modify-write
 - **Location:** `src/lib/db.ts` → `bumpCounter()`
@@ -137,20 +142,22 @@
 
 ## Severity & Fix Priority
 
+> **Status (2026-06-16):** the 5 beta-blockers are fixed — §2, 7.1, 7.2, 7.3, 7.8 (✅ rows below); both builds green (cargo check + svelte-check). Remaining: §1, §3, §4, §6, 7.4–7.7, 7.9, 7.10.
+
 | # | Issue | Area | Severity | Suggested fix |
 |---|-------|------|----------|---------------|
-| 2 | Unbounded `read_to_end` OOM | Training | **Critical** | Cap the read (`take(MAX)`), tail only the last N KB |
+| 2 | Unbounded `read_to_end` OOM | Training | ~~Critical~~ | ✅ **Fixed 2026-06-16** — 1 MiB `take` cap + tail |
 | 5 | Permanent future-clock lockout | Security | **Critical** | Allow downward heal within a tolerance; recovery path |
-| 7.1 | `fetch` defeats `--force-with-lease` | Auto-push | **Critical** | Don't fetch before the lease, or pin `--force-with-lease=<ref>:<sha>` |
+| 7.1 | `fetch` defeats `--force-with-lease` | Auto-push | ~~Critical~~ | ✅ **Fixed 2026-06-16** — bail on rebase conflict + pinned lease |
 | 1 | Admin Drop + no Unix impl | Flow | High | Treat `ACCESS_DENIED` as "still active"; stub Unix |
 | 3 | Worktree `.git` file + monorepo polling | Coding | High | Resolve `gitdir:`; back off / cache on slow repos |
 | 4 | Audio device-invalidation + slow AGC | Music | High | Rebuild on `DEVICE_INVALIDATED`; faster peak decay |
 | 6 | localtime drift + missing indexes | DB | High | Store UTC; add `(kind, created_at)` / `(mood, created_at)` indexes |
-| 7.2 | Card amend self-triggers commit watcher | Auto-push | High | Ignore `chore: Hearthmon status card`; exclude amend reflog |
-| 7.3 | Watchers never pause when hidden | Lifecycle | High | Gate watcher loops on `hm-visible` like audio/speech |
+| 7.2 | Card amend self-triggers commit watcher | Auto-push | ~~High~~ | ✅ **Fixed 2026-06-16** — `parse_commit` ignores the card message |
+| 7.3 | Watchers never pause when hidden | Lifecycle | ~~High~~ | ✅ **Fixed 2026-06-16** — `Visible` flag gates all watcher loops |
 | 7.5 | Newest-file-any-type log read | Training | High | Filter by extension; cap size (ties to #2) |
 | 7.7 | `ORDER BY RANDOM()` full scan | DB | Medium | Random-offset / id-sampling instead of full sort |
-| 7.8 | No WAL / `busy_timeout` | DB | Medium | `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000` |
+| 7.8 | No WAL / `busy_timeout` | DB | ~~Medium~~ | ✅ **Fixed 2026-06-16** — WAL + busy_timeout=3000 in `getDb` |
 | 7.4 | 260-wchar path truncation | Flow | Low | Grow buffer / retry on `ERROR_INSUFFICIENT_BUFFER` |
 | 7.6 | Local vs UTC day boundary | Security | Low | Compute expiry in UTC, or document the pad |
 | 7.9 | Non-atomic `bumpCounter` | DB | Low | Atomic upsert `value = value + 1` |

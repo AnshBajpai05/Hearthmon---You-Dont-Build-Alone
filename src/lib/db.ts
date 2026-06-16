@@ -29,6 +29,11 @@ let db: Database | null = null;
 export async function getDb(): Promise<Database> {
   if (!db) {
     db = await Database.load("sqlite:hearthmon.db");
+    // Concurrency hardening (existing_issues.md 7.8): WAL lets a reader and a writer coexist,
+    // and busy_timeout makes a contended statement wait briefly instead of failing instantly
+    // with SQLITE_BUSY — so a background write can't collide with a long memory-recall read.
+    await db.select("PRAGMA journal_mode = WAL;");
+    await db.execute("PRAGMA busy_timeout = 3000;");
     await db.execute(`
       CREATE TABLE IF NOT EXISTS memories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
