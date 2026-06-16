@@ -2,20 +2,34 @@
 // Three user-controllable channels (voice / cries / effects) + master mute.
 // All best-effort: a missing file or blocked audio must never break anything.
 
-let enabled = true;
+let userEnabled = true; // the user's master mute preference
+let suspended = false; // window hidden to tray → never speak/play to an empty screen
+let enabled = true; // effective gate read by every play fn = userEnabled && !suspended
 const vol = { voice: 0.65, cry: 0.4, fx: 0.55 };
 
 export type Channel = keyof typeof vol;
 
-export function setSoundEnabled(v: boolean): void {
-  enabled = v;
-  if (!v) {
+function applySound(): void {
+  enabled = userEnabled && !suspended;
+  if (!enabled) {
     try {
-      speechSynthesis.cancel();
+      speechSynthesis.cancel(); // stop any in-flight + queued utterance immediately
     } catch {
       /* no tts */
     }
   }
+}
+
+export function setSoundEnabled(v: boolean): void {
+  userEnabled = v;
+  applySound();
+}
+
+/** Hard-mute everything while the window is hidden (tray); resume on show. Independent of
+ *  the user's mute, so it never clobbers their preference. Cancels in-flight speech. */
+export function setSoundSuspended(v: boolean): void {
+  suspended = v;
+  applySound();
 }
 
 export function setVolume(ch: Channel, v: number): void {

@@ -18,6 +18,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# NOTE (security_audit #1): do NOT add the "devtools" feature here. Without it, release builds
+# have no webview devtools (Tauri only enables them in debug). Keep it off for shipped beta.
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
@@ -25,6 +27,18 @@ tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri-plugin-global-shortcut = "2.3.2"
+
+# Chapter Access (secure_Hearthmon): offline, device-bound chapter/license gate.
+# All cross-platform; the only OS-specific piece (registry I/O) is winreg below.
+sha2 = "0.10"               # MachineGuid → machine hash
+hmac = "0.12"               # builder-pass signature (HMAC-SHA256)
+hex = "0.4"                 # hex encode/decode
+hkdf = "0.12"               # derive the state-encryption key from secret + machine hash
+chacha20poly1305 = "0.10"   # AEAD: encrypt + authenticate the state blob
+getrandom = "0.2"           # AEAD nonce
+base64 = "0.22"             # store the opaque blob as text
+chrono = { version = "0.4", features = ["clock"] }  # end-of-local-day pass expiry
+obfstr = "0.4"              # keep the build-time secret out of `strings`
 
 # Flow awareness: read the FOREGROUND app's process name (name only — never the
 # window title, keystrokes, or content) to sense flow vs. friction.
@@ -38,4 +52,11 @@ windows-sys = { version = "0.52", features = [
 # never records or stores audio). Building an INPUT stream on the default OUTPUT
 # device gives loopback capture on Windows.
 cpal = "0.15"
+# Chapter Access: read HKLM MachineGuid + read/write the HKCU state store.
+winreg = "0.52"
+
+# security_audit #3: strip symbols from shipped binaries — smaller, and modestly harder for the
+# debugger crowd to map the gate/secret. (No effect on `cargo check`/dev builds.)
+[profile.release]
+strip = true
 

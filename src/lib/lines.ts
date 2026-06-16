@@ -603,3 +603,44 @@ export function shortDate(dateStr: string): string {
   const d = new Date(dateStr.replace(" ", "T"));
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+// ── Chapter Access (secure_Hearthmon) ────────────────────────────────────────
+// A handshake, not a paywall. Awareness model (Ansh's call): clarity ONCE up front,
+// then SILENCE through the full days, then a warm tail in the grace days. NO daily
+// countdown, ever. Same tone rules: never guilt, never "expired/upgrade".
+// >>> DRAFTS (Ansh dictated most) — final soul-check still yours. <<<
+
+// One-time, first-run heads-up so the trial is never a surprise. Warm, not scary, not modal.
+export const chapterIntroLines = [
+  "We've got a little trial chapter together first — about a week. No rush. We'll see how it feels.",
+  "Little heads up — this first chapter lasts about a week. Just enough time to see if we like building together."
+];
+
+// Quiet grace-day soft-lines (days 6–7), once/day max. The emotional tail before the pause.
+// Indexed by grace day (Rust grace_index): 0 = first grace day, 1 = last. No ask yet.
+export const graceLines = [
+  "Been a nice first stretch, this.",
+  "If we go quiet for a bit, I'll still be around."
+];
+
+// The soft pause note itself — the ONLY place the ask appears. The pet stays; room goes quiet.
+export const pauseNoteLine =
+  "Looks like our first little chapter wrapped up. If you'd like me around a little longer, send over your builder card. I'll be here.";
+
+// Compact version for the smaller nudge card (launches 2–4).
+export const pauseNoteShort = "Still here whenever you're ready. Send your builder card and I'll stay.";
+
+// When a builder pass is accepted — low-key, no fanfare.
+export const unlockLines = [
+  "Lights back on. Glad you're staying.",
+  "There we go. Settling back in.",
+  "Good. Where were we?"
+];
+
+export function graceLine(i: number): string {
+  return graceLines[Math.min(Math.max(i, 0), graceLines.length - 1)];
+}
+
+export function chapterIntroLine(): string {
+  return pick(chapterIntroLines);
+}
