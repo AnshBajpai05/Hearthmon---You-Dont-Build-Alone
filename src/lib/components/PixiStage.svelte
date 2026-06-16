@@ -462,11 +462,13 @@
       const glass = new Graphics(); // glass-dome reflections (globe only): highlight + drifting sheen + glint
       const glassMask = new Graphics(); // clips those reflections to the sphere
       const galaxyMask = new Graphics(); // clips the galaxy bowl to the sphere — prevents glow bleeding outside
+      const floorGlow = new Graphics(); // warm atmospheric spill from the globe base → bleeds the inner floor into the shelf rings
+      floorGlow.blendMode = "add"; // shares the rings' additive light system
       glass.blendMode = "add"; // reflections only ever brighten
       glass.visible = false;
       ambient.blendMode = "add";
       flash.blendMode = "add";
-      scene.addChild(back, orb, reflect, waves, hazeG, lantern, flies, ambient, flash, rareG, biomeMask);
+      scene.addChild(back, floorGlow, orb, reflect, waves, hazeG, lantern, flies, ambient, flash, rareG, biomeMask);
 
       // ── rotating "universe" for the sphere-habitat ground ──────────────────────
       // A flat spiral galaxy on the ground disc that slowly turns (same cadence as the
@@ -1164,6 +1166,27 @@
         }
         vignetteG.visible = globe;
         rimGlow.visible = globe;
+
+        // Warm atmospheric spill rising from the globe's base — bleeds the inner habitat floor
+        // INTO the external shelf rings (shared lightCol + additive light system) and softens the
+        // hard horizon so the floor reads as a glowing plane, not a stage platform. Lives in `scene`
+        // → clipped to the sphere by biomeMask. Brightest at the base (≈ ring glow), fading upward.
+        floorGlow.clear();
+        if (globe) {
+          const baseY = gcy + gR;        // sphere bottom — where the shelf rings sit
+          const topY  = HZ - gR * 0.12;  // just ABOVE the horizon so the seam glows across, not cuts
+          const span  = baseY - topY;
+          const fgl   = 0.85 + 0.15 * Math.sin(t * 1.5); // same slow breath as the rings
+          const STEPS = 8;
+          for (let i = 0; i < STEPS; i++) {
+            const f  = i / (STEPS - 1);            // 0 at base → 1 near horizon
+            const yy = baseY - f * span;
+            const rx = gR * (0.95 - 0.34 * f);     // widest at the base, narrowing upward
+            const ry = gR * (0.34 - 0.20 * f);
+            const a  = (0.065 - 0.060 * f) * fgl;  // brightest at base, fading up over the seam
+            floorGlow.ellipse(gcx, yy, rx, ry).fill({ color: lightCol, alpha: Math.max(0, a) });
+          }
+        }
 
         // clip galaxy to sphere so its haze/glow never bleeds outside the globe boundary
         galaxyMask.clear();

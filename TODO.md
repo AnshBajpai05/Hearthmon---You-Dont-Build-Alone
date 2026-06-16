@@ -35,6 +35,16 @@
 - [x] **`push_card` resilience** — fetches + rebases `--autostash` onto `origin/<branch>` before the amend + `--force-with-lease`, so a README edited on github.com can no longer reject the push as "stale info" (and the remote edit is preserved, not clobbered).
 - [x] **Voice: name-call clips 0.8×** — `playClip` gained a `rate` param; `voiceCry` plays the `<species>.mp3` name calls slower; `go-` throw clips + SFX stay 1×.
 
+### Sanctuary art-direction — galaxy + biome colour (2026-06-16)
+> Start of the `15_jun.md` **V1 Polish Day → Art Direction** pass, on the Alive renderer's cosmos/observatory corner. (Day-15 itself went to the security/chapter gate, so the polish plan slipped to here.)
+- [x] **Cosmos galaxy bowl rebuilt** ✅ 2026-06-16 — `PixiStage` `drawGalaxy`: the lower-sphere star field reshaped into a wide **vessel / boat-hull** curve (side tips arc above the front rim; `x=cos·r·1.25`, `y=(1−r²)·BD − r²·RISE·cos²`), rotating in place each tick. Stars are ~1px sub-pixel particles.
+- [x] **Fixed the "semicircle" artifact** ✅ 2026-06-16 — the star radius exponent was backwards (`pow(rnd,0.45)` piled stars onto the rim → a bright ring); flipped to `1.4` (dense centre, soft edge). Also dropped the 4 flat nebula-haze circles whose crisp edges showed as arcs. Now "just stars" + core glow.
+- [x] **Whole palette keyed to pet type (HSL)** ✅ 2026-06-16 — added `toHsl`/`hsl` helpers; nebula, stars and core glow all derive from `lightCol`'s hue (fire→warm reds/golds, water→blue/teal, psychic→purple/pink) so nothing clashes. White highlights preserved.
+- [x] **Star brightness boost** ✅ 2026-06-16 — lifted alpha floors (dim 0.55→0.65, bright 0.80→0.85) + sizes for a more visible field.
+- [x] **Biome globe↔ground colour harmony** ✅ 2026-06-16 — `lib/biomes.ts`: audited all 10 biomes by hue; **hearth** (normal/fighting) fixed from a purple globe over a brown floor → warm wood + lantern gold (matches its light); **neon** (electric/steel) from flat muddy blue → deep indigo sky + cool-steel floor. Other 8 verified already coherent; **water (Moonlit Shore) untouched** (gold standard). Saved the wall/floor/light-share-one-hue rule to memory. *(Committed + pushed to `origin/v2`, `144272c`.)*
+- [x] **`existing_issues.md` audit** ✅ 2026-06-16 — architecture & vulnerability audit doc (16 code-verified findings + severity/fix-priority matrix): OOM via unbounded `read_to_end`, auto-push `--force-with-lease` defeated by the preceding `fetch` (data loss), permanent future-clock lockout, missing SQLite indexes, card-amend self-triggering the commit watcher, watchers never pausing when hidden, etc.
+- [ ] **Remaining Art Direction pass:** layer foreground/mid/background + atmosphere on every biome (not just cosmos); push **Moonlit Shore** to screenshot-worthy. Then the two CRITICAL `15_jun.md` passes still untouched: **Writing/Dialogue** (`lib/lines.ts`) and **Interaction smoothness**.
+
 ---
 
 ## ✅ Already Shipped
@@ -370,4 +380,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: 2026-06-14 — V1 sealed on `main`. V2 on branch `v2`: **dual renderer (Classic + Alive), one brain two skins**. Shipped: Pixi mesh-warp pet, data-driven biomes, unified `PixiStage`, renderer toggle (V), interaction + brain-state parity, transparent canvas + 4 backdrops, decoupled habitat shape (full/sphere/square snow-globe). Next: Alive FX parity (bubble/throw/battle/evolution), weather in Pixi, type idles.*
+*Last updated: 2026-06-16 — V2 on branch `v2`. Latest (2026-06-16): Sanctuary art-direction pass started — cosmos galaxy bowl rebuilt (vessel shape, type-keyed HSL palette, semicircle artifact fixed, brighter stars) + biome globe/ground colour harmony (hearth, neon) pushed to `origin/v2`; `existing_issues.md` audit added. Next: layer the other biomes + Moonlit Shore polish, then the Writing & Interaction passes from `15_jun.md`.*
