@@ -1,3 +1,5 @@
+mod chapter;
+
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +16,7 @@ fn show_main(app: &tauri::AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        let _ = app.emit("hm-visible", true); // resume audio/speech (was suspended while hidden)
     }
 }
 
@@ -565,6 +568,16 @@ fn write_card(path: String, svg: String) -> Result<(), String> {
     std::fs::write(p, svg).map_err(|e| e.to_string())
 }
 
+/// Build a `git` command rooted at `repo`, with the console window suppressed on
+/// Windows so the periodic auto-push doesn't flash a terminal at the user.
+fn git_cmd(repo: &std::path::Path) -> std::process::Command {
+    let mut c = std::process::Command::new("git");
+    c.current_dir(repo);
+    #[cfg(windows)]
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
+}
+
 /// Automatically push the README card to GitHub.
 /// Also rewrites the static companion text block in README.md so it stays in sync.
 #[tauri::command]
@@ -573,29 +586,25 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
 
     // Integrate any remote changes FIRST (e.g. a README edited on github.com) so
     // the amend + --force-with-lease below can't be rejected as "stale info".
-    let branch = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let branch = git_cmd(repo_path)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|b| !b.is_empty())
         .unwrap_or_else(|| "main".to_string());
-    let _ = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let _ = git_cmd(repo_path)
         .env("GIT_TERMINAL_PROMPT", "0")
         .args(["fetch", "origin"])
         .status();
-    let rebased = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let rebased = git_cmd(repo_path)
         .args(["rebase", "--autostash", &format!("origin/{branch}")])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
     if !rebased {
         // a conflict — don't leave the repo mid-rebase; bail out of the integration
-        let _ = std::process::Command::new("git")
-            .current_dir(repo_path)
+        let _ = git_cmd(repo_path)
             .args(["rebase", "--abort"])
             .status();
     }
@@ -644,8 +653,7 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
     }
     
     // git add
-    let add_status = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let add_status = git_cmd(repo_path)
         .args(["add", "assets/hearthmon-status.svg", "README.md"])
         .status()
         .map_err(|e| e.to_string())?;
@@ -657,8 +665,7 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
     // To keep the profile clean, AMEND our own rolling card commit instead of
     // stacking a new commit every push — unless a real commit landed since.
     const MSG: &str = "chore: Hearthmon status card";
-    let last = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let last = git_cmd(repo_path)
         .args(["log", "-1", "--pretty=%s"])
         .output()
         .ok()
@@ -671,8 +678,7 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
     } else {
         vec!["commit", "-m", MSG]
     };
-    let _ = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let _ = git_cmd(repo_path)
         .args(&commit_args)
         .status();
 
@@ -681,8 +687,7 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
     } else {
         &["push", "-u", "origin", "HEAD"]
     };
-    let push_status = std::process::Command::new("git")
-        .current_dir(repo_path)
+    let push_status = git_cmd(repo_path)
         .env("GIT_TERMINAL_PROMPT", "0") // fail fast instead of hanging on auth
         .args(push_args)
         .status()
@@ -710,7 +715,7 @@ pub fn run() {
         .manage(Mutex::new(LogWatch::default()))
         .manage(FlowAware(AtomicBool::new(true)))
         .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, is_dev_build])
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, is_dev_build, chapter::chapter_status, chapter::submit_builder_pass, chapter::founder_mark])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());
@@ -737,6 +742,7 @@ pub fn run() {
                     "hide" => {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.hide();
+                            let _ = app.emit("hm-visible", false); // hush audio while hidden
                         }
                     }
                     "quit" => app.exit(0),
@@ -762,6 +768,7 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                let _ = window.emit("hm-visible", false); // hush audio while hidden
             }
         })
         .run(tauri::generate_context!())
