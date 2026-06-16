@@ -459,9 +459,181 @@
       const rareG = new Graphics(); // rare-event shapes (normal blend → silhouettes + glows)
       const hazeG = new Graphics(); // atmospheric depth layer
       const vignetteG = new Graphics(); // soft globe boundary overlay
+      const glass = new Graphics(); // glass-dome reflections (globe only): highlight + drifting sheen + glint
+      const glassMask = new Graphics(); // clips those reflections to the sphere
+      const galaxyMask = new Graphics(); // clips the galaxy bowl to the sphere — prevents glow bleeding outside
+      glass.blendMode = "add"; // reflections only ever brighten
+      glass.visible = false;
       ambient.blendMode = "add";
       flash.blendMode = "add";
       scene.addChild(back, orb, reflect, waves, hazeG, lantern, flies, ambient, flash, rareG, biomeMask);
+
+      // ── rotating "universe" for the sphere-habitat ground ──────────────────────
+      // A flat spiral galaxy on the ground disc that slowly turns (same cadence as the
+      // glass sheen), tinted by the biome/ground colour. Drawn ONCE in unit space (radius
+      // ~1) and only re-tinted when the colour changes; each frame we just move, flatten
+      // (perspective squash) and rotate the container — so resize / reload / new-Pokémon
+      // never need a geometry redraw. Two nested containers: the INNER one rotates in the
+      // disc plane, the OUTER one squashes it flat (scale order: squash must be outermost).
+      const galaxy = new Container();
+      const galaxyBack = new Container();
+      const galaxyMid = new Container();
+      const galaxyFront = new Container();
+      const galaxyBackGfx = new Graphics();
+      const galaxyMidGfx = new Graphics();
+      const galaxyFrontGfx = new Graphics();
+      const galaxyParticles = new Container();
+      
+      galaxyBackGfx.blendMode = "add";
+      galaxyMidGfx.blendMode = "add";
+      galaxyFrontGfx.blendMode = "add"; // a galaxy only adds light
+
+      galaxyBack.addChild(galaxyBackGfx);
+      galaxyMid.addChild(galaxyMidGfx);
+      galaxyFront.addChild(galaxyFrontGfx, galaxyParticles);
+
+      galaxy.addChild(galaxyBack);
+      galaxy.addChild(galaxyMid);
+      galaxy.addChild(galaxyFront);
+      galaxy.visible = false;
+      let galaxyLightSig = -1; // redraw the spiral only when the ground colour changes
+      
+      type GalaxyParticle = {
+        sprite: Sprite; arm: number; radius: number; angle: number;
+        speed: number; depth: number; size: number; baseAlpha: number; wobble: number;
+      };
+      let galaxyP: GalaxyParticle[] = [];
+      let starTex: Texture | null = null;
+
+      const drawGalaxy = () => {
+        galaxyBackGfx.clear();
+        galaxyMidGfx.clear();
+        galaxyFrontGfx.clear();
+        galaxyParticles.removeChildren();
+        galaxyP = [];
+
+        const rnd = (n: number) => { const s = Math.sin(n * 127.1 + 0.3) * 43758.5453; return s - Math.floor(s); };
+
+        // Bowl coordinate system (no tilt, no squash):
+        //   unit_x = cos(angle) * r          — horizontal spread
+        //   unit_y = (1 - r²) * BD           — bowl depth: 0 at rim, BD at centre/bottom
+        // Rotating around the bowl axis only updates unit_x (y is fixed per star), so
+        // stars trace horizontal circles at their bowl height → the concentric-oval silhouette.
+        const BD = 0.40; // bowl depth in unit space (0 = rim, 0.40 = bowl centre/bottom)
+
+        // ── derive the WHOLE galaxy palette from the type's light colour ──
+        // nebula, stars and core all share one hue family so the bowl reads as a single object
+        // (a fire pet → warm reds/golds; a water pet → blues/teals; psychic → purples/pinks).
+        const toHsl = (c: number) => {
+          const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+          let h = 0;
+          if (d) {
+            if (mx === r) h = ((g - b) / d) % 6;
+            else if (mx === g) h = (b - r) / d + 2;
+            else h = (r - g) / d + 4;
+            h *= 60; if (h < 0) h += 360;
+          }
+          const l = (mx + mn) / 2;
+          const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+          return [h, s, l] as const;
+        };
+        const hsl = (h: number, s: number, l: number) => {
+          h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); l = Math.max(0, Math.min(1, l));
+          const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+          let r = 0, g = 0, b = 0;
+          if (h < 60)       { r = c; g = x; }
+          else if (h < 120) { r = x; g = c; }
+          else if (h < 180) { g = c; b = x; }
+          else if (h < 240) { g = x; b = c; }
+          else if (h < 300) { r = x; b = c; }
+          else              { r = c; b = x; }
+          return ((Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255));
+        };
+
+        const [baseH, baseS] = toHsl(lightCol);
+        const sat = Math.max(0.55, baseS); // floor so even muted types still read as colourful
+        // core glow: the type hue pushed bright (replaces the old hand-mixed coreCol)
+        const coreCol = hsl(baseH, sat * 0.7, 0.78);
+
+        // ── BACK: intentionally empty — no nebula clouds. The flat-filled haze circles had
+        // crisp edges that showed as an unwanted arc inside the sphere ("semi circle"). Colour
+        // now comes purely from the type-tinted star palette + the central core glow below.
+
+        // ── MID: type-coloured core glow only (no small circles — small radius = hexagonal in Pixi) ──
+        galaxyMidGfx.circle(0, BD, 0.16).fill({ color: coreCol, alpha: 0.18 });
+        galaxyMidGfx.circle(0, BD, 0.08).fill({ color: lerpCol(coreCol, 0xffffff, 0.4), alpha: 0.20 });
+
+        // ── FRONT: compact blazing core ──
+        galaxyFrontGfx.circle(0, BD, 0.038).fill({ color: lerpCol(coreCol, 0xffffff, 0.5), alpha: 0.44 });
+        galaxyFrontGfx.circle(0, BD, 0.013).fill({ color: 0xffffff, alpha: 0.88 });
+        for (let sp = 0; sp < 4; sp++) {
+          const sa = sp * Math.PI * 0.5;
+          galaxyFrontGfx.moveTo(0, BD)
+            .lineTo(Math.cos(sa) * 0.052, BD + Math.sin(sa) * 0.019)
+            .stroke({ color: 0xffffff, width: 0.004, alpha: 0.32 });
+        }
+
+        if (!starTex && app) {
+          const g = new Graphics().circle(0, 0, 1.5).fill({ color: 0xffffff });
+          starTex = app.renderer.generateTexture(g);
+        }
+
+        // 10-color palette in the SAME hue family as the nebula/core (indices 0-2 = white
+        // highlights the colIdx logic relies on; 3-9 = colours fanned around the type hue)
+        const palette = [
+          0xffffff,                                          // pure white
+          lerpCol(0xffffff, hsl(baseH, sat, 0.85), 0.35),    // cool white, faintly tinted
+          hsl(baseH,       sat * 0.55, 0.86),                // tint-white
+          hsl(baseH,       sat,        0.74),                // core hue
+          hsl(baseH - 32,  sat,        0.70),                // analogous −
+          hsl(baseH + 32,  sat,        0.72),                // analogous +
+          hsl(baseH + 52,  sat * 0.90, 0.68),                // wider +
+          hsl(baseH - 52,  sat * 0.90, 0.70),                // wider −
+          hsl(baseH,       sat * 0.85, 0.62),                // deeper hue
+          hsl(baseH + 18,  sat,        0.80),                // light hue
+        ];
+
+        const N_STARS = 3500;
+        for (let i = 0; i < N_STARS; i++) {
+          const isBright = rnd(i + 500) < 0.05;
+          // centre-concentrated (exp > 1): dense at the bowl bottom, thinning toward the rim,
+          // so stars DON'T pile into a bright ring at the edge (the old "semi circle")
+          const radius = Math.min(0.97, Math.pow(rnd(i + 501), 1.4));
+          const angle  = rnd(i + 502) * Math.PI * 2;
+          const r2     = radius * radius;
+
+          // sub-pixel particles: rendered diameter = 3px × size, so 0.12–0.74 → ≈0.4–2.2px
+          const size = isBright ? 0.34 + rnd(i + 503) * 0.40 : 0.12 + rnd(i + 504) * 0.20;
+          // alpha pushed high so tiny dots are actually visible (floors lifted for a brighter field)
+          const baseAlpha = isBright
+            ? 3.95 + rnd(i + 505) * 0.15
+            : 2.85 + rnd(i + 506) * 0.35;
+
+          // bright stars lean cool-white; dim stars spread across all 10 palette hues
+          const colIdx = isBright
+            ? (rnd(i + 507) < 0.5 ? Math.floor(rnd(i + 515) * 3) : 3 + Math.floor(rnd(i + 516) * 4))
+            : Math.floor(rnd(i + 508) * palette.length);
+
+          // inner stars orbit slightly faster (differential bowl rotation)
+          const speed = 0.06 + (1 - radius) * 0.04;
+
+          if (starTex) {
+            const sprite = Sprite.from(starTex);
+            sprite.anchor.set(0.5);
+            sprite.tint  = palette[Math.min(colIdx, palette.length - 1)];
+            const ca0    = Math.cos(angle);
+            sprite.x     = ca0 * radius * 1.25;                          // vessel ASPECT: wide boat-hull
+            sprite.y     = (1 - r2) * BD - r2 * 0.30 * ca0 * ca0;       // vessel RISE: sides arc up
+            sprite.alpha = baseAlpha;
+            galaxyParticles.addChild(sprite);
+
+            // depth stores r² so the tick can apply the vessel RISE formula without extra squaring
+            galaxyP.push({ sprite, arm: 0, radius, angle, speed,
+              depth: r2, size, baseAlpha, wobble: rnd(i + 510) * Math.PI * 2 });
+          }
+        }
+      };
 
       // Founder's Mark: faint signature woven into the world (parity with Classic's .roombg mark).
       // Lives in `scene` → clips to the globe, dims with the habitat. Real protection is the
@@ -597,7 +769,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, platform, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
       );
 
 
@@ -902,6 +1074,7 @@
         const shelf = globe && bgStyle === "ground";
         platform.visible = shelf || (bgStyle !== "off" && !habitat);
         platform.blendMode = shelf ? "add" : "normal";
+        galaxy.visible = shelf; // rotating universe lives ONLY on the sphere-habitat ground
         if (shelf) {
           // Tuck the ground into the sphere's BASE so it stays LOW — the layout that read well
           // when enlarged. It sits 0.15·gR inside the bottom edge; because gcy is bottom-anchored
@@ -914,17 +1087,49 @@
           platform.clear();
           platform.x = 0;
           platform.y = 0;
-          platform.ellipse(gcx, sy, sw * 0.86, gR * 0.16).fill({ color: lightCol, alpha: 0.08 });
-          platform.ellipse(gcx, sy, sw * 0.64, gR * 0.125).fill({ color: lightCol, alpha: 0.13 });
-          platform.ellipse(gcx, sy, sw * 0.46, gR * 0.095).fill({ color: lightCol, alpha: 0.18 * gl });
-          // grounding ring — brighter contact line
-          platform.ellipse(gcx, sy, sw * 0.34, gR * 0.07).fill({ color: lightCol, alpha: 0.30 * gl });
-          platform.ellipse(gcx, sy, sw * 0.24, gR * 0.05).fill({ color: lightCol, alpha: 0.36 * gl });
-          platform.ellipse(gcx, sy, sw * 0.14, gR * 0.028).fill({ color: 0xffffff, alpha: 0.44 });
+          // faint grounding glow only — the rotating galaxy below is now the main visual,
+          // so the platform no longer paints a bright bullseye that drowns it out.
+          platform.ellipse(gcx, sy, sw * 0.86, gR * 0.16).fill({ color: lightCol, alpha: 0.06 });
+          platform.ellipse(gcx, sy, sw * 0.58, gR * 0.11).fill({ color: lightCol, alpha: 0.09 });
+          platform.ellipse(gcx, sy, sw * 0.34, gR * 0.07).fill({ color: lightCol, alpha: 0.11 * gl });
+          // rotating galaxy on the ground — retint only when the ground colour changes,
+          // then just move/flatten/spin the container (resize- and reload-proof).
+          if (galaxyLightSig !== lightCol) { galaxyLightSig = lightCol; drawGalaxy(); }
+          
+          // gal = bowl container scale AND star-size normaliser (rendered diameter = 3px × p.size)
+          // At y = gcy + 0.62·gR the sphere is 0.785·gR wide; 0.72·gR puts the rim at ~92% → boundary
+          const gal = gR * 0.72;
+
+          for (const p of galaxyP) {
+            p.angle += p.speed * dt;
+            const ca   = Math.cos(p.angle);
+            p.sprite.x = ca * p.radius * 1.25;                        // vessel ASPECT
+            p.sprite.y = (1 - p.depth) * 0.40 - p.depth * 0.30 * ca * ca; // vessel RISE
+
+            // bright stars (size > 0.35) get a gentle twinkle; tiny ones flicker subtly
+            const twinkle = p.size > 0.35
+              ? 0.18 * Math.sin(t * (3.5 + p.wobble * 2) + p.wobble * 6)
+              : 0.06 * Math.sin(t * (1.8 + p.wobble) + p.wobble * 4);
+            p.sprite.alpha = Math.max(0, Math.min(1, p.baseAlpha + twinkle));
+
+            p.sprite.scale.set(p.size / gal); // rendered px = 3 × p.size (texture diameter = 3px)
+          }
+
+          // rim at 62% down the sphere, wide enough (0.72·gR) to sit on the sphere boundary
+          galaxy.position.set(gcx, gcy + gR * 0.62);
+          galaxy.scale.set(gal, gal);
+
+          // container rotations are 0 — each star's angle drives its own motion
+          galaxyBack.rotation  = 0;
+          galaxyMid.rotation   = 0;
+          galaxyFront.rotation = 0;
         } else if (bgStyle === "ground") {
-          drawPlatform(petPx * 0.6);
+          const br = petPx * 0.6;
+          drawPlatform(br);
           platform.x = posX.value;
-          platform.y = groundY() + 4;
+          // keep the whole disc inside the window: its lower rim is br*0.34 below centre,
+          // so never let the centre drop past (window bottom − that rim − a small margin).
+          platform.y = Math.min(groundY() + 4, H() - 6 - br * 0.34);
         } else {
           // orb/square centered on the VISIBLE content box → equal top/bottom gap
           drawPlatform(0.5 * Math.hypot(contentW, contentH) * curScale * 1.08);
@@ -959,6 +1164,64 @@
         }
         vignetteG.visible = globe;
         rimGlow.visible = globe;
+
+        // clip galaxy to sphere so its haze/glow never bleeds outside the globe boundary
+        galaxyMask.clear();
+        if (globe) {
+          if (habitatShape === "square") {
+            galaxyMask.roundRect(gcx - gR, gcy - gR, gR * 2, gR * 2, 22).fill(0xffffff);
+          } else {
+            galaxyMask.circle(gcx, gcy, gR).fill(0xffffff);
+          }
+        }
+        galaxy.mask = globe ? galaxyMask : null;
+
+        // ── glass dome (globe ONLY) ── a curved specular highlight + a slow drifting
+        // sheen + an occasional diagonal glint, so the sphere reads as real glass that's
+        // gently turning rather than a flat picture with a pet pasted inside. Clipped to
+        // the sphere; additive so it only ever brightens.
+        glass.clear();
+        glass.visible = globe;
+        glass.mask = globe ? glassMask : null;
+        glassMask.clear();
+        if (globe) {
+          glassMask.circle(gcx, gcy, gR).fill(0xffffff);
+          // curved-glass specular highlight, upper-left — static, sells the 3D dome
+          glass.ellipse(gcx - gR * 0.33, gcy - gR * 0.40, gR * 0.36, gR * 0.22).fill({ color: 0xffffff, alpha: 0.05 });
+          glass.ellipse(gcx - gR * 0.30, gcy - gR * 0.45, gR * 0.17, gR * 0.10).fill({ color: 0xffffff, alpha: 0.07 });
+          // a faint vertical sheen drifting across (~26s) → the glass slowly rotating.
+          // It wraps just off the edge so the loop never visibly jumps.
+          const turn = ((t * 0.038) % 1) * 2 - 1; // -1 → 1
+          glass.ellipse(gcx + turn * gR * 1.05, gcy, gR * 0.12, gR * 0.96).fill({ color: lightCol, alpha: 0.05 });
+          // occasional bright diagonal glint streaking across the dome (~every 13s)
+          // very occasional slow diagonal glint (~once per minute)
+          const glintCycle = 60; // seconds
+          const glintDuration = 10.0; // glint lasts 5s (slow sweep)
+
+          const gp = (t % glintCycle) / glintCycle;
+
+          if (gp < glintDuration / glintCycle) {
+            const k = gp / (glintDuration / glintCycle); // 0 → 1 over 5s
+
+            // slower, gentler sweep across the dome
+            const cxg = gcx + (k * 2 - 1) * gR * 1.05;
+
+            // softer fade in/out
+            const a = Math.sin(k * Math.PI) * 0.16;
+
+            const sl = gR * 0.28; // diagonal slant
+
+            glass.poly([
+              cxg - gR * 0.05 + sl, gcy - gR,
+              cxg + gR * 0.05 + sl, gcy - gR,
+              cxg + gR * 0.05 - sl, gcy + gR,
+              cxg - gR * 0.05 - sl, gcy + gR,
+            ]).fill({
+              color: 0xffffff,
+              alpha: a
+            });
+          }
+        }
 
         // sky + ground gradient inside the viewport (repaint on change)
         const sig = `${vpx | 0},${vpy | 0},${vpw | 0},${vph | 0}`;

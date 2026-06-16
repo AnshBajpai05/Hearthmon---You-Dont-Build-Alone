@@ -120,8 +120,8 @@ export const BIOMES: Biome[] = [
     id: "neon",
     name: "Neon Tech Corner",
     types: ["electric", "steel"],
-    wall: ["#1a2336", "#0c1018"],
-    floor: ["#1d2738", "#10141d"], // dark desk
+    wall: ["#16223c", "#090e1a"], // deep indigo night
+    floor: ["#26303f", "#141a24"], // cool steel desk — lighter than sky so the horizon reads
     light: "#7fd9ff",
     rim: "rgba(130,220,255,0.55)",
     ground: "cyber",
@@ -210,8 +210,8 @@ export const BIOMES: Biome[] = [
     id: "hearth",
     name: "Cozy Corner",
     types: ["normal", "fighting"],
-    wall: ["#2c2446", "#1a1528"],
-    floor: ["#3c2d24", "#251b15"], // warm wood
+    wall: ["#33261a", "#1b120a"], // warm dusk — matches the wood + lantern gold
+    floor: ["#3f2f20", "#251a11"], // warm wood
     light: "#f6cf90",
     rim: "rgba(246,207,144,0.55)",
     ground: "warm",
