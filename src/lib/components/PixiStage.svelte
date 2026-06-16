@@ -10,6 +10,7 @@
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL } from "$lib/sprites";
+  import { founderMark } from "$lib/founder";
   import { biomeForType } from "$lib/biomes";
 
   interface Props {
@@ -24,6 +25,7 @@
     habitatShape?: "full" | "sphere" | "square"; // biome SHAPE — independent of backdrop
     bgStyle?: "orb" | "square" | "ground" | "off"; // pet backdrop (Classic's 🌿 cycle)
     opacity?: number; // widget transparency slider (--wo)
+    dimmed?: boolean; // Chapter Access soft pause: dim the HABITAT, keep the pet bright
     onTap?: () => void; // bridge to the shared brain (parity with Classic)
     onStroke?: () => void;
     onBackgroundDown?: () => void; // empty-space press → drag the window
@@ -69,6 +71,7 @@
     habitatShape = "full",
     bgStyle = "orb",
     opacity = 1,
+    dimmed = false,
     onTap,
     onStroke,
     onBackgroundDown,
@@ -107,6 +110,8 @@
       let part = rgba(biome.particleColor);
       let hasWater = biome.ground === "water";
       let pkind = biome.particle; // firefly|ember|pollen|spark|dust|snow|star|mist
+      let dimLerp = 0; // Chapter Access: eases 0→1 when `dimmed`, fades the habitat like Classic
+      let founderSig = ""; // Founder's Mark: tracks biome so the woven signature updates on switch
       let ambKind = "none"; // type-driven premium ambient: lightning | flare | rays
       let vpSig = ""; // gradient repaint signature (cleared on biome change)
 
@@ -129,7 +134,7 @@
         const h = H();
         if (habitat && habitatShape !== "full") {
           const gR = Math.min(w, h) * 0.42;
-          return h * 0.46 - gR + gR * 2 * 0.6; // globe horizon
+          return h * 0.88 - gR * 0.8; // globe horizon — matches the bottom-anchored gcy (0.88h - gR) + 0.2gR
         }
         return h * (habitat ? 0.82 : 0.82);
       };
@@ -366,11 +371,7 @@
       await reloadPet(dexId, shiny);
       if (destroyed) return;
 
-      const platform = new Graphics(); // pet backdrop (orb / ground / off)
-      const baseGlow = new Graphics(); // soft blurred glow under the sphere's ground base
-      baseGlow.filters = [new BlurFilter({ strength: 14, quality: 3 })];
-      baseGlow.blendMode = "add";
-      baseGlow.visible = false;
+      const platform = new Graphics(); // pet backdrop (orb / ground / off) — incl. the shelf ring-glow
       const rimGlow = new Graphics(); // soft light-colored glow on the habitat boundary
       rimGlow.filters = [new BlurFilter({ strength: 8, quality: 3 })];
       rimGlow.blendMode = "add";
@@ -461,6 +462,16 @@
       ambient.blendMode = "add";
       flash.blendMode = "add";
       scene.addChild(back, orb, reflect, waves, hazeG, lantern, flies, ambient, flash, rareG, biomeMask);
+
+      // Founder's Mark: faint signature woven into the world (parity with Classic's .roombg mark).
+      // Lives in `scene` → clips to the globe, dims with the habitat. Real protection is the
+      // embedded provenance (Rust founder_mark); this is the discoverable visible touch.
+      const founderText = new Text({
+        text: "",
+        style: { fill: lightCol, fontSize: 8, fontStyle: "italic", fontFamily: "system-ui, sans-serif" }
+      });
+      founderText.alpha = 0;
+      scene.addChild(founderText);
 
       // a jagged lightning polyline: wide soft glow pass + a bright thin core
       function strokeBolt(pts: number[], alpha: number) {
@@ -586,8 +597,9 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, baseGlow, platform, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
+        scene, platform, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, bubbleC
       );
+
 
       // backdrop (orb sphere / square card / ground platform / off) — radius driven
       function drawPlatform(br: number) {
@@ -841,7 +853,12 @@
         const globe = habitat && habitatShape !== "full";
         const gR = Math.min(w, h) * 0.42;
         const gcx = w / 2;
-        const gcy = h * 0.46;
+        // Anchor the globe's BOTTOM (not its center) to a fixed fraction of height.
+        // gR follows min(w,h); when the box is dragged taller-than-wide the globe gets
+        // width-limited, and a height-based center (0.46h) let its bottom — and the ground
+        // shelf riding on it — drift UPWARD. Pinning the bottom keeps the shelf locked low
+        // at every aspect. Identical to h*0.46 whenever min(w,h) === h (the normal case).
+        const gcy = h * 0.88 - gR;
         const vpx = globe ? gcx - gR : 0;
         const vpy = globe ? gcy - gR : 0;
         const vpw = globe ? gR * 2 : w;
@@ -860,9 +877,24 @@
         // opacity · biome visibility · translucency
         a.stage.alpha = opacity;
         scene.visible = habitat;
+        // Chapter Access soft pause: ease the habitat down (~0.45×), pet untouched.
+        dimLerp += ((dimmed ? 1 : 0) - dimLerp) * 0.06;
+        const dimMul = 1 - 0.55 * dimLerp;
         // globe = lightly glassy; full landscape solid. Pet is NOT in `scene` so it
         // stays fully opaque. Brightness is mostly the gradient lift `L` + vignette below.
-        scene.alpha = globe ? 0.78 : 0.9;
+        scene.alpha = (globe ? 0.78 : 0.9) * dimMul;
+
+        // Founder's Mark: refresh on biome switch, place (low in the globe / bottom-left of a
+        // full vista), and reveal very faintly after ~12s — discovered, not announced.
+        if (founderSig !== biome.scene) {
+          founderSig = biome.scene;
+          founderText.text = founderMark(biome.scene);
+          founderText.style.fill = lightCol;
+        }
+        founderText.visible = habitat;
+        founderText.anchor.set(globe ? 0.5 : 0, globe ? 0.5 : 1);
+        founderText.position.set(globe ? gcx : vpx + 9, globe ? gcy + gR * 0.62 : vpBottom - 8);
+        founderText.alpha += ((habitat && t > 12 ? 0.1 : 0) - founderText.alpha) * 0.03;
 
         // backdrop. SPECIAL: globe habitat + ground bg → a ground SHELF UNDER the sphere
         // (premium "snow-globe resting on a surface"). Otherwise the pad is hidden under
@@ -870,24 +902,25 @@
         const shelf = globe && bgStyle === "ground";
         platform.visible = shelf || (bgStyle !== "off" && !habitat);
         platform.blendMode = shelf ? "add" : "normal";
-        baseGlow.visible = shelf;
         if (shelf) {
-          // the 3-ring stack (biome-light colour) sitting at the sphere↔ground SEAM,
-          // with a soft BLURRED underglow behind it → glowing ringed base.
+          // Tuck the ground into the sphere's BASE so it stays LOW — the layout that read well
+          // when enlarged. It sits 0.15·gR inside the bottom edge; because gcy is bottom-anchored
+          // (sphereBottom is a constant 0.88·h), this stays low at EVERY size instead of riding
+          // up when the box is small.
           const sw = gR;
-          const sy = gcy + gR * 0.95; // between the sphere and the ground below
+          const sphereBottom = gcy + gR;        // sphere's bottom edge (bottom-anchored at 0.88h)
+          const sy = sphereBottom - gR * 0.15;  // tucked just inside the base
           const gl = 0.85 + 0.15 * Math.sin(t * 1.5);
-          baseGlow.clear();
-          baseGlow.x = 0;
-          baseGlow.y = 0;
-          baseGlow.ellipse(gcx, sy, sw * 0.5, gR * 0.10).fill({ color: lightCol, alpha: 0.42 * gl }); // soft glow
           platform.clear();
           platform.x = 0;
           platform.y = 0;
-          platform.ellipse(gcx, sy, sw * 0.82, gR * 0.15).fill({ color: lightCol, alpha: 0.12 }); // ring 1
-          platform.ellipse(gcx, sy, sw * 0.56, gR * 0.1).fill({ color: lightCol, alpha: 0.2 }); // ring 2
-          platform.ellipse(gcx, sy, sw * 0.32, gR * 0.06).fill({ color: lightCol, alpha: 0.3 }); // ring 3
-          platform.ellipse(gcx, sy - gR * 0.01, sw * 0.16, gR * 0.03).fill({ color: 0xffffff, alpha: 0.35 }); // hot core
+          platform.ellipse(gcx, sy, sw * 0.86, gR * 0.16).fill({ color: lightCol, alpha: 0.08 });
+          platform.ellipse(gcx, sy, sw * 0.64, gR * 0.125).fill({ color: lightCol, alpha: 0.13 });
+          platform.ellipse(gcx, sy, sw * 0.46, gR * 0.095).fill({ color: lightCol, alpha: 0.18 * gl });
+          // grounding ring — brighter contact line
+          platform.ellipse(gcx, sy, sw * 0.34, gR * 0.07).fill({ color: lightCol, alpha: 0.30 * gl });
+          platform.ellipse(gcx, sy, sw * 0.24, gR * 0.05).fill({ color: lightCol, alpha: 0.36 * gl });
+          platform.ellipse(gcx, sy, sw * 0.14, gR * 0.028).fill({ color: 0xffffff, alpha: 0.44 });
         } else if (bgStyle === "ground") {
           drawPlatform(petPx * 0.6);
           platform.x = posX.value;
@@ -1111,7 +1144,7 @@
           // Gentle, reflective, dreamlike
           const baseColor = petType === "fairy" ? 0xf0a8d8 : petType === "ice" ? 0x9fe8f0 : 0x58a8f0;
           const altColor  = petType === "fairy" ? 0xffd1f0 : petType === "ice" ? 0xd1f7ff : 0x8ce0ff;
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: baseColor, alpha: 0.06 });
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: baseColor, alpha: 0.09 });
           for (let i = 0; i < 4; i++) {
             const sway = Math.sin(t * 0.3 + i * 1.5) * vpw * 0.15;
             const cx = vpx + vpw * (0.2 + i * 0.2) + sway;
@@ -1119,24 +1152,34 @@
             ambient.bezierCurveTo(cx + vpw * 0.1, vpy + vph * 0.3, cx - vpw * 0.1, vpy + vph * 0.6, cx + vpw * 0.1, HZ);
             ambient.lineTo(cx - vpw * 0.05, HZ);
             ambient.bezierCurveTo(cx - vpw * 0.25, vpy + vph * 0.6, cx + vpw * 0.05, vpy + vph * 0.3, cx - vpw * 0.25, vpy);
-            ambient.fill({ color: i % 2 === 0 ? baseColor : altColor, alpha: Math.min(1, (0.04 + 0.02 * Math.sin(t * 0.5 + i) + pulse * 0.03) * (0.8 + envBreath * 0.4) * petEnergy) });
+            ambient.fill({ color: i % 2 === 0 ? baseColor : altColor, alpha: Math.min(1, (0.13 + 0.07 * Math.sin(t * 0.5 + i) + pulse * 0.06) * (0.6 + 0.4 * petEnergy)) });
+          }
+          // drifting shimmer sparkles riding the curtains (the "alive" glints)
+          for (let i = 0; i < 6; i++) {
+            const sx = vpx + vpw * (0.18 + i * 0.13) + Math.sin(t * 0.3 + i * 1.5) * vpw * 0.12;
+            const sy = vpy + (HZ - vpy) * (0.2 + 0.55 * ((Math.sin(t * 0.4 + i * 2) + 1) / 2));
+            const tw = 0.5 + 0.5 * Math.sin(t * 2.2 + i * 3);
+            ambient.circle(sx, sy, 0.9 + tw).fill({ color: altColor, alpha: Math.min(1, (0.1 + 0.2 * tw) * petEnergy) });
           }
           // Room reaction: color wash synced with breath
-          flash.rect(vpx, vpy, vpw, vph).fill({ color: baseColor, alpha: 0.02 + pulse * 0.03 + envBreath * 0.02 });
-          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.06);
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: baseColor, alpha: 0.03 + pulse * 0.04 + envBreath * 0.025 });
+          petLight = Math.max(petLight, pulse * 0.14 + envBreath * 0.07);
         } else if (ambKind === "constellation") {
-          // Ancient, subtle rotating cosmic geometry
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x0a0a1a, alpha: 0.1 });
+          // Ancient rotating cosmic geometry — brighter stars with glow halos + white cores
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x0a0a1a, alpha: 0.12 });
           const cx = vpx + vpw * 0.5, cy = vpy + (HZ - vpy) * 0.4;
           const r1 = vpw * 0.3, r2 = vpw * 0.45;
+          const starGlow = Math.min(1, (0.18 + pulse * 0.18) * petEnergy);
           for (let i = 0; i < 5; i++) {
             const ang = t * 0.05 + i * Math.PI * 0.4;
             const x1 = cx + Math.cos(ang) * r1, y1 = cy + Math.sin(ang) * r1 * 0.5;
             const x2 = cx + Math.cos(ang + 0.8) * r2, y2 = cy + Math.sin(ang + 0.8) * r2 * 0.5;
             ambient.moveTo(x1, y1).lineTo(x2, y2);
-            ambient.stroke({ color: lightCol, width: 1, alpha: Math.min(1, (0.06 + pulse * 0.06) * petEnergy) });
-            ambient.circle(x1, y1, 2).fill({ color: lightCol, alpha: Math.min(1, (0.1 + pulse * 0.1) * petEnergy) });
-            ambient.circle(x2, y2, 1.5).fill({ color: lightCol, alpha: Math.min(1, (0.1 + pulse * 0.1) * petEnergy) });
+            ambient.stroke({ color: lightCol, width: 1.4, alpha: Math.min(1, (0.16 + pulse * 0.1) * petEnergy) });
+            ambient.circle(x1, y1, 5).fill({ color: lightCol, alpha: starGlow * 0.4 });   // soft halo
+            ambient.circle(x1, y1, 2).fill({ color: 0xffffff, alpha: starGlow });          // bright core
+            ambient.circle(x2, y2, 4).fill({ color: lightCol, alpha: starGlow * 0.35 });
+            ambient.circle(x2, y2, 1.5).fill({ color: 0xffffff, alpha: starGlow * 0.85 });
           }
           // Inner connecting triangle
           const a1 = -t * 0.03, a2 = a1 + 2.1, a3 = a1 + 4.2;
@@ -1144,104 +1187,166 @@
                  .lineTo(cx + Math.cos(a2) * r1, cy + Math.sin(a2) * r1 * 0.5)
                  .lineTo(cx + Math.cos(a3) * r1, cy + Math.sin(a3) * r1 * 0.5)
                  .lineTo(cx + Math.cos(a1) * r1, cy + Math.sin(a1) * r1 * 0.5);
-          ambient.stroke({ color: lightCol, width: 0.5, alpha: Math.min(1, (0.04 + pulse * 0.04) * petEnergy) });
-          // Room reaction: deep starry glow with breath
-          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0x9fd0ff, alpha: 0.01 + pulse * 0.02 + envBreath * 0.01 });
+          ambient.stroke({ color: lightCol, width: 1, alpha: Math.min(1, (0.1 + pulse * 0.06) * petEnergy) });
+          // Room reaction: deep starry glow + the pet catches it
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0x9fd0ff, alpha: 0.025 + pulse * 0.03 + envBreath * 0.015 });
+          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.05);
         } else if (ambKind === "whispers") {
-          // Mystery, eerie fog, shadow distortions
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x050508, alpha: 0.12 });
-          const shadowAlpha = Math.min(1, (0.25 + pulse * 0.15) * petEnergy);
+          // Eerie fog + shadow — creeping wisps that actually read, plus a low ground mist
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x050508, alpha: 0.14 });
+          const shadowAlpha = Math.min(1, (0.28 + pulse * 0.15) * petEnergy);
           // Corner darkening
           flash.moveTo(vpx, vpy).lineTo(vpx + vpw * 0.3, vpy).lineTo(vpx, vpy + vph * 0.3).fill({ color: 0x000000, alpha: shadowAlpha });
           flash.moveTo(vpx + vpw, vpy).lineTo(vpx + vpw * 0.7, vpy).lineTo(vpx + vpw, vpy + vph * 0.3).fill({ color: 0x000000, alpha: shadowAlpha });
-          // Drifting faint wisps
-          for (let i = 0; i < 3; i++) {
-            const wx = vpx + (((t * 0.04 + i * 0.33) % 1) * vpw);
+          // Drifting wisps — brighter and more of them
+          for (let i = 0; i < 5; i++) {
+            const wx = vpx + (((t * 0.04 + i * 0.21) % 1.1) * vpw);
             const wy = vpy + (HZ - vpy) * (0.3 + 0.4 * Math.sin(t * 0.2 + i));
-            ambient.ellipse(wx, wy, vpw * 0.15, vph * 0.08).fill({ color: lightCol, alpha: Math.min(1, (0.02 + 0.01 * Math.sin(t * 1.1 + i) + pulse * 0.02) * petEnergy) });
+            ambient.ellipse(wx, wy, vpw * 0.16, vph * 0.09).fill({ color: lightCol, alpha: Math.min(1, (0.1 + 0.05 * Math.sin(t * 1.1 + i) + pulse * 0.04) * petEnergy) });
           }
-          // Rare eye-like glow in dark
-          if (Math.sin(t * 0.8) > 0.96) {
+          // Low creeping ground mist
+          ambient.ellipse(vpx + vpw * 0.5 + Math.sin(t * 0.3) * vpw * 0.1, HZ + (vpBottom - HZ) * 0.25, vpw * 0.5, vph * 0.1)
+                 .fill({ color: lightCol, alpha: Math.min(1, (0.08 + pulse * 0.03) * petEnergy) });
+          // Eye-like glow in the dark — with a soft halo, a touch more present
+          if (Math.sin(t * 0.8) > 0.94) {
              const ex = vpx + vpw * 0.15, ey = vpy + vph * 0.2;
-             ambient.circle(ex, ey, 1.5).fill({ color: 0x9060ff, alpha: Math.min(1, 0.4 * petEnergy) });
-             ambient.circle(ex + 10, ey, 1.5).fill({ color: 0x9060ff, alpha: Math.min(1, 0.4 * petEnergy) });
+             ambient.circle(ex, ey, 4).fill({ color: 0x9060ff, alpha: Math.min(1, 0.25 * petEnergy) });
+             ambient.circle(ex, ey, 1.5).fill({ color: 0xc0a0ff, alpha: Math.min(1, 0.6 * petEnergy) });
+             ambient.circle(ex + 10, ey, 4).fill({ color: 0x9060ff, alpha: Math.min(1, 0.25 * petEnergy) });
+             ambient.circle(ex + 10, ey, 1.5).fill({ color: 0xc0a0ff, alpha: Math.min(1, 0.6 * petEnergy) });
           }
-          petLight = Math.max(petLight, pulse * 0.08); // subtle eerie pet light
+          petLight = Math.max(petLight, pulse * 0.1);
         } else if (ambKind === "canopy") {
-          // Canopy light: moving sunlight through leaves
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffffd0, alpha: 0.05 });
+          // Dappled sunlight through leaves. WARM GOLD on purpose — green beams merged into the
+          // green biome and vanished; gold reads against foliage (parity with hearth/lightning).
+          const sun = 0xfff1b0;    // warm sunlight shaft
+          const sunHot = 0xfffbe0; // bright beam core / motes
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xfff4c0, alpha: 0.06 });
           for (let i = 0; i < 4; i++) {
-            const ang = 1.1 + Math.sin(t * 0.1 + i) * 0.05;
-            const w0 = (vpw * 0.06 + pulse * vpw * 0.03) * petEnergy; // Widen gently on beat/energy
-            const ox = vpx + vpw * (0.1 + i * 0.25);
+            const ang = 1.1 + Math.sin(t * 0.12 + i) * 0.06;
+            const shimmer = 0.6 + 0.4 * Math.sin(t * (1.1 + i * 0.3) + i); // visible breathing
+            const w0 = (vpw * 0.07 + pulse * vpw * 0.03) * (0.5 + 0.5 * petEnergy);
+            const ox = vpx + vpw * (0.12 + i * 0.24);
             const oy = vpy - vph * 0.1;
-            const len = vph * 1.2;
+            const len = vph * 1.25;
             const dx = Math.cos(ang), dy = Math.sin(ang);
             const px = -dy, py = dx;
             const ex = ox + dx * len, ey = oy + dy * len;
+            // soft wide shaft (3x the old alpha so it actually reads)
             ambient.moveTo(ox + px * w0, oy + py * w0)
-                   .lineTo(ex + px * w0 * 1.5, ey + py * w0 * 1.5)
-                   .lineTo(ex - px * w0 * 1.5, ey - py * w0 * 1.5)
+                   .lineTo(ex + px * w0 * 1.6, ey + py * w0 * 1.6)
+                   .lineTo(ex - px * w0 * 1.6, ey - py * w0 * 1.6)
                    .lineTo(ox - px * w0, oy - py * w0);
-            ambient.fill({ color: lightCol, alpha: Math.min(1, (0.03 + 0.015 * Math.sin(t * 0.4 + i) + pulse * 0.02) * petEnergy) });
+            ambient.fill({ color: sun, alpha: Math.min(1, (0.10 + 0.05 * shimmer + pulse * 0.05) * (0.5 + 0.5 * petEnergy)) });
+            // bright thin core → the "god-ray" definition
+            ambient.moveTo(ox + px * w0 * 0.35, oy + py * w0 * 0.35)
+                   .lineTo(ex + px * w0 * 0.6, ey + py * w0 * 0.6)
+                   .lineTo(ex - px * w0 * 0.6, ey - py * w0 * 0.6)
+                   .lineTo(ox - px * w0 * 0.35, oy - py * w0 * 0.35);
+            ambient.fill({ color: sunHot, alpha: Math.min(1, (0.06 + 0.05 * shimmer) * (0.5 + 0.5 * petEnergy)) });
           }
-          // Room reaction: leaf shadows slowly track across floor
+          // Drifting pollen motes catching the light — grass's answer to fire's sparks (the life)
+          for (let i = 0; i < 7; i++) {
+            const mx = vpx + (((t * 0.03 + i * 0.14) % 1) * vpw);
+            const my = vpy + (HZ - vpy) * (0.15 + 0.7 * ((Math.sin(t * 0.3 + i * 1.7) + 1) / 2));
+            const tw = 0.5 + 0.5 * Math.sin(t * 2 + i * 3); // twinkle
+            ambient.circle(mx, my, 1.1 + tw).fill({ color: sunHot, alpha: Math.min(1, (0.12 + 0.18 * tw) * petEnergy) });
+          }
+          // Leaf-shadow play on the floor — darker green for real contrast
           for (let i = 0; i < 5; i++) {
-            const lx = vpx + (((t * 0.01 + i * 0.2) % 1) * vpw);
+            const lx = vpx + (((t * 0.012 + i * 0.2) % 1) * vpw);
             const ly = HZ + (vpBottom - HZ) * (0.2 + 0.15 * (i % 3));
-            ambient.circle(lx, ly, 15 + 5 * Math.sin(i)).fill({ color: 0x000000, alpha: Math.min(1, (0.06 + pulse * 0.01) * petEnergy) });
+            ambient.circle(lx, ly, 16 + 6 * Math.sin(i)).fill({ color: 0x0a2a0a, alpha: Math.min(1, (0.1 + pulse * 0.02) * petEnergy) });
           }
-          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.04); // Warm sunbeam catch
+          // Room reaction: warm sun wash + the pet catches the sunbeam
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xfff0c0, alpha: 0.015 + pulse * 0.03 + envBreath * 0.02 });
+          petLight = Math.max(petLight, pulse * 0.14 + envBreath * 0.06);
         } else if (ambKind === "current") {
-          // Sky current: wind movement, cloud drift
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffffff, alpha: 0.04 });
+          // Sky current: drifting clouds + wind streaks over a soft sky.
+          // (Was white-on-white → invisible. Sky tint gives the white clouds something to read on.)
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xbfe0ff, alpha: 0.06 });
+          for (let i = 0; i < 4; i++) {
+            const spd = 0.015 + i * 0.006 + pulse * 0.02;
+            const cxp = vpx + (((t * spd + i * 0.27) % 1.2 - 0.1) * vpw);
+            const cyp = vpy + (HZ - vpy) * (0.15 + 0.16 * i);
+            const cw = vpw * (0.18 + 0.05 * i);
+            ambient.ellipse(cxp, cyp, cw, cw * 0.34).fill({ color: 0xffffff, alpha: Math.min(1, (0.09 + pulse * 0.03) * (0.6 + 0.4 * petEnergy)) });
+            ambient.ellipse(cxp + cw * 0.5, cyp + cw * 0.1, cw * 0.6, cw * 0.28).fill({ color: 0xffffff, alpha: Math.min(1, (0.07 + pulse * 0.03) * (0.6 + 0.4 * petEnergy)) });
+          }
           for (let i = 0; i < 6; i++) {
-            const spd = (0.2 + i * 0.05 + pulse * 0.15) * petEnergy; // Gust on beat/energy
+            const spd = (0.2 + i * 0.05 + pulse * 0.2) * (0.5 + 0.5 * petEnergy);
             const wx = vpx + (((t * spd + i * 0.16) % 1) * vpw);
             const wy = vpy + (HZ - vpy) * (0.2 + 0.12 * i);
-            const wlen = vpw * (0.1 + 0.1 * Math.sin(t * 0.5 + i));
-            ambient.moveTo(wx, wy).lineTo(wx + wlen, wy).stroke({ color: 0xffffff, width: 1.5, alpha: Math.min(1, 0.04 + pulse * 0.04) });
+            const wlen = vpw * (0.14 + 0.12 * Math.sin(t * 0.5 + i));
+            ambient.moveTo(wx, wy).lineTo(wx + wlen, wy).stroke({ color: 0xeaf6ff, width: 2.4, alpha: Math.min(1, (0.16 + pulse * 0.08) * petEnergy) });
           }
-          // Room reaction: overall airy brightening
-          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xffffff, alpha: 0.01 + pulse * 0.02 + envBreath * 0.01 });
+          // Room reaction: airy brightening + the pet catches the light
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xdcefff, alpha: 0.02 + pulse * 0.03 + envBreath * 0.015 });
+          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.05);
         } else if (ambKind === "earth") {
-          // Earth pulse: grounded, seismic shimmer
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x665544, alpha: 0.07 });
-          // Stone glow from below
-          flash.rect(vpx, HZ, vpw, vpBottom - HZ).fill({ color: 0xd8b96a, alpha: Math.min(1, (0.02 + pulse * 0.04) * petEnergy) });
-          // Heavy dust drifting up
+          // Earth pulse: warm stone glow, rising dust, glowing ore glints — grounded but alive
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x665544, alpha: 0.08 });
+          // Stone glow from below (stronger)
+          flash.rect(vpx, HZ, vpw, vpBottom - HZ).fill({ color: 0xd8b96a, alpha: Math.min(1, (0.07 + pulse * 0.07) * petEnergy) });
+          // Rising dust — brighter, bigger
           for (let i = 0; i < 8; i++) {
             const dx = vpx + (((t * 0.02 + i * 0.12) % 1) * vpw);
             const dy = vpBottom - (((t * 0.05 + i * 0.2) % 1) * (vpBottom - vpy));
-            // Subtle seismic shimmer on heavy beat
-            const sx = pulse > 0.5 ? Math.sin(t * 40 + i) * 1.5 * pulse : 0;
-            ambient.circle(dx + sx, dy, 2 + i % 2).fill({ color: 0xd8b96a, alpha: Math.min(1, (0.1 + pulse * 0.05) * petEnergy) });
+            const sx = pulse > 0.5 ? Math.sin(t * 40 + i) * 1.5 * pulse : 0; // seismic shimmer on heavy beat
+            ambient.circle(dx + sx, dy, 2.5 + i % 2).fill({ color: 0xe0c478, alpha: Math.min(1, (0.2 + pulse * 0.08) * petEnergy) });
           }
-          petLight = Math.max(petLight, pulse * 0.1 + envBreath * 0.02);
+          // Glowing ore/crystal glints near the floor (the warm "wow")
+          for (let i = 0; i < 3; i++) {
+            const gx = vpx + vpw * (0.25 + i * 0.25) + Math.sin(t * 0.4 + i) * vpw * 0.03;
+            const gy = HZ + (vpBottom - HZ) * (0.35 + 0.2 * (i % 2));
+            const gl = 0.5 + 0.5 * Math.sin(t * 1.6 + i * 2);
+            ambient.circle(gx, gy, 5).fill({ color: 0xffcf6a, alpha: Math.min(1, 0.18 * gl * petEnergy) });
+            ambient.circle(gx, gy, 1.8).fill({ color: 0xfff0c0, alpha: Math.min(1, (0.25 + 0.3 * gl) * petEnergy) });
+          }
+          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.04);
         } else if (ambKind === "industrial") {
-          // Industrial glow: premium soft reflected metallic lighting
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x334455, alpha: 0.06 });
+          // Industrial: cold reflected light shafts + periodic welding-spark bursts (the steel "wow")
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x334455, alpha: 0.07 });
           for (let i = 0; i < 3; i++) {
             const rx = vpx + vpw * (0.2 + i * 0.3);
-            const ry = vpy + vph * 0.5;
             ambient.moveTo(rx - vpw * 0.1, vpy).lineTo(rx + vpw * 0.1, vpy).lineTo(rx + vpw * 0.15, vpBottom).lineTo(rx - vpw * 0.05, vpBottom);
-            ambient.fill({ color: 0x7fd9ff, alpha: Math.min(1, (0.015 + pulse * 0.03) * petEnergy) });
+            ambient.fill({ color: 0x7fd9ff, alpha: Math.min(1, (0.12 + 0.04 * Math.sin(t * 0.5 + i) + pulse * 0.05) * (0.6 + 0.4 * petEnergy)) });
+          }
+          // Welding spark burst every ~3s (t-based, no extra state)
+          const sparkPhase = (t * 0.3 + 0.5) % 1;
+          const burst = sparkPhase < 0.12 ? (0.12 - sparkPhase) / 0.12 : 0;
+          if (burst > 0) {
+            const wxp = vpx + vpw * 0.7, wyp = vpy + vph * 0.35;
+            for (let i = 0; i < 8; i++) {
+              const a = i * 0.8 + t;
+              const d = (1 - burst) * vpw * 0.18;
+              ambient.circle(wxp + Math.cos(a) * d, wyp + Math.abs(Math.sin(a)) * d, 1 + burst).fill({ color: 0xeaffff, alpha: Math.min(1, burst * 0.9) });
+            }
+            flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xbfecff, alpha: burst * 0.12 });
+            petLight = Math.max(petLight, burst * 0.4);
           }
           // Room reaction: sharp cold rim light
-          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0x7fd9ff, alpha: Math.min(1, 0.01 + pulse * 0.03 + envBreath * 0.01) });
-          petLight = Math.max(petLight, pulse * 0.2 + envBreath * 0.02); // metallic sheen on pet
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0x7fd9ff, alpha: Math.min(1, 0.02 + pulse * 0.03 + envBreath * 0.015) });
+          petLight = Math.max(petLight, pulse * 0.2 + envBreath * 0.03);
         } else if (ambKind === "warmth") {
-          // Warm home: comfort energy
-          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffe8ba, alpha: 0.07 });
+          // Warm home: a soft window beam, a comfort pool on the floor, dust drifting in the light
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xffe8ba, alpha: 0.09 });
           const cx = vpx + vpw * 0.5;
           ambient.moveTo(cx - vpw * 0.2, vpy).lineTo(cx + vpw * 0.2, vpy)
                  .lineTo(cx + vpw * 0.4, HZ + vph * 0.2).lineTo(cx - vpw * 0.2, HZ + vph * 0.2);
-          ambient.fill({ color: 0xffe8ba, alpha: Math.min(1, (0.03 + pulse * 0.02) * petEnergy) });
-          // Floor comfort pool
-          ambient.ellipse(cx + vpw * 0.1, HZ + vph * 0.1, vpw * 0.3, vph * 0.08).fill({ color: 0xffe8ba, alpha: Math.min(1, (0.04 + pulse * 0.03) * petEnergy) });
+          ambient.fill({ color: 0xffe8ba, alpha: Math.min(1, (0.13 + 0.04 * Math.sin(t * 0.5) + pulse * 0.04) * (0.6 + 0.4 * petEnergy)) });
+          // Floor comfort pool (stronger)
+          ambient.ellipse(cx + vpw * 0.1, HZ + vph * 0.1, vpw * 0.32, vph * 0.09).fill({ color: 0xffe8ba, alpha: Math.min(1, (0.13 + pulse * 0.05) * petEnergy) });
+          // Warm dust drifting in the beam (the cozy "wow")
+          for (let i = 0; i < 6; i++) {
+            const dx = cx - vpw * 0.18 + ((t * 0.02 + i * 0.17) % 1) * vpw * 0.45;
+            const dy = vpy + (HZ + vph * 0.2 - vpy) * ((Math.sin(t * 0.25 + i * 1.7) + 1) / 2);
+            const tw = 0.5 + 0.5 * Math.sin(t * 1.8 + i * 3);
+            ambient.circle(dx, dy, 1 + tw).fill({ color: 0xfff3d0, alpha: Math.min(1, (0.1 + 0.16 * tw) * petEnergy) });
+          }
           // Room reaction: soft breathing warmth
-          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xffe8ba, alpha: Math.min(1, 0.01 + pulse * 0.02 + envBreath * 0.02) });
-          petLight = Math.max(petLight, pulse * 0.12 + envBreath * 0.04);
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: 0xffe8ba, alpha: Math.min(1, 0.02 + pulse * 0.03 + envBreath * 0.025) });
+          petLight = Math.max(petLight, pulse * 0.14 + envBreath * 0.05);
         }
 
         // music beat pulse: a quick type-flavored burst on a reacting beat (additive)
