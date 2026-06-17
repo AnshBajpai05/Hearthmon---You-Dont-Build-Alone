@@ -120,14 +120,17 @@ export const BIOMES: Biome[] = [
     id: "neon",
     name: "Neon Tech Corner",
     types: ["electric", "steel"],
-    wall: ["#16223c", "#090e1a"], // deep indigo night
+    wall: ["#16223c", "#090e1a"], // deep indigo night (kept — premium storm sky)
     floor: ["#26303f", "#141a24"], // cool steel desk — lighter than sky so the horizon reads
-    light: "#7fd9ff",
-    rim: "rgba(130,220,255,0.55)",
+    // DELIBERATE complementary scheme (not same-hue): indigo storm sky + white-gold LIGHTNING energy.
+    // Electric reads as charged white-gold, not aquarium cyan. (Same precedent as Shore's warm fireflies
+    // over a cool sea.) light tints the rim / orbital rings / chain lightning / galaxy.
+    light: "#fff4b5", // white-gold electric (was cyan #7fd9ff)
+    rim: "rgba(255,244,181,0.5)",
     ground: "cyber",
-    groundColor: "rgba(110,220,255,0.6)",
+    groundColor: "rgba(255,235,150,0.55)",
     particle: "spark",
-    particleColor: "rgba(180,240,255,0.9)",
+    particleColor: "rgba(255,232,107,0.95)", // vivid yellow sparks
     scene: "neon",
     window: "panel"
   },

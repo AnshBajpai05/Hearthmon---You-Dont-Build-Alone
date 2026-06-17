@@ -11,6 +11,7 @@
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
   import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL } from "$lib/sprites";
+  import { STATS } from "$lib/stats";
   import { founderMark } from "$lib/founder";
   import { biomeForType } from "$lib/biomes";
 
@@ -102,6 +103,14 @@
       // biome palette is MUTABLE so a form switch can change the whole world live
       // (no teardown). applyBiome() recomputes these + recolors the scene.
       let petType = dexEntry(dexId)?.type ?? "normal"; // drives type-specific idles
+      // "level"/power proxy from the species base-stat total → scales ground-lightning size & impact
+      // (a small early mon = small bolts; a legendary = big ones). 0 (weak) .. 1 (legendary-tier).
+      const bstPower = (d: number) => {
+        const st = STATS[d];
+        const bst = st ? st[0] + st[1] + st[2] + st[3] + st[4] + st[5] : 320;
+        return Math.max(0, Math.min(1, (bst - 300) / 320));
+      };
+      let petPower = bstPower(dexId);
       let biome = biomeForType(petType);
       let sky0 = hexNum(biome.wall[0]);
       let sky1 = hexNum(biome.wall[1]);
@@ -177,6 +186,7 @@
 
       const applyBiome = (newDex: number) => {
         petType = dexEntry(newDex)?.type ?? "normal";
+        petPower = bstPower(newDex);
         biome = biomeForType(petType);
         sky0 = hexNum(biome.wall[0]);
         sky1 = hexNum(biome.wall[1]);
@@ -373,6 +383,78 @@
       if (destroyed) return;
 
       const platform = new Graphics(); // pet backdrop (orb / ground / off) — incl. the shelf ring-glow
+      // Energy Ring Ecosystem: the globe's ground is an ENERGIZED orbital plane, not a pad. Many tiny
+      // type-tinted stars orbit in concentric elliptic rings around the base (front bright, back fades
+      // behind the sphere), with occasional energy arcs leaping between them — "the globe powers the
+      // floor". Sprites are batched (like the galaxy) so hundreds stay cheap; arcs are a thin Graphics.
+      const groundRings = new Container();
+      const groundArcs = new Graphics(); // brief energy filaments between neighbouring stars
+      groundArcs.blendMode = "add";
+      type RingStar = { sprite: Sprite; ringR: number; ang: number; speed: number; baseA: number; sz: number; mix: number };
+      let ringStars: RingStar[] = [];
+      let ringsBuilt = false;
+      let ringSig = -1; // retint when the type light colour changes
+      let ringTex: Texture | null = null;
+      let arcT = 6 + Math.random() * 8; // first arc ~6-14s in, then ~once every 30s
+      const liveArcs: { pts: number[]; max: number; life: number; pow: number }[] = [];
+      // ground-plane params, refreshed each frame so a GLOBE strike can fire a reactionary chain
+      let gpCx = 0, gpCy = 0, gpR = 1;
+      let ringFlash = 0; // whole-field brightness spike on a strike, decays fast
+      // Build one chain-lightning bolt that travels around the ring, hopping + zig-zagging. `power`
+      // (1 = ambient, ~1.5–2 = reaction to a globe strike) makes it longer, thicker and brighter.
+      function spawnGroundChain(power: number) {
+        if (!ringStars.length) return;
+        const cx = gpCx, cy = gpCy, gR = gpR, ASPECT = 0.3;
+        const proj = (a: number, r: number): [number, number] => [cx + Math.cos(a) * r * gR, cy + Math.sin(a) * r * gR * ASPECT];
+        let ang = Math.random() * Math.PI * 2;
+        let rr = 0.42 + Math.random() * 0.84;
+        const dirSign = Math.random() < 0.5 ? -1 : 1;
+        const nodes = Math.round((5 + Math.random() * 3) * power); // stronger strike → longer chain
+        let [px, py] = proj(ang, rr);
+        const pts: number[] = [px, py];
+        for (let n = 0; n < nodes; n++) {
+          ang += dirSign * (0.13 + Math.random() * 0.17);
+          rr = Math.max(0.4, Math.min(1.3, rr + (Math.random() - 0.5) * 0.3));
+          const [nx, ny] = proj(ang, rr);
+          const SEG = 3 + Math.floor(Math.random() * 3);
+          for (let k = 1; k < SEG; k++) {
+            const f = k / SEG;
+            pts.push(px + (nx - px) * f + (Math.random() - 0.5) * 13, py + (ny - py) * f + (Math.random() - 0.5) * 9);
+          }
+          pts.push(nx, ny);
+          px = nx; py = ny;
+        }
+        liveArcs.push({ pts, max: 0.3 + 0.1 * power, life: 0.3 + 0.1 * power, pow: power });
+      }
+      function buildGroundRings() {
+        if (!app) return;
+        if (!ringTex) ringTex = app.renderer.generateTexture(new Graphics().circle(0, 0, 1.5).fill({ color: 0xffffff }));
+        groundRings.removeChildren();
+        ringStars = [];
+        const RINGS = 7;
+        for (let ri = 0; ri < RINGS; ri++) {
+          const t01 = ri / (RINGS - 1);             // 0 inner → 1 outer
+          const ringR = 0.42 + t01 * 0.84;           // ×gR at render time
+          const count = Math.round(130 + t01 * 160); // dense field; outer rings hold more (~1500 total)
+          for (let i = 0; i < count; i++) {
+            const bright = Math.random() < 0.12;
+            const sp = Sprite.from(ringTex);
+            sp.anchor.set(0.5);
+            ringStars.push({
+              sprite: sp,
+              ringR: ringR + (Math.random() - 0.5) * 0.05, // band jitter → reads as a band, not a wire
+              ang: Math.random() * Math.PI * 2,
+              speed: 0.05 + (1 - t01) * 0.05,              // inner rings orbit a touch faster (parallax)
+              baseA: bright ? 0.85 + Math.random() * 0.15 : 0.4 + Math.random() * 0.4,
+              sz: bright ? 0.7 + Math.random() * 0.8 : 0.22 + Math.random() * 0.34,
+              mix: bright ? 0.7 + Math.random() * 0.3 : Math.random() * 0.5 // white ↔ type-colour blend
+            });
+            groundRings.addChild(sp);
+          }
+        }
+        ringsBuilt = true;
+        ringSig = -1;
+      }
       const rimGlow = new Graphics(); // soft light-colored glow on the habitat boundary
       rimGlow.filters = [new BlurFilter({ strength: 8, quality: 3 })];
       rimGlow.blendMode = "add";
@@ -653,7 +735,8 @@
         if (pts.length < 4) return;
         ambient.moveTo(pts[0], pts[1]);
         for (let i = 2; i < pts.length; i += 2) ambient.lineTo(pts[i], pts[i + 1]);
-        ambient.stroke({ color: 0xbfe0ff, width: 5, alpha: alpha * 0.22 });
+        // glow follows the biome light (white-gold for electric) so the arcs match the new vibe; core stays white
+        ambient.stroke({ color: lerpCol(lightCol, 0xffffff, 0.35), width: 5, alpha: alpha * 0.22 });
         ambient.moveTo(pts[0], pts[1]);
         for (let i = 2; i < pts.length; i += 2) ambient.lineTo(pts[i], pts[i + 1]);
         ambient.stroke({ color: 0xffffff, width: 1.6, alpha });
@@ -772,7 +855,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        scene, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
+        groundRings, groundArcs, scene, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
       );
 
 
@@ -887,7 +970,9 @@
       let prevAudioBeat = 0;
       let beatT = 0; // remaining beat-pulse visibility
       let beatS = 0; // strength of the current beat pulse
-      let beatStrike = false; // a strong beat asked for a lightning strike
+      let beatStrike = false; // a strong beat asked for a GLOBE lightning strike (stays music-reactive)
+      let groundErupt = false; // a real MUSIC drop armed the rare ground eruption (separate, stricter)
+      let superCd = 0;        // cooldown between ground eruptions so they stay special
 
       const hop = (v = 300) => posY.nudge(-v);
       function spawnHeart() {
@@ -1002,10 +1087,19 @@
             beatT = 0.32;
             beatS = s;
             if (petType === "electric") petLight = Math.max(petLight, 0.25 + 0.45 * s);
-            if (petType === "electric" && s > 0.82) beatStrike = true; // a drop → strike
+            if (petType === "electric" && s > 0.82) beatStrike = true; // a beat → GLOBE strike (stays lively)
+            // The GROUND eruption is reserved for a real MUSICAL drop: a very strong bass beat WHILE
+            // overall energy is high (sustained, rhythmic loudness) + a long cooldown. Loopback can't
+            // truly tell music from a YouTube video, but talk/most video audio rarely sustains this,
+            // so the floor stops erupting on every loud sound and the drop keeps its impact.
+            if (petType === "electric" && s > 0.9 && audioEnergy > 0.45 && superCd <= 0) {
+              groundErupt = true;
+              superCd = 16 + Math.random() * 10; // ≥16s between ground eruptions
+            }
           }
         }
         beatT = Math.max(0, beatT - dt);
+        superCd = Math.max(0, superCd - dt);
 
         // replay the Showdown GIF by cycling decoded frames onto the canvas texture
         if (frames.length > 1 && petCtx) {
@@ -1077,28 +1171,19 @@
         const shelf = globe && bgStyle === "ground";
         platform.visible = shelf || (bgStyle !== "off" && !habitat);
         platform.blendMode = shelf ? "add" : "normal";
-        galaxy.visible = shelf; // rotating universe lives ONLY on the sphere-habitat ground
-        if (shelf) {
-          // Tuck the ground into the sphere's BASE so it stays LOW — the layout that read well
-          // when enlarged. It sits 0.15·gR inside the bottom edge; because gcy is bottom-anchored
-          // (sphereBottom is a constant 0.88·h), this stays low at EVERY size instead of riding
-          // up when the box is small.
-          const sw = gR;
-          const sphereBottom = gcy + gR;        // sphere's bottom edge (bottom-anchored at 0.88h)
-          const sy = sphereBottom - gR * 0.15;  // tucked just inside the base
-          const gl = 0.85 + 0.15 * Math.sin(t * 1.5);
-          platform.clear();
-          platform.x = 0;
-          platform.y = 0;
-          // faint grounding glow only — the rotating galaxy below is now the main visual,
-          // so the platform no longer paints a bright bullseye that drowns it out.
-          platform.ellipse(gcx, sy, sw * 0.86, gR * 0.16).fill({ color: lightCol, alpha: 0.06 });
-          platform.ellipse(gcx, sy, sw * 0.58, gR * 0.11).fill({ color: lightCol, alpha: 0.09 });
-          platform.ellipse(gcx, sy, sw * 0.34, gR * 0.07).fill({ color: lightCol, alpha: 0.11 * gl });
-          // rotating galaxy on the ground — retint only when the ground colour changes,
+        // The rotating starfield/nebula is part of the GLOBE's interior, not the external ground
+        // pad — so it stays even when the backdrop (ground) is toggled off. (Was locked to `shelf`.)
+        galaxy.visible = globe;
+        // The energy ring plane IS the globe's ground; show it whenever the sphere is up and the
+        // backdrop isn't explicitly OFF (off = clean float, just globe + interior stars).
+        const ringsOn = globe && bgStyle !== "off";
+        groundRings.visible = ringsOn;
+        groundArcs.visible = ringsOn;
+        if (globe) {
+          // rotating galaxy floor inside the sphere — retint only when the ground colour changes,
           // then just move/flatten/spin the container (resize- and reload-proof).
           if (galaxyLightSig !== lightCol) { galaxyLightSig = lightCol; drawGalaxy(); }
-          
+
           // gal = bowl container scale AND star-size normaliser (rendered diameter = 3px × p.size)
           // At y = gcy + 0.62·gR the sphere is 0.785·gR wide; 0.72·gR puts the rim at ~92% → boundary
           const gal = gR * 0.72;
@@ -1126,6 +1211,89 @@
           galaxyBack.rotation  = 0;
           galaxyMid.rotation   = 0;
           galaxyFront.rotation = 0;
+
+          // ── Energy Ring Ecosystem ────────────────────────────────────────
+          // Stars orbiting the base in concentric elliptic rings + occasional energy arcs. Front
+          // half (toward the viewer) is bright; the back half fades as it passes behind the sphere
+          // (rings live at the BACK of the z-order, so the globe overlays it). dimMul folds in the
+          // chapter-pause so the floor dims with the habitat.
+          if (ringsOn) {
+            if (!ringsBuilt) buildGroundRings();
+            const cx = gcx;
+            const cy = gcy + gR;          // contact line — the plane the globe rests on
+            const ASPECT = 0.3;           // flatten the orbit into a ground plane (perspective)
+            const breath = (0.85 + 0.15 * Math.sin(t * 1.5)) * dimMul;
+            // expose the plane params so a globe strike (in the lightning block below) can fire a chain
+            gpCx = cx; gpCy = cy; gpR = gR;
+            ringFlash *= Math.exp(-dt / 0.18); // strike flash fades fast
+            if (ringSig !== lightCol) {   // retint the whole field when the type colour changes
+              ringSig = lightCol;
+              for (const s of ringStars) s.sprite.tint = lerpCol(lightCol, 0xffffff, s.mix);
+            }
+            for (const s of ringStars) {
+              s.ang += s.speed * dt;
+              const sa = Math.sin(s.ang), R = s.ringR * gR;
+              const front = sa * 0.5 + 0.5;             // 0 behind the globe → 1 toward the viewer
+              s.sprite.x = cx + Math.cos(s.ang) * R;
+              s.sprite.y = cy + sa * R * ASPECT;
+              const tw = 0.75 + 0.25 * Math.sin(t * 2.5 + s.ang * 3);
+              // a strike flashes the whole field (ringFlash), brightest toward the viewer
+              s.sprite.alpha = s.baseA * (0.16 + 0.84 * front) * breath * tw + ringFlash * (0.3 + 0.7 * front);
+              s.sprite.scale.set(s.sz * (0.55 + 0.6 * front)); // nearer stars read larger
+            }
+            // ambient chain lightning. Electric ground is livelier (shorter gap); other types calmer.
+            // Bolt SIZE/IMPACT scales with the species' power ("level") — small mon = small bolts.
+            arcT -= dt;
+            if (arcT <= 0) {
+              arcT = petType === "electric" ? 12 + Math.random() * 9 : 26 + Math.random() * 16;
+              spawnGroundChain(0.8 + petPower * 0.7);
+            }
+            // a real MUSIC drop (armed above, cooldown-gated) → the ground ERUPTS: full-field flash +
+            // a couple of long chains, all scaled up by the pet's power. Rare → keeps its impact.
+            if (groundErupt) {
+              groundErupt = false;
+              ringFlash = Math.max(ringFlash, 0.9 + petPower * 0.5);
+              spawnGroundChain(1.7 + petPower * 1.1);
+              spawnGroundChain(1.3 + petPower * 0.8);
+            }
+            groundArcs.clear();
+            for (let k = liveArcs.length - 1; k >= 0; k--) {
+              const arc = liveArcs[k];
+              arc.life -= dt;
+              if (arc.life <= 0) { liveArcs.splice(k, 1); continue; }
+              const f = arc.life / arc.max;
+              const p = arc.pow;
+              const trace = () => {
+                groundArcs.moveTo(arc.pts[0], arc.pts[1]);
+                for (let j = 2; j < arc.pts.length; j += 2) groundArcs.lineTo(arc.pts[j], arc.pts[j + 1]);
+              };
+              // wide coloured glow → mid → thin white-hot core. Stronger bolts (higher pow) read thicker/brighter.
+              trace();
+              groundArcs.stroke({ color: lerpCol(lightCol, 0xffffff, 0.2), width: 5 * p, alpha: Math.min(1, 0.4 * f * breath * p) });
+              trace();
+              groundArcs.stroke({ color: lerpCol(lightCol, 0xffffff, 0.6), width: 2.4 * p, alpha: Math.min(1, 0.8 * f * breath * p) });
+              trace();
+              groundArcs.stroke({ color: 0xffffff, width: 1.1 * Math.min(p, 1.6), alpha: Math.min(1, 0.98 * f * breath) });
+            }
+          }
+        }
+        if (shelf) {
+          // Tuck the ground into the sphere's BASE so it stays LOW — the layout that read well
+          // when enlarged. It sits 0.15·gR inside the bottom edge; because gcy is bottom-anchored
+          // (sphereBottom is a constant 0.88·h), this stays low at EVERY size instead of riding
+          // up when the box is small.
+          const sw = gR;
+          const sphereBottom = gcy + gR;        // sphere's bottom edge (bottom-anchored at 0.88h)
+          const sy = sphereBottom - gR * 0.15;  // tucked just inside the base
+          const gl = 0.85 + 0.15 * Math.sin(t * 1.5);
+          platform.clear();
+          platform.x = 0;
+          platform.y = 0;
+          // faint grounding glow only — the rotating galaxy is the main visual, so the platform
+          // no longer paints a bright bullseye that drowns it out.
+          platform.ellipse(gcx, sy, sw * 0.86, gR * 0.16).fill({ color: lightCol, alpha: 0.06 });
+          platform.ellipse(gcx, sy, sw * 0.58, gR * 0.11).fill({ color: lightCol, alpha: 0.09 });
+          platform.ellipse(gcx, sy, sw * 0.34, gR * 0.07).fill({ color: lightCol, alpha: 0.11 * gl });
         } else if (bgStyle === "ground") {
           const br = petPx * 0.6;
           drawPlatform(br);
@@ -1376,6 +1544,7 @@
             const x0 = vpx + vpw * (0.25 + Math.random() * 0.5);
             boltPts = genBolt(x0, vpy, vpy + (HZ - vpy) * 0.95, vpw * 0.07);
             boltBranch = genBolt(boltPts[6], boltPts[7], boltPts[7] + (HZ - vpy) * 0.4, vpw * 0.06);
+            // (ground eruption is handled separately via groundErupt — only on a real music drop)
           }
           if (strikeT > 0) {
             strikeT -= dt;
@@ -1395,6 +1564,8 @@
               boltPts = genBolt(x0, vpy, vpy + (HZ - vpy) * 0.95, vpw * 0.07);
               const mi = 6;
               boltBranch = genBolt(boltPts[mi], boltPts[mi + 1], boltPts[mi + 1] + (HZ - vpy) * 0.4, vpw * 0.06);
+              // NOTE: ordinary ambient strikes do NOT touch the ground — only the SUPER strike
+              // (music drop, above) gets the ground reaction, so it stays a rare, high-impact moment.
             }
           }
         } else if (ambKind === "hearth") {
@@ -1684,6 +1855,14 @@
               rareDur = r[1];
               rareProg = 0;
               rareT = 150 + Math.random() * 240; // next in 2.5–6.5 min
+              // LEGENDARY electric moment: the rare superstrike throws 2–3 globe bolts at once →
+              // the ground answers with a multi-strike BARRAGE + a hard full-field flash, all scaled
+              // by the pet's power. (gp* were refreshed earlier this frame by the ring block.)
+              if (rareKind === "superstrike" && ringsOn) {
+                ringFlash = Math.max(ringFlash, 1.3 + petPower * 0.5);
+                const burst = 3 + Math.round(petPower * 2); // 3..5 simultaneous ground chains
+                for (let i = 0; i < burst; i++) spawnGroundChain(1.6 + petPower * 1.0);
+              }
             } else {
               rareT = 25 + Math.random() * 25; // busy/asleep → retry shortly
             }
