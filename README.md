@@ -5,7 +5,7 @@
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
 <p align="center">
-  <img src="./assets/hearthmon-status.svg?v=1781722101" width="750"/>
+  <img src="./assets/hearthmon-status.svg?v=1781722834" width="750"/>
 </p>
 
 **Current Companion:** Mewtwo<br/>
