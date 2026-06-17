@@ -18,6 +18,8 @@
     onTest: (kind: "commit" | "fix" | "pr" | "release" | "repo" | "milestone") => void;
     onShowcase: () => void;
     onCard: () => void;
+    cardRepos: string;                       // extra repos to mirror the card to (one path per line)
+    onSaveCardRepos: (text: string) => void;
     onClose: () => void;
     // Training awareness
     trainAware: boolean;
@@ -38,10 +40,12 @@
   let {
     localPath, remoteUrl, hasToken,
     onSetLocal, onStopLocal, onSetRemote, onStopRemote,
-    onSaveToken, onClearToken, onTest, onShowcase, onCard, onClose,
+    onSaveToken, onClearToken, onTest, onShowcase, onCard, cardRepos, onSaveCardRepos, onClose,
     trainAware, onToggleTrain, flowAware, onToggleFlow, audioAware, onToggleAudio, logPath, trainStatus, onSetLog, onStopLog,
     onTestTrain, onTestCrash, gpuAvailable, gpu
   }: Props = $props();
+  let cardReposIn = $state(untrack(() => cardRepos));
+  const cardReposDirty = $derived(cardReposIn.trim() !== cardRepos.trim());
 
   let logIn = $state(untrack(() => logPath));
   const logDirty = $derived(logIn.trim() !== "" && logIn.trim() !== logPath);
@@ -212,6 +216,19 @@
   <!-- ─── shareable showcase card ─── -->
   <button class="showcase" onclick={onShowcase}>📣 Showcase card — share your journey</button>
   <button class="showcase" onclick={onCard}>🖼️ README card — live status SVG for your repo</button>
+
+  <!-- ─── mirror the card to extra repos (one absolute path per line) ─── -->
+  <details class="mirror">
+    <summary>🪞 Mirror the card to more repos</summary>
+    <p class="hint">The watched repo always gets the card. Add more local repo paths (one per line) and the same card auto-pushes to each — e.g. a project repo + a profile repo.</p>
+    <textarea
+      class="mirror-in"
+      rows="3"
+      placeholder={"F:\\path\\to\\profile-repo\nF:\\path\\to\\project-repo"}
+      bind:value={cardReposIn}
+    ></textarea>
+    <button class="apply" disabled={!cardReposDirty} onclick={() => onSaveCardRepos(cardReposIn)}>Save mirror list</button>
+  </details>
 
   <!-- ─── private-repo access (optional token, applies to GitHub) ─── -->
   <div class="tokrow">
@@ -400,6 +417,52 @@
   }
   .showcase:hover {
     background: rgba(240, 182, 106, 0.22);
+  }
+  .mirror {
+    margin-top: 2px;
+    font-size: 11px;
+    color: #c4b5f0;
+  }
+  .mirror summary {
+    cursor: pointer;
+    padding: 5px 2px;
+    color: #c4b5f0;
+    user-select: none;
+  }
+  .mirror summary:hover {
+    color: #f0b66a;
+  }
+  .mirror .hint {
+    margin: 4px 0 6px;
+  }
+  .mirror-in {
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid rgba(120, 108, 160, 0.4);
+    background: rgba(0, 0, 0, 0.28);
+    color: #ece6f7;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 6px 8px;
+    resize: vertical;
+    outline: none;
+  }
+  .apply {
+    margin-top: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: none;
+    background: #f0b66a;
+    color: #2b2138;
+    font-weight: 700;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .apply:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
   .tokrow {
     display: flex;

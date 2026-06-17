@@ -1097,6 +1097,21 @@
   // Two sources, pick one: a LOCAL folder (instant, via the Rust reflog watcher)
   // or a GitHub URL (polls the API every few min — catches pushes from anywhere).
   let watchingRepo = $state("");     // local folder path
+  // Card mirroring: the living card is also auto-pushed to EACH of these repo paths (one per line),
+  // on top of the watched repo — so the same card lives on multiple READMEs (profile + project + beta).
+  let cardRepos = $state<string[]>([]);
+  function allCardTargets(): string[] {
+    const out = new Set<string>();
+    const norm = (s: string) => s.trim().replace(/[\\/]+$/, "");
+    if (watchingRepo) out.add(norm(watchingRepo));
+    for (const r of cardRepos) if (r.trim()) out.add(norm(r));
+    return [...out];
+  }
+  async function setCardRepos(text: string) {
+    cardRepos = text.split("\n").map((s) => s.trim()).filter(Boolean);
+    await setMeta("card_repos", JSON.stringify(cardRepos));
+    say(cardRepos.length ? `Card will mirror to ${allCardTargets().length} repo(s).` : "Card mirror list cleared.", 4000);
+  }
   let watchingRemote = $state("");   // github url
   let petPersona = $state<Persona | null>(null); // emergent personality (for the card)
   let petTemperament = $state<Temperament | null>(null); // drift: shaped by how you interact
@@ -2058,14 +2073,21 @@
       spriteDur: sheet?.dur,
       type: curType
     });
-    if (watchingRepo) {
-      const path = `${watchingRepo.replace(/[\\/]+$/, "")}/assets/hearthmon-status.svg`;
-      try {
-        await invoke("write_card", { path, svg });
-        if (!silent) say("Card written to assets/. Add to README:  ![Hearthmon](./assets/hearthmon-status.svg)", 10000);
-      } catch {
-        if (!silent) say("Couldn't write the card to that folder.", 5000);
+    const targets = allCardTargets();
+    if (targets.length) {
+      let wrote = 0;
+      for (const repo of targets) {
+        try {
+          await invoke("write_card", { path: `${repo}/assets/hearthmon-status.svg`, svg });
+          wrote++;
+        } catch { /* one bad path shouldn't block the others */ }
       }
+      if (!silent) say(
+        wrote > 1
+          ? `Card written to assets/ in ${wrote} repos.`
+          : "Card written to assets/. Add to README:  ![Hearthmon](./assets/hearthmon-status.svg)",
+        10000
+      );
     } else if (!silent) {
       const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       const a = Object.assign(document.createElement("a"), { href: url, download: "hearthmon-status.svg" });
@@ -2096,12 +2118,16 @@
     return { companion: speciesName, mood, status: cardStatusLine() };
   }
 
-  // silent auto-push used by the 6h smart schedule + launch catch-up
+  // silent auto-push used by the 6h smart schedule + launch catch-up — pushes to EVERY linked repo
   async function autoPushCard() {
-    if (!watchingRepo) return;
+    const targets = allCardTargets();
+    if (!targets.length) return;
     try {
-      await generateCard(true);
-      await invoke("push_card", { path: watchingRepo, ...cardMeta() });
+      await generateCard(true); // writes the svg into every target's assets/
+      const meta = cardMeta();
+      for (const repo of targets) {
+        try { await invoke("push_card", { path: repo, ...meta }); } catch { /* one repo offline/diverged → skip, keep the rest */ }
+      }
       await setMeta("last_card_push", String(Date.now()));
     } catch {
       /* offline / no remote — try again next window */
@@ -2109,21 +2135,22 @@
   }
 
   async function pushCard() {
-    if (!watchingRepo) {
+    const targets = allCardTargets();
+    if (!targets.length) {
       say("Set a local profile repo in Code first!", 5000);
       return;
     }
-    await generateCard(true); // make sure it's written
-    say("Pushing card to GitHub...", 3000);
-    try {
-      await invoke("push_card", { path: watchingRepo, ...cardMeta() });
-      await setMeta("last_card_push", String(Date.now()));
-      say("Card pushed successfully! 🚀", 5000);
-      runDelight("star", 2000);
-    } catch (e) {
-      say("Failed to push card.", 5000);
-      console.error(e);
+    await generateCard(true); // make sure it's written to every target
+    say(targets.length > 1 ? `Pushing card to ${targets.length} repos...` : "Pushing card to GitHub...", 3000);
+    const meta = cardMeta();
+    let ok = 0;
+    for (const repo of targets) {
+      try { await invoke("push_card", { path: repo, ...meta }); ok++; } catch (e) { console.error("push_card failed for", repo, e); }
     }
+    await setMeta("last_card_push", String(Date.now()));
+    if (ok === targets.length) { say(`Card pushed to ${ok} repo${ok === 1 ? "" : "s"}! 🚀`, 5000); runDelight("star", 2000); }
+    else if (ok > 0) say(`Card pushed to ${ok}/${targets.length} repos (some failed).`, 6000);
+    else say("Failed to push card.", 5000);
   }
 
   // ---- dev helper: preview a reaction instantly ----
@@ -2284,6 +2311,10 @@
         watchingRepo = savedRepo;
         invoke("git_set_repo", { path: savedRepo }).catch(() => (watchingRepo = ""));
       }
+      try {
+        const cr = JSON.parse((await getMeta("card_repos")) ?? "[]");
+        if (Array.isArray(cr)) cardRepos = cr.filter((x: unknown) => typeof x === "string");
+      } catch { /* no mirror list yet */ }
       const savedRemote = await getMeta("git_remote");
       if (savedRemote) {
         watchingRemote = savedRemote;
@@ -3394,6 +3425,8 @@
         onTest={testReact}
         onShowcase={() => (panel = "showcase")}
         onCard={() => generateCard(false)}
+        cardRepos={cardRepos.join("\n")}
+        onSaveCardRepos={setCardRepos}
         onClose={() => (panel = "none")}
         {gpuAvailable}
         {gpu}
