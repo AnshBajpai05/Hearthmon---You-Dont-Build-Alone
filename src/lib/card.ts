@@ -2,6 +2,7 @@
 // the pet's current state. Loaded via <img> on GitHub, so the browser runs the
 // CSS @keyframes while GitHub's sanitizer stays out of the way. No scripts, no
 // external refs: the sprite is embedded as a base64 data-URI.
+import { biomeForType } from "./biomes";
 
 export interface CardState {
   thought: string; // Layer 1 — a live COMPANION thought ("still here with this one")
@@ -115,6 +116,7 @@ export function buildCard(s: CardState): string {
   const H = 188;
   const title = s.title ?? "Hearthmon";
   const field = petFieldFx(s.type ?? "normal", W, H); // one type-based ambient effect
+  const groundTint = biomeForType(s.type ?? "normal").light; // type's light colour → the ground/globe hue
 
   // Night mode shifts palette toward cooler purples; day is warmer indigo
   const bg1       = s.night ? "#0d0b18" : "#1a1530";
@@ -199,26 +201,29 @@ export function buildCard(s: CardState): string {
       @keyframes monPlay { from { transform: translateX(0); } to { transform: translateX(-${stripW.toFixed(2)}px); } }`
     : "";
 
-  // ── "Snow-globe" ground: a glowing base + an orbital star band, echoing the Alive renderer ──
-  // Stars sit on flat concentric ellipses around the pet's base; nearer ones (front) read bigger.
+  // ── "Snow-globe" ground: a glowing TYPE-TINTED base + a dense scattered star field + a bright
+  // core — echoes the Alive renderer's lit ground plane (Mewtwo's pink, water's blue, …). ──
   const gCx = 78, gCy = 150;
-  const groundStars = Array.from({ length: 22 }, (_, i) => {
-    const a = (i / 22) * Math.PI * 2 + (i % 3) * 0.5;
-    const band = 24 + (i % 3) * 15;             // three rings: ~24 / 39 / 54 px
-    const x = (gCx + Math.cos(a) * band).toFixed(1);
-    const y = (gCy + Math.sin(a) * band * 0.26).toFixed(1); // flat orbital plane
-    const front = Math.sin(a) * 0.5 + 0.5;      // 0 behind → 1 toward viewer
-    const r = (0.7 + front * 1.5).toFixed(1);   // nearer = bigger
-    const fill = i % 4 === 0 ? "#ffffff" : accent;
-    const dly = ((i * 0.41) % 3.4).toFixed(2);
-    const dur = (2.2 + (i % 5) * 0.55).toFixed(1);
+  const groundStars = Array.from({ length: 48 }, () => {
+    const ang = Math.random() * Math.PI * 2;
+    const rad = Math.sqrt(Math.random());            // fill the disc fairly evenly, not a ring
+    const x = (gCx + Math.cos(ang) * 64 * rad).toFixed(1);
+    const y = (gCy + Math.sin(ang) * 17 * rad).toFixed(1); // flat orbital plane
+    const front = Math.sin(ang) * 0.5 + 0.5;          // 0 behind → 1 toward viewer
+    const r = (0.45 + front * 1.5 + Math.random() * 0.5).toFixed(1); // nearer = bigger
+    const fill = Math.random() < 0.4 ? "#ffffff" : groundTint;
+    const dly = (Math.random() * 3.4).toFixed(2);
+    const dur = (2 + Math.random() * 1.8).toFixed(1);
     return `<circle class="gstar" cx="${x}" cy="${y}" r="${r}" fill="${fill}" opacity="0.7" style="animation-delay:${dly}s;animation-duration:${dur}s"/>`;
   }).join("");
   const groundGlobe =
-    `<ellipse cx="${gCx}" cy="${gCy}" rx="60" ry="18" fill="url(#groundGlow)"/>` +
-    `<ellipse cx="${gCx}" cy="${gCy}" rx="54" ry="13" fill="none" stroke="${accent}" stroke-opacity="0.16" stroke-width="1"/>` +
-    `<ellipse cx="${gCx}" cy="${gCy}" rx="38" ry="9"  fill="none" stroke="${accent}" stroke-opacity="0.12" stroke-width="1"/>` +
-    groundStars;
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="64" ry="19" fill="url(#groundGlow)"/>` +                    // wide soft glow
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="40" ry="11" fill="${groundTint}" fill-opacity="0.16"/>` +   // brighter inner pad
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="55" ry="13" fill="none" stroke="${groundTint}" stroke-opacity="0.18" stroke-width="1"/>` +
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="34" ry="8"  fill="none" stroke="${groundTint}" stroke-opacity="0.13" stroke-width="1"/>` +
+    groundStars +
+    `<ellipse class="sprGlow" cx="${gCx}" cy="${gCy}" rx="9" ry="4" fill="#ffffff" fill-opacity="0.85"/>` + // bright crystalline core
+    `<circle cx="${gCx}" cy="${gCy}" r="1.8" fill="#ffffff"/>`;
 
   // ── Speech bubble (the companion's live thought) ─────────────────────────────
   const bubW = Math.min(340, 36 + s.thought.length * 6.8);
@@ -238,11 +243,11 @@ export function buildCard(s: CardState): string {
       <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Snow-globe ground glow (echoes the Alive renderer's lit base) -->
+    <!-- Snow-globe ground glow (echoes the Alive renderer's lit base; type-tinted) -->
     <radialGradient id="groundGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%"   stop-color="${accent}" stop-opacity="0.32"/>
-      <stop offset="55%"  stop-color="${accent}" stop-opacity="0.10"/>
-      <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
+      <stop offset="0%"   stop-color="${groundTint}" stop-opacity="0.42"/>
+      <stop offset="55%"  stop-color="${groundTint}" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="${groundTint}" stop-opacity="0"/>
     </radialGradient>
 
     <!-- Aurora blobs -->
