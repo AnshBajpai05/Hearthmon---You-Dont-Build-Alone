@@ -2813,25 +2813,28 @@
     const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const today = now.toISOString().slice(0, 10);
     let changed = false;
-    let fire: Reminder | null = null;
+    const fired: Reminder[] = [];
     const keep: Reminder[] = [];
     for (const r of list) {
       let drop = false;
       if (r.time === hhmm) {
         if (r.repeat === "once") {
-          if (!fire) fire = r;
+          fired.push(r);
           drop = true; // one-shot: remove after it fires
           changed = true;
         } else if (r.lastFired !== today) {
           r.lastFired = today;
           changed = true;
-          if (!fire) fire = r;
+          fired.push(r);
         }
       }
       if (!drop) keep.push(r);
     }
     if (changed) await setReminders(keep);
-    if (fire) await surfaceReminder(fire.text);
+    if (fired.length > 0) {
+      const text = fired.map((r) => r.text).join(" • ");
+      await surfaceReminder(text);
+    }
   }
 
   async function surfaceReminder(text: string) {

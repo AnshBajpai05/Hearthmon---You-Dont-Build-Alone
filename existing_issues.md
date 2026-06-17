@@ -181,3 +181,73 @@
 | 7.10 | Vestigial `gpu_stat` | Training | ~~Low~~ | ✅ **Resolved 2026-06-17** — KEPT by decision (serves NVIDIA users; harmless on others), documented |
 
 > **Note on intent:** all of the above are *robustness / edge-case* findings on a deliberately local-first, offline app. None are remote-exploitable; the highest-impact ones are self-inflicted data loss (7.1), a hard crash (2), and a self-lockout (5).
+
+---
+
+## 8. Pass-2 — post-v2 features (Alive ground · reminders · multi-repo card) — 2026-06-17
+
+> New surfaces added after §1–§7 closed: quiet reminders, the energized Alive ground (orbital
+> rings + chain lightning + level scaling), multi-repo card mirroring, WebGL context-loss recovery,
+> first-meeting skin pick. Hunted these specifically.
+
+### 8.1 Reminders: same-minute collision drops all-but-one (SILENT LOSS)
+- **Location:** `src/routes/+page.svelte` → `reminderTick()`
+- **Mechanism:** each 30s tick scans the reminder list; the first match becomes `fire` (the one
+  surfaced), but **every** match at the current `HH:MM` is consumed — a `once` reminder gets
+  `drop = true`, a `daily` gets `lastFired = today` — regardless of whether it was the one chosen
+  to surface (`if (!fire) fire = r`).
+- **Exact fault:** set **two reminders at the same time** → only the first is shown; the second is
+  marked fired/removed without ever nudging. Daily duplicates won't re-fire (their `lastFired` is
+  already today); once-duplicates are deleted outright.
+- **Impact:** silent loss of a reminder the user deliberately set. Low data stakes but it breaks
+  trust ("I set that and it never told me").
+- **Suggested fix:** surface ALL matches this tick (queue them, or concatenate into one bubble),
+  not just the first; only mark/drop the ones actually fired.
+
+### 8.2 Reminders: no missed-fire catch-up; ignore Focus / Just-There; fire while hidden
+- **Location:** `reminderTick()` / `surfaceReminder()`
+- **Mechanism:** fires only when the live clock equals `HH:MM` during a 30s tick. No catch-up if
+  the app was closed/asleep at that minute. The tick checks only `phase === "home"` — not
+  `focusMode` / `companionMode === "just_there"` / window-hidden — and `surfaceReminder` calls the
+  Rust `surface_window` + `setSoundSuspended(false)`.
+- **Exact fault:** (a) a reminder due while the app is closed or the laptop is asleep is missed
+  forever; (b) in **Focus Mode** (which is meant to silence everything) a reminder still pops the
+  window on top and glows; (c) a reminder un-hides a tray-tucked app.
+- **Impact:** mostly **intended** (a reminder you set should reach you, even from the tray), but
+  (a) is a real limitation and (b) is a soul-tension worth a deliberate call — should a user-set
+  reminder override Focus, or queue until Focus ends? Low.
+
+### 8.3 Card mirror force-pushes EVERY listed repo — hazardous on an active branch
+- **Location:** `src/routes/+page.svelte` → `autoPushCard()` loop over `allCardTargets()` + Rust `push_card`
+- **Mechanism:** the new mirror feature calls `push_card` for each configured repo; `push_card`
+  does `git add assets/… README.md` → commit/amend → `git push --force-with-lease` on the repo's
+  **current branch** (after a `rebase --autostash`), every 6h.
+- **Exact fault:** if a user adds a repo they're **actively developing in** (e.g. the dev clone on
+  `v2`) to the mirror list, the background card push will interleave an automated `chore: Hearthmon
+  status card` commit with their work and **force-push the working branch** — autostashing (then
+  reapplying) any uncommitted changes mid-rebase.
+- **Impact:** surprise commits + a force-push on a branch you're coding on; on a shared branch the
+  lease can also reject (safe) or churn. The feature assumes **dedicated profile/showcase repos**.
+- **Suggested fix:** document "mirror only dedicated card repos"; optionally have `push_card` push
+  the card on its **own** committed file set without force-pushing unrelated history, or refuse if
+  the working tree has unrelated staged changes.
+
+### 8.4 Alive globe sprite count — battery / weak-GPU cost
+- **Location:** `src/lib/components/PixiStage.svelte` → `buildGroundRings()` (~1500 sprites) + `drawGalaxy()` (3500)
+- **Mechanism:** the Alive renderer now animates ~5000 batched sprites per frame (galaxy bowl +
+  orbital ground rings), plus per-frame Graphics redraws (rings glow, chain lightning 3-pass,
+  vignette, floor-glow).
+- **Exact fault:** on integrated/older GPUs or on battery this is non-trivial continuous GPU work
+  for a always-on desktop widget. The rAF already pauses when hidden/minimized (good), but while
+  visible-and-idle it runs full tilt.
+- **Impact:** battery drain / fan on weaker machines. Low–Medium. **Suggested:** cap DPR, throttle
+  the ring/galaxy update to ~30fps, or thin the sprite count when unfocused (not just hidden).
+
+### 8.5 Feb-29 birthday only celebrates on leap years
+- **Location:** `+page.svelte` daily-check → user-birthday block (`b.getMonth()===… && b.getDate()===…`)
+- **Exact fault:** a Feb-29 birthday matches month+day only in leap years, so it's skipped 3 years
+  out of 4. **Impact:** trivial; note only. (Fix: treat Feb-29 as Feb-28/Mar-1 in non-leap years.)
+
+> **Status:** none shipped-blocking. **8.1** (reminder same-minute loss) is the one worth fixing —
+> small, concrete, and it quietly breaks a feature the user explicitly invoked. 8.3 is an
+> operational caveat to document for the mirror feature.
