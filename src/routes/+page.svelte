@@ -196,7 +196,8 @@
   let petName = $state("");
   let petState = $state<PetState>("idle");
   // one brain, two renderers: Classic (CSS) · Alive (Pixi). Same systems, different skin.
-  let renderMode = $state<"classic" | "alive">("classic");
+  // Default skin = Alive (the premium globe); a saved "classic" choice overrides on load.
+  let renderMode = $state<"classic" | "alive">("alive");
   // Washed-globe fix (WebView2 transparent-window quirk): the Pixi globe paints washed until the
   // canvas is recreated. Cold boot is primed in onMount; here we cover COMPANION SWITCHES — the
   // in-place reload re-washes, so on each real dexId change (not manual renderer toggles, which are
@@ -216,6 +217,17 @@
     if (renderMode !== "alive") return;
     clearTimeout(alivePrimeTimer);
     alivePrimeTimer = setTimeout(primeAliveRenderer, 350);
+  }
+  // WebGL context loss recovery: the GPU can power down on long idle (or driver TDR), losing the
+  // Pixi canvas context → the transparent widget goes blank ("vanishes"). PixiStage signals here;
+  // we remount a fresh canvas (round-trip alive→classic→alive). Cooldown avoids a tight loop if the
+  // GPU is still mid-recovery (a fresh context that's immediately lost again).
+  let lastCtxRecover = 0;
+  function onAliveContextLost() {
+    const now = Date.now();
+    if (now - lastCtxRecover < 2500) return;
+    lastCtxRecover = now;
+    setTimeout(primeAliveRenderer, 400); // brief delay so the GPU/browser settles before remount
   }
   $effect(() => {
     if (phase !== "home" || renderMode !== "alive") return;
@@ -2252,7 +2264,7 @@
         room = r === "on" ? "full" : r === "full" || r === "sphere" || r === "square" ? r : "none";
       }
       trainAware = (await getMeta("train_aware")) !== "0"; // training awareness (default on)
-      renderMode = (await getMeta("render_mode")) === "alive" ? "alive" : "classic"; // renderer choice
+      renderMode = (await getMeta("render_mode")) === "classic" ? "classic" : "alive"; // default = Alive; explicit "classic" respected
       flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
       try { await invoke("set_flow_aware", { on: flowAware }); } catch { /* not under Tauri */ }
       if ((await getMeta("audio_aware")) === "1") await setAudioAware(true); // music awareness (default off)
@@ -3087,15 +3099,25 @@
     flick();
   }
 
-  async function onMeetingDone(creature: Creature, name: string, building: string, birthday = "") {
+  async function onMeetingDone(
+    creature: Creature,
+    name: string,
+    building: string,
+    birthday = "",
+    mode: "alive" | "classic" = "alive"
+  ) {
     await setMeta("dex_id", String(creature.dexId));
     await setMeta("pet_name", name);
     await setMeta("first_met", new Date().toISOString());
     if (birthday.trim()) await setMeta("user_birthday", birthday.trim()); // theirs, to remember
     if (building.trim()) await addMemory("seed", { text: building.trim() });
+    await setMeta("render_mode", mode); // the skin they chose at first meeting (switchable later via V)
+    renderMode = mode;
     dexId = creature.dexId;
     petName = name;
     phase = "home";
+    // first Alive canvas paints washed until a remount → round-trip once now that we're home
+    if (mode === "alive") { setTimeout(() => (renderMode = "classic"), 400); setTimeout(() => (renderMode = "alive"), 760); }
     await initPresence({ say, setState: (s) => (petState = s) }, { greet: false });
     say(pick(firstMeetingClose), 9000);
     voiceCry(creature.dexId, creature.name, 0.25);
@@ -3742,6 +3764,7 @@
           onTap={onPetTap}
           onStroke={onPetStroke}
           onBackgroundDown={beginWindowDrag}
+          onContextLost={onAliveContextLost}
           fx={aliveFx}
           {audioEnergy}
           {audioBeat}

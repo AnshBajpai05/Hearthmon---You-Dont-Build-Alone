@@ -5,11 +5,12 @@
   import { STARTERS, spriteUrl, fallbackUrl, type Creature } from "../sprites";
 
   interface Props {
-    onDone: (creature: Creature, name: string, building: string, birthday: string) => void;
+    onDone: (creature: Creature, name: string, building: string, birthday: string, mode: "alive" | "classic") => void;
   }
   let { onDone }: Props = $props();
 
-  let step = $state(1);
+  let step = $state(0); // 0 = pick how the companion appears (Alive vs Classic), then the meeting
+  let mode = $state<"alive" | "classic">("alive");
   let chosen = $state<Creature | null>(null);
   let name = $state("");
   let building = $state("");
@@ -31,7 +32,23 @@
 </script>
 
 <div class="card">
-  {#if step === 1}
+  {#if step === 0}
+    <div in:fade={{ duration: 300 }} class="step center">
+      <p class="title">How should I live on your desktop?</p>
+      <p class="sub">Two looks, same companion. Pick a vibe.</p>
+      <div class="modes">
+        <button class="mode" class:sel={mode === "alive"} onclick={() => { mode = "alive"; step = 1; }}>
+          <span class="mode-name">✦ Alive</span>
+          <span class="mode-desc">a living snow-globe — premium, animated</span>
+        </button>
+        <button class="mode" class:sel={mode === "classic"} onclick={() => { mode = "classic"; step = 1; }}>
+          <span class="mode-name">Classic</span>
+          <span class="mode-desc">cozy &amp; lightweight</span>
+        </button>
+      </div>
+      <p class="tip">You can switch anytime — click on me, then press <kbd>V</kbd>.</p>
+    </div>
+  {:else if step === 1}
     <div in:fade={{ duration: 300 }} class="step">
       <p class="title">Someone wants to meet you.</p>
       <div class="grid">
@@ -67,7 +84,7 @@
       <img class="big" src={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
       <p class="title">So — what are you building right now?</p>
       <textarea bind:value={building} rows="3" placeholder="anything. a project, a skill, a life…"></textarea>
-      <button class="go" disabled={!building.trim()} onclick={() => chosen && onDone(chosen, name.trim(), building, birthday)}>
+      <button class="go" disabled={!building.trim()} onclick={() => chosen && onDone(chosen, name.trim(), building, birthday, mode)}>
         we build it together
       </button>
     </div>
@@ -206,5 +223,54 @@
   input[type="date"] {
     width: auto;
     color-scheme: dark;
+  }
+  .modes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 88%;
+    margin-top: 4px;
+  }
+  .mode {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(120, 108, 160, 0.4);
+    background: rgba(255, 255, 255, 0.04);
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .mode:hover,
+  .mode.sel {
+    border-color: #f0b66a;
+    background: rgba(240, 182, 106, 0.1);
+  }
+  .mode-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f0b66a;
+  }
+  .mode-desc {
+    font-size: 11px;
+    color: #9d92bd;
+  }
+  .tip {
+    margin: 10px 2px 0;
+    font-size: 11px;
+    color: #8d82ab;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .tip kbd {
+    font-family: inherit;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 5px;
+    border: 1px solid rgba(120, 108, 160, 0.5);
+    background: rgba(0, 0, 0, 0.3);
+    color: #ece6f7;
   }
 </style>

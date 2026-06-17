@@ -31,6 +31,7 @@
     onTap?: () => void; // bridge to the shared brain (parity with Classic)
     onStroke?: () => void;
     onBackgroundDown?: () => void; // empty-space press → drag the window
+    onContextLost?: () => void; // WebGL context lost (GPU sleep/reset) → ask the parent to remount
     fx?: AliveFx; // pet-attached FX bridged from the shared brain (parity with Classic)
     audioEnergy?: number; // 0..1 smoothed system-audio loudness (music awareness)
     audioBeat?: number; // increments on each detected beat
@@ -77,6 +78,7 @@
     onTap,
     onStroke,
     onBackgroundDown,
+    onContextLost,
     fx = NO_FX,
     audioEnergy = 0,
     audioBeat = 0,
@@ -962,7 +964,8 @@
         x: Math.random(), ph: Math.random() * 6.28, sp: 0.8 + Math.random() * 0.7, h: 0.55 + Math.random() * 0.5
       }));
       // ── rare-event system: unexpected, memorable, per-type cinematic one-shots ──
-      let rareT = 90 + Math.random() * 150; // first rare moment in 1.5–4 min
+      // first rare moment: electric (superstrike) ~1.5–3 min, other types 1.5–4 min
+      let rareT = petType === "electric" ? 90 + Math.random() * 90 : 90 + Math.random() * 150;
       let rareKind = "";
       let rareProg = 0;
       let rareDur = 1;
@@ -1854,7 +1857,9 @@
               rareKind = r[0];
               rareDur = r[1];
               rareProg = 0;
-              rareT = 150 + Math.random() * 240; // next in 2.5–6.5 min
+              // electric's superstrike is the headline event → more often (~1.5–3 min); other types
+              // keep the rarer 2.5–6.5 min cadence. (Mood still modulates: happy faster, sleeping slower.)
+              rareT = petType === "electric" ? 90 + Math.random() * 90 : 150 + Math.random() * 240;
               // LEGENDARY electric moment: the rare superstrike throws 2–3 globe bolts at once →
               // the ground answers with a multi-strike BARRAGE + a hard full-field flash, all scaled
               // by the pet's power. (gp* were refreshed earlier this frame by the ring block.)
@@ -2201,6 +2206,15 @@
 
       const onVis = () => (document.hidden ? a.ticker.stop() : a.ticker.start());
       document.addEventListener("visibilitychange", onVis);
+      // WebGL CONTEXT LOSS recovery. On a laptop the GPU can power down during long idle (or a
+      // driver TDR reset), which loses the WebGL context. Pixi does NOT auto-redraw after that, so
+      // on a TRANSPARENT window the canvas goes blank → the widget appears to "vanish". preventDefault
+      // lets the browser restore the context; we ask the parent to fully remount a fresh canvas.
+      const canvas = a.canvas as HTMLCanvasElement;
+      const onCtxLost = (e: Event) => { e.preventDefault(); onContextLost?.(); };
+      const onCtxRestored = () => onContextLost?.(); // remount on restore too (Pixi state is stale)
+      canvas.addEventListener("webglcontextlost", onCtxLost as EventListener);
+      canvas.addEventListener("webglcontextrestored", onCtxRestored as EventListener);
       // Tray-hide doesn't flip document.hidden (only minimize does), so the rAF kept rendering
       // for a hidden-to-tray widget — burning GPU/CPU for hours while "not noticed". Stop the
       // ticker on hm-visible:false too (Rust emits it on every hide/show). Fulfils the project's
@@ -2214,6 +2228,8 @@
         .catch(() => {}); // not under Tauri (web preview) — fine
       cleanup = () => {
         document.removeEventListener("visibilitychange", onVis);
+        canvas.removeEventListener("webglcontextlost", onCtxLost as EventListener);
+        canvas.removeEventListener("webglcontextrestored", onCtxRestored as EventListener);
         unlistenVis?.();
         ro.disconnect();
         for (const f of frames) f.bmp.close(); // free decoded GIF frames
