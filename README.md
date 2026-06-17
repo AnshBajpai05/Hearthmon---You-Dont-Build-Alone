@@ -4,7 +4,9 @@
 
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
-<img src="assets/hearthmon-status.svg" alt="Hearthmon — a living companion card" width="480" />
+<p align="center">
+  <img src="./assets/hearthmon-status.svg?v=1781702542" width="750"/>
+</p>
 
 **Current Companion:** —<br/>
 **Mood:** quietly present<br/>
