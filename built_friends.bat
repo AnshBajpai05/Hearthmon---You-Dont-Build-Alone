@@ -56,12 +56,20 @@ if %SZ% LSS 1000000 (
   exit /b 1
 )
 
+REM Guides are copied FROM the git-tracked sources every build, so dist is always current even if
+REM a sync/backup tool reverts a dist copy. Edit the SOURCES, never dist:
+REM   FRIENDS_GUIDE.md      -> quickstart   |   current_features.md -> full tour
 copy /Y "FRIENDS_GUIDE.md" "dist\Hearthmon - Read Me First.md" >nul
 copy /Y "current_features.md" "dist\Hearthmon - Everything to Try.md" >nul
+
+REM Auto-bundle the three friend files into one send-ready zip (overwrites the old one).
+echo [built_friends] Zipping the three friend files...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Force -Path 'dist\Hearthmon-Friend.exe','dist\Hearthmon - Read Me First.md','dist\Hearthmon - Everything to Try.md' -DestinationPath 'dist\Hearthmon - Friends.zip'"
+if errorlevel 1 echo [built_friends] WARNING: zip step failed - zip the three dist files by hand.
 
 echo [built_friends] Done:
 echo     dist\Hearthmon-Friend.exe              (trial gate)
 echo     dist\Hearthmon - Read Me First.md      (quickstart)
 echo     dist\Hearthmon - Everything to Try.md  (full feature tour)
-echo     ^-- zip all THREE, send together.
+echo     dist\Hearthmon - Friends.zip           (auto-zipped -- send this one)
 endlocal

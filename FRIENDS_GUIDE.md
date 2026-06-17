@@ -14,6 +14,10 @@ just… stays there. That's the point — quiet company, not another productivit
 It senses the *rhythm* of your session (flow / stuck / breakthrough) from safe signals
 — **never** your keystrokes, screen, or code — and reacts gently.
 
+> **First time you open it:** you'll meet your companion, **pick a look** — *Classic* (cozy) or
+> the glowing **Alive** globe (the default) — and it'll ask your **birthday** (optional, just so it
+> can remember). Change the look anytime with **V**.
+
 ## 🖐 Touch & move
 - **Drag empty space** → move the pet anywhere on screen.
 - **Click the pet** → it perks up.
@@ -23,7 +27,9 @@ It senses the *rhythm* of your session (flow / stuck / breakthrough) from safe s
 
 ## ☰ The menu
 - Click the **✦ on the pet's edge** → a radial menu: switch Pokémon (all 1025!),
-  your **Journey** scrapbook, mood check-in, settings, and more.
+  your **Journey** scrapbook, mood check-in, **⏰ Reminders** (gentle nudges like *"tea time"* or
+  *"stretch"* at a time you pick), **Code** (point it at a git folder + a 🎵 *vibe with my music*
+  toggle), settings, and more.
 
 ## ⌨ Handy keys (when the pet's focused)
 | Key | Does |
@@ -34,6 +40,16 @@ It senses the *rhythm* of your session (flow / stuck / breakthrough) from safe s
 | **N** | leave a note to tomorrow-you |
 | **Alt + Space** | quick command bar |
 | **Alt + W** | whistle it back to screen center if it wandered off |
+
+## 🎲 Worth a poke
+- **Switch companions** — all 1025, with a rare **shiny** if you're lucky ✨; or **1v1 battle** two of them.
+- **Type habitats** — the whole little world changes with your pet's type (a moonlit shore, a neon
+  ⚡ storm, a cozy hearth…). The **Alive** look is where it shines — try leaving an Electric one in
+  Alive with your music on.
+- **Set a reminder** ⏰ for something kind to yourself, or just leave it be. No wrong way to use it.
+
+> **Looks blank or vanished?** Tap **V** twice (flips the look and redraws it) or **Alt + W** to
+> whistle it home. It also recovers on its own after your screen wakes.
 
 ## 🌱 Your first chapter (free)
 How the trial works — it's a **5 + 2** thing:
