@@ -43,8 +43,11 @@ pub fn chapter_status(app: tauri::AppHandle) -> ChapterStatus {
     }
     let mut st = state::load_or_init(&app);
 
-    // Clock-rollback guard: time can only move forward as far as we've ever seen.
-    let effective_now = state::now().max(st.last_seen);
+    // Clock guard: time only moves forward as far as we've ever seen (rollback cheat),
+    // AND we refuse to follow an implausible forward leap in one step (bad NTP / wrong
+    // system date / dual-boot time jump) — that would poison last_seen and lock the user
+    // out forever once their clock heals. See config::CLOCK_JUMP_TOLERANCE_DAYS.
+    let effective_now = clamp_clock(state::now(), st.last_seen);
     st.last_seen = effective_now;
 
     apply_trusted(&mut st, effective_now);
@@ -114,7 +117,7 @@ pub fn submit_builder_pass(app: tauri::AppHandle, pass_code: String) -> Result<(
     let expiry = pass_expiry(yymmdd).ok_or("malformed")?;
 
     let mut st = state::load_or_init(&app);
-    let now = state::now();
+    let now = clamp_clock(state::now(), st.last_seen); // don't poison the floor with a bad clock
     st.expiry = st.expiry.max(expiry); // never shrink an existing runway
     st.kind = if expiry >= FOREVER {
         StateKind::Forever
@@ -125,6 +128,21 @@ pub fn submit_builder_pass(app: tauri::AppHandle, pass_code: String) -> Result<(
     st.paused_launches = 0;
     state::persist(&app, &st);
     Ok(())
+}
+
+/// Clamp the wall clock against `last_seen`, our trial floor.
+/// - rolled back  → hold the floor (never un-spend trial time)
+/// - leapt implausibly far forward → distrust it, keep the last good position (a bad clock
+///   must not poison the floor and lock the user out once it heals)
+/// - otherwise    → take the clock at face value
+fn clamp_clock(raw_now: i64, last_seen: i64) -> i64 {
+    if raw_now < last_seen {
+        last_seen
+    } else if raw_now - last_seen > config::CLOCK_JUMP_TOLERANCE_DAYS * SECS_PER_DAY {
+        last_seen
+    } else {
+        raw_now
+    }
 }
 
 /// Auto-extend machines on the trusted list (matched by machine hash — see §6).
@@ -156,7 +174,17 @@ fn pass_expiry(yymmdd: &str) -> Option<i64> {
     let yy: i32 = yymmdd.get(0..2)?.parse().ok()?;
     let mm: u32 = yymmdd.get(2..4)?.parse().ok()?;
     let dd: u32 = yymmdd.get(4..6)?.parse().ok()?;
-    let naive = NaiveDate::from_ymd_opt(2000 + yy, mm, dd)?.and_hms_opt(23, 59, 59)?;
-    let local = Local.from_local_datetime(&naive).single()?;
+    let date = NaiveDate::from_ymd_opt(2000 + yy, mm, dd)?;
+    let naive = date.and_hms_opt(23, 59, 59)?;
+    // Resolve the local day-end robustly. `.single()` returns None for a DST spring-forward gap and
+    // is Ambiguous for a fall-back hour — a bare `.single()?` would then REJECT a perfectly valid
+    // pass over a clock quirk (existing_issues.md §7.6). Take the earliest valid instant, and on a
+    // gap fall back to an earlier minute so we never bail. (The pass is minted on the issuer's local
+    // day and evaluated on the user's; the tz delta is absorbed by FORGIVENESS_DAYS below.)
+    let local = match Local.from_local_datetime(&naive) {
+        chrono::LocalResult::Single(t) => t,
+        chrono::LocalResult::Ambiguous(earliest, _) => earliest,
+        chrono::LocalResult::None => Local.from_local_datetime(&date.and_hms_opt(23, 0, 0)?).earliest()?,
+    };
     Some(local.timestamp() + config::FORGIVENESS_DAYS * SECS_PER_DAY)
 }

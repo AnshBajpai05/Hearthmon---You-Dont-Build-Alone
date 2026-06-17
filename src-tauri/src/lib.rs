@@ -31,8 +31,27 @@ struct GitWatch {
     seen: usize, // reflog lines already accounted for — we never replay history
 }
 
+/// Resolve the real git directory for `repo`. Normally `<repo>/.git` is a directory, but in a
+/// **git worktree** `.git` is a FILE containing `gitdir: <path>` pointing at
+/// `<main>/.git/worktrees/<name>` — that's where this checkout's `logs/HEAD` actually lives.
+/// Without this we'd read `<repo>/.git/logs/HEAD` (a missing path) and silently miss every
+/// commit made in a worktree (existing_issues.md — git worktree support).
+fn git_dir(repo: &PathBuf) -> PathBuf {
+    let dot_git = repo.join(".git");
+    if dot_git.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&dot_git) {
+            if let Some(rest) = content.lines().find_map(|l| l.trim().strip_prefix("gitdir:")) {
+                let p = PathBuf::from(rest.trim());
+                // worktree pointers are usually absolute; resolve a relative one against the repo
+                return if p.is_absolute() { p } else { repo.join(p) };
+            }
+        }
+    }
+    dot_git
+}
+
 fn git_log_path(repo: &PathBuf) -> PathBuf {
-    repo.join(".git").join("logs").join("HEAD")
+    git_dir(repo).join("logs").join("HEAD")
 }
 
 fn reflog_line_count(p: &PathBuf) -> usize {
@@ -135,6 +154,10 @@ fn spawn_git_watcher(handle: tauri::AppHandle) {
 // ── Build / Training Awareness ─────────────────────────────────────
 // Poll nvidia-smi so the companion can react to GPU training runs (the
 // recruiter-killer: a Pokémon that knows when you're training a model).
+// §7.10: KEPT on purpose (not removed). Training awareness pivoted to log-watch because the dev
+// machine is Intel Arc, but a friend on an NVIDIA box still benefits — and on non-NVIDIA hosts
+// `gpu_stat` returns available:false so the frontend stops polling and never nags. Removing it
+// would drop a working capability for NVIDIA users; the cost of keeping it is ~nil.
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
@@ -219,11 +242,18 @@ fn git_capture(repo: &PathBuf, args: &[&str]) -> String {
 /// Poll the watched repo's working tree every 6s; emit `repo-active` (with the
 /// dirty-file count) whenever the uncommitted state changes — i.e. you saved.
 fn spawn_repo_activity_watcher(handle: tauri::AppHandle) {
+    // Adaptive cadence: on a huge monorepo (kernel/Chromium) `git status` can take seconds and
+    // contend on `.git/index`. Polling every 6s there means continuous disk churn + battery drain
+    // (existing_issues.md §3). So we time each poll and back off (up to 60s) when it's expensive,
+    // snapping back to 6s when it's cheap again.
+    const FAST: std::time::Duration = std::time::Duration::from_secs(6);
+    const SLOW_MAX: std::time::Duration = std::time::Duration::from_secs(60);
     std::thread::spawn(move || {
         let mut last = String::new();
         let mut primed = false; // skip the first sight so we don't fire on launch
+        let mut interval = FAST;
         loop {
-            std::thread::sleep(std::time::Duration::from_secs(6));
+            std::thread::sleep(interval);
             if !handle.state::<Visible>().0.load(Ordering::Relaxed) {
                 continue; // hidden to tray → don't spawn git / hit disk
             }
@@ -234,15 +264,26 @@ fn spawn_repo_activity_watcher(handle: tauri::AppHandle) {
             let Some(repo) = repo else {
                 last.clear();
                 primed = false;
+                interval = FAST; // forget any monorepo backoff once the repo is cleared
                 continue;
             };
             // porcelain = which files are dirty; numstat = how much (changes on
             // every save, even re-saving the same already-dirty file)
+            let t0 = std::time::Instant::now();
             let snap = format!(
                 "{}\n{}",
                 git_capture(&repo, &["status", "--porcelain"]),
                 git_capture(&repo, &["diff", "--numstat"])
             );
+            let cost = t0.elapsed();
+            // expensive repo → stretch the interval; cheap → return to the responsive 6s
+            interval = if cost > std::time::Duration::from_millis(1500) {
+                (interval * 2).min(SLOW_MAX)
+            } else if cost < std::time::Duration::from_millis(400) {
+                FAST
+            } else {
+                interval
+            };
             if !primed {
                 last = snap;
                 primed = true;
@@ -294,9 +335,19 @@ fn app_category(proc_name: &str) -> &'static str {
     }
 }
 
+/// Result of reading the foreground window's process.
 #[cfg(windows)]
-fn foreground_proc() -> Option<String> {
-    use windows_sys::Win32::Foundation::CloseHandle;
+enum Foreground {
+    Name(String), // resolved foreground exe (lowercased file name)
+    Denied,       // a real foreground window we're not allowed to open (elevated / higher integrity)
+    None,         // no foreground window at all
+}
+
+#[cfg(windows)]
+fn foreground_proc() -> Foreground {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_INSUFFICIENT_BUFFER,
+    };
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
@@ -306,26 +357,47 @@ fn foreground_proc() -> Option<String> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd == 0 {
-            return None;
+            return Foreground::None;
         }
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, &mut pid);
         if pid == 0 {
-            return None;
+            return Foreground::None;
         }
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h == 0 {
-            return None;
+            // Mandatory Integrity Control: a Medium-integrity Hearthmon can't open a High-integrity
+            // foreground (elevated shell / IDE-as-admin / Task Manager) → ERROR_ACCESS_DENIED. That
+            // is NOT idleness — the user is actively at the keyboard; flag it so we don't degrade to
+            // "other" and misread their debugging session as unrelated activity (existing_issues.md §1).
+            return if GetLastError() == ERROR_ACCESS_DENIED {
+                Foreground::Denied
+            } else {
+                Foreground::None
+            };
         }
-        let mut buf = [0u16; 260];
-        let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len);
+        // Grow the buffer until the full path fits. The old fixed 260-wchar buffer made any
+        // long path (deeply-nested conda/npm/temp installs, long-paths enabled) fail to resolve,
+        // collapsing real editors to "other" — the same end-state as the Admin Drop (§7.4).
+        let mut cap = 1024usize;
+        let name = loop {
+            let mut buf = vec![0u16; cap];
+            let mut len = cap as u32;
+            if QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0 {
+                let s = String::from_utf16_lossy(&buf[..len as usize]);
+                break s.rsplit(|c| c == '\\' || c == '/').next().map(|x| x.to_lowercase());
+            }
+            if GetLastError() == ERROR_INSUFFICIENT_BUFFER && cap < 32_768 {
+                cap *= 2; // path longer than the buffer → grow and retry
+                continue;
+            }
+            break None;
+        };
         CloseHandle(h);
-        if ok == 0 {
-            return None;
+        match name {
+            Some(n) => Foreground::Name(n),
+            None => Foreground::None,
         }
-        let s = String::from_utf16_lossy(&buf[..len as usize]);
-        s.rsplit(|c| c == '\\' || c == '/').next().map(|x| x.to_lowercase())
     }
 }
 
@@ -343,15 +415,31 @@ fn spawn_focus_watcher(handle: tauri::AppHandle) {
             if !handle.state::<FlowAware>().0.load(Ordering::Relaxed) {
                 continue; // opted out — never look
             }
-            let cat = foreground_proc().map(|p| app_category(&p)).unwrap_or("other");
-            if cat != last {
-                last = cat.to_string();
-                let _ = handle.emit("focus-app", cat);
+            match foreground_proc() {
+                Foreground::Name(p) => {
+                    let cat = app_category(&p);
+                    if cat != last {
+                        last = cat.to_string();
+                        let _ = handle.emit("focus-app", cat);
+                    }
+                }
+                // Elevated/inaccessible foreground → the user IS working on something we can't name.
+                // Hold the current category instead of emitting "other" so flow stays intact (§1).
+                Foreground::Denied => {}
+                Foreground::None => {
+                    if last != "other" {
+                        last = "other".to_string();
+                        let _ = handle.emit("focus-app", "other");
+                    }
+                }
             }
         }
     });
 }
 
+// Flow Awareness reads the Win32 foreground process; there's no portable equivalent, so on
+// macOS/Linux this is an intentional no-op (the frontend simply never receives `focus-app`
+// and falls back to its git/log signals). Documented stub, not a silent gap (§1 cross-platform).
 #[cfg(not(windows))]
 fn spawn_focus_watcher(_handle: tauri::AppHandle) {}
 
@@ -386,6 +474,19 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Bring the widget on top so a gentle reminder is actually SEEN even when tucked in the tray —
+/// but WITHOUT stealing keyboard focus (the window is always-on-top, so showing it is enough).
+/// Mirrors `show_main` minus `set_focus`, and resumes the watchers/audio it had paused on hide.
+#[tauri::command]
+fn surface_window(app: tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        app.state::<Visible>().0.store(true, Ordering::Relaxed);
+        let _ = app.emit("hm-visible", true);
+    }
+}
+
 // Dev builds load the Vite server (localhost) — registering THIS exe for autostart
 // would boot a broken "localhost refused" window. Only allow autostart on a release exe.
 #[tauri::command]
@@ -393,11 +494,20 @@ fn is_dev_build() -> bool {
     cfg!(debug_assertions)
 }
 
+/// Build a loopback capture on the CURRENT default output device. Returns the stream plus the
+/// device name it bound to, so the watcher can notice when the default device later changes
+/// (unplugged headphones → speakers) and rebuild — otherwise the stream stays bound to a gone
+/// device and audio awareness silently dies until restart (existing_issues.md — audio device
+/// invalidation). `err_flag` is raised from the stream's error callback for the same reason.
 #[cfg(windows)]
-fn build_loopback(handle: &tauri::AppHandle) -> Option<cpal::Stream> {
+fn build_loopback(
+    handle: &tauri::AppHandle,
+    err_flag: std::sync::Arc<AtomicBool>,
+) -> Option<(cpal::Stream, String)> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let host = cpal::default_host();
     let device = host.default_output_device()?; // loopback = INPUT stream on OUTPUT device
+    let device_name = device.name().unwrap_or_default();
     let supported = device.default_output_config().ok()?;
     if supported.sample_format() != cpal::SampleFormat::F32 {
         return None; // shared-mode Windows output is virtually always f32
@@ -409,7 +519,10 @@ fn build_loopback(handle: &tauri::AppHandle) -> Option<cpal::Stream> {
     let a2 = 1.0 - (-2.0 * std::f32::consts::PI * 2000.0 / sr).exp(); // mid/high split ~2kHz
     let (mut lp1, mut lp2) = (0f32, 0f32);
     let (mut sb, mut sm, mut sh, mut n) = (0f32, 0f32, 0f32, 0u32);
-    let mut peak = 0.0008f32; // slow AGC so quiet and loud songs both read 0..1
+    // AGC peak for normalisation. Decay must be fast enough that a one-off transient (a Windows
+    // error chime, a notification) doesn't pin `peak` high and suppress real music for ~20s+
+    // (existing_issues.md §4). 0.995 @30Hz ≈ a ~4.6s half-life — recovers in seconds, still smooth.
+    let mut peak = 0.0008f32;
     let mut last = std::time::Instant::now();
     let h = handle.clone();
     let stream = device
@@ -432,37 +545,68 @@ fn build_loopback(handle: &tauri::AppHandle) -> Option<cpal::Stream> {
                     let nn = n as f32;
                     let (b, m, hi) = ((sb / nn).sqrt(), (sm / nn).sqrt(), (sh / nn).sqrt());
                     let lvl = (b + m + hi) / 3.0;
-                    peak = (peak * 0.999).max(lvl).max(0.0008);
+                    peak = (peak * 0.995).max(lvl).max(0.0008); // faster decay → no minutes-long suppression (§4)
                     let nz = |v: f32| (v / peak).clamp(0.0, 1.0);
                     let _ = h.emit("audio-bands", (nz(b), nz(m), nz(hi), nz(lvl)));
                     sb = 0.0; sm = 0.0; sh = 0.0; n = 0;
                     last = std::time::Instant::now();
                 }
             },
-            move |e| eprintln!("[hearthmon] audio stream error: {e}"),
+            move |e| {
+                eprintln!("[hearthmon] audio stream error: {e}");
+                err_flag.store(true, Ordering::Relaxed); // device likely invalidated → ask for a rebuild
+            },
             None,
         )
         .ok()?;
     stream.play().ok()?;
-    Some(stream)
+    Some((stream, device_name))
 }
 
 /// Hold the loopback stream alive only while the user has music-awareness on.
 /// The cpal Stream is !Send, so it's built and dropped on this owning thread.
 #[cfg(windows)]
 fn spawn_audio_watcher(handle: tauri::AppHandle) {
+    use cpal::traits::{DeviceTrait, HostTrait};
     std::thread::spawn(move || {
         let mut stream: Option<cpal::Stream> = None;
+        let mut bound_device = String::new(); // the output device our stream is bound to
+        let err_flag = std::sync::Arc::new(AtomicBool::new(false)); // raised by the stream error cb
         loop {
             std::thread::sleep(std::time::Duration::from_millis(300));
             // capture only when opted in AND visible — drop the stream when hidden so we don't
             // process audio for a window the user thinks is closed (7.3 / "silent while hidden")
             let want = handle.state::<AudioAware>().0.load(Ordering::Relaxed)
                 && handle.state::<Visible>().0.load(Ordering::Relaxed);
-            if want && stream.is_none() {
-                stream = build_loopback(&handle);
-            } else if !want && stream.is_some() {
-                stream = None; // drop → capture stops immediately
+            if !want {
+                if stream.is_some() {
+                    stream = None; // drop → capture stops immediately
+                    bound_device.clear();
+                    err_flag.store(false, Ordering::Relaxed);
+                }
+                continue;
+            }
+
+            // The default output device can change under us (headphones unplugged, swapped to
+            // speakers). A cpal stream stays bound to its original device, so it goes silent
+            // forever. Rebuild when the stream errored OR the current default device differs
+            // from the one we bound to.
+            let now_device = cpal::default_host()
+                .default_output_device()
+                .and_then(|d| d.name().ok())
+                .unwrap_or_default();
+            if stream.is_some()
+                && (err_flag.load(Ordering::Relaxed) || now_device != bound_device)
+            {
+                stream = None; // drop the dead/stale stream before rebuilding
+            }
+            if stream.is_none() {
+                err_flag.store(false, Ordering::Relaxed);
+                if let Some((s, name)) = build_loopback(&handle, err_flag.clone()) {
+                    stream = Some(s);
+                    bound_device = name;
+                }
+                // build failed (device mid-switch / none present) → retry next tick
             }
         }
     });
@@ -483,12 +627,39 @@ struct LogWatch {
     pos: u64,              // byte offset already emitted
 }
 
+/// A run folder holds more than logs — checkpoints, datasets, images. When the user points us at
+/// a directory we must not follow the newest `model.pt` / `checkpoint.ckpt` / `.zip` / `.png`;
+/// restrict the auto-pick to text logs (`.log` / `.txt`, or any name containing "log" such as
+/// `training.log` / `output.log`). A file the user points at DIRECTLY is honoured as-is — this
+/// only filters the directory auto-pick (existing_issues.md — log file type filtering).
+fn is_log_file(p: &std::path::Path) -> bool {
+    let ext_ok = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            let e = e.to_ascii_lowercase();
+            e == "log" || e == "txt"
+        })
+        .unwrap_or(false);
+    let name_ok = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.to_ascii_lowercase().contains("log"))
+        .unwrap_or(false);
+    ext_ok || name_ok
+}
+
 fn newest_log(dir: &PathBuf) -> Option<PathBuf> {
+    // §2-secondary (NTFS mtime lag): a file open in append mode may not refresh its directory
+    // LastWriteTime until the writer flushes, so this `modified()` ranking can be a little stale
+    // when first PICKING which file to follow. Accepted: once a file is chosen the watcher tails
+    // appended BYTES directly each tick (no mtime dependence), so steady-state lag is negligible;
+    // only the initial/switch selection can lag, and forcing a foreign writer to flush isn't ours.
     std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.is_file())
+        .filter(|p| p.is_file() && is_log_file(p))
         .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
@@ -775,7 +946,7 @@ pub fn run() {
         .manage(FlowAware(AtomicBool::new(true)))
         .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
         .manage(Visible(AtomicBool::new(true))) // window starts shown; watchers pause when hidden
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, is_dev_build, chapter::chapter_status, chapter::submit_builder_pass, chapter::founder_mark])
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, surface_window, is_dev_build, chapter::chapter_status, chapter::submit_builder_pass, chapter::founder_mark])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());

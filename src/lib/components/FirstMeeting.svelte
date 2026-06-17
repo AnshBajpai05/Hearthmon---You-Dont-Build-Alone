@@ -5,7 +5,7 @@
   import { STARTERS, spriteUrl, fallbackUrl, type Creature } from "../sprites";
 
   interface Props {
-    onDone: (creature: Creature, name: string, building: string) => void;
+    onDone: (creature: Creature, name: string, building: string, birthday: string) => void;
   }
   let { onDone }: Props = $props();
 
@@ -13,7 +13,9 @@
   let chosen = $state<Creature | null>(null);
   let name = $state("");
   let building = $state("");
+  let birthday = $state(""); // "YYYY-MM-DD" or "" if skipped
   let failedIds = $state<Set<number>>(new Set());
+  const todayISO = new Date().toISOString().slice(0, 10);
 
   function srcFor(dexId: number): string {
     return failedIds.has(dexId) ? fallbackUrl(dexId) : spriteUrl(dexId);
@@ -52,9 +54,20 @@
   {:else if step === 3 && chosen}
     <div in:fade={{ duration: 300 }} class="step center">
       <img class="big" src={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
+      <p class="title">When's your birthday?</p>
+      <p class="sub">So I can remember. Totally optional.</p>
+      <input type="date" bind:value={birthday} max={todayISO} />
+      <div class="row">
+        <button class="ghost" onclick={() => { birthday = ""; step = 4; }}>skip</button>
+        <button class="go" onclick={() => (step = 4)}>save</button>
+      </div>
+    </div>
+  {:else if step === 4 && chosen}
+    <div in:fade={{ duration: 300 }} class="step center">
+      <img class="big" src={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
       <p class="title">So — what are you building right now?</p>
       <textarea bind:value={building} rows="3" placeholder="anything. a project, a skill, a life…"></textarea>
-      <button class="go" disabled={!building.trim()} onclick={() => chosen && onDone(chosen, name.trim(), building)}>
+      <button class="go" disabled={!building.trim()} onclick={() => chosen && onDone(chosen, name.trim(), building, birthday)}>
         we build it together
       </button>
     </div>
@@ -164,5 +177,34 @@
   .go:disabled {
     opacity: 0.35;
     cursor: default;
+  }
+  .sub {
+    margin: -6px 0 2px;
+    font-size: 11px;
+    color: #9d92bd;
+    text-align: center;
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .ghost {
+    padding: 9px 16px;
+    border-radius: 11px;
+    border: 1px solid rgba(120, 108, 160, 0.4);
+    background: transparent;
+    color: #b6acce;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .ghost:hover {
+    border-color: #8d82ab;
+    color: #ece6f7;
+  }
+  input[type="date"] {
+    width: auto;
+    color-scheme: dark;
   }
 </style>

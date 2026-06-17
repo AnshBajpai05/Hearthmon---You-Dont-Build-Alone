@@ -574,6 +574,32 @@ export const burnoutLines = [
   "You've been pushing hard. I noticed."
 ];
 
+// The user's OWN birthday — warm and theirs, never generic spam, never a demand to celebrate.
+export const userBirthdayLines: string[] = [
+  "Hey — happy birthday. 🎂 Genuinely glad you're here.",
+  "It's your day. 🎂 Keep it as small or as big as you want — I'm here either way.",
+  "Happy birthday. Whatever this next year asks of you, you won't face it alone.",
+  "🎂 Today's yours. Thanks for letting me walk through your year with you."
+];
+
+// Memory anniversaries — "this is around when…". Memory > motivation; a quiet look back, no scoring.
+export function memoryAnniversaryLine(name: string, yearsAgo: number): string {
+  const when = yearsAgo <= 1 ? "about a year ago" : `${yearsAgo} years ago`;
+  return `This is around when we started ${name} — ${when}. Look how far that's come.`;
+}
+
+// Quiet reminders — a nudge, never an alarm, never guilt if it's missed.
+export function reminderLine(text: string): string {
+  const t = text.trim();
+  const opts = [
+    `Hey — ${t}.`,
+    `Gentle nudge: ${t}.`,
+    `Psst… ${t}. Whenever you're ready.`,
+    `${t} — just so you don't have to keep it in your head.`
+  ];
+  return opts[Math.floor(Math.random() * opts.length)];
+}
+
 // Anniversaries — memory > motivation.
 export function anniversaryLine(days: number): string {
   if (days >= 365 && days % 365 === 0) {

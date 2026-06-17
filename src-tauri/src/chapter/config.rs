@@ -8,6 +8,16 @@ pub const CORE_DAYS: i64 = 5;
 pub const GRACE_DAYS: i64 = 2;
 /// Invisible pad added to every *pass* expiry so it feels like "he waited for me".
 pub const FORGIVENESS_DAYS: i64 = 1;
+
+/// Clock-anomaly tolerance. `last_seen` is our rollback floor; a bad NTP sync, a wrong
+/// system date, or a dual-boot time jump can shove the wall clock years into the future.
+/// If we trusted such a leap we'd poison `last_seen` forever and lock the user out even
+/// after their clock heals. So a single forward jump larger than this many days is treated
+/// as a fault: we hold our last good position instead of advancing into the bogus future.
+/// Generous on purpose — a real human absence of weeks/a couple months still flows through
+/// and expires normally; only an implausible (year+) leap trips it. Erring toward "never
+/// lock out a real user" is the soul-aligned choice.
+pub const CLOCK_JUMP_TOLERANCE_DAYS: i64 = 366;
 // Trial timeline: full days 1..5 → quiet grace days 6..7 → pause on the first launch from day 8.
 // (FORGIVENESS_DAYS pads PASS expiries only, not the trial.) Bump these when you scale up.
 

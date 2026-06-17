@@ -15,6 +15,7 @@
   import MoodCheckIn from "$lib/components/MoodCheckIn.svelte";
   import LogMemory from "$lib/components/LogMemory.svelte";
   import RemindMe from "$lib/components/RemindMe.svelte";
+  import QuietReminders from "$lib/components/QuietReminders.svelte";
   import FirstMeeting from "$lib/components/FirstMeeting.svelte";
   import SwitchCompanion from "$lib/components/SwitchCompanion.svelte";
   import BattleScene from "$lib/components/BattleScene.svelte";
@@ -66,6 +67,10 @@
     unreadLetter,
     allMemories,
     oldArc,
+    getReminders,
+    setReminders,
+    anniversaryEvents,
+    type Reminder,
     type Memory
   } from "$lib/db";
   import type { Mood, MemoryKind } from "$lib/db";
@@ -95,6 +100,9 @@
     evolveDoneLines,
     evolveDeclineLines,
     anniversaryLine,
+    userBirthdayLines,
+    memoryAnniversaryLine,
+    reminderLine,
     pokeReactions,
     treatLines,
     pettingLines,
@@ -168,6 +176,7 @@
     | "mood"
     | "log"
     | "remind"
+    | "nudge"
     | "switch"
     | "journey"
     | "jar"
@@ -2482,6 +2491,45 @@
         }
       }
 
+      // the user's OWN birthday — warm and theirs, separate from the day-we-met. Once a year.
+      const userBday = await getMeta("user_birthday"); // "YYYY-MM-DD"
+      if (userBday && !focusMode) {
+        const b = new Date(userBday.replace(" ", "T"));
+        const now4 = new Date();
+        if (!isNaN(b.getTime()) && b.getMonth() === now4.getMonth() && b.getDate() === now4.getDate()) {
+          const yr = String(now4.getFullYear());
+          if ((await getMeta("last_user_birthday")) !== yr) {
+            await setMeta("last_user_birthday", yr);
+            hadAnniversary = true; // their day takes the floor — nothing else stacks on it
+            setTimeout(() => {
+              birthday = true; // party hat for the session
+              const line = pick(userBirthdayLines);
+              say(line, 15000);
+              announce(line);
+              runDelightBurst("fireworks", 60_000);
+            }, 6500);
+          }
+        }
+      }
+
+      // memory anniversaries — "this is around when we started X". Gentle, once a day, not stacked.
+      if (!focusMode && !hadAnniversary) {
+        const todayMA = new Date().toDateString();
+        if ((await getMeta("last_mem_anniversary")) !== todayMA) {
+          const events = await anniversaryEvents(3);
+          if (events.length) {
+            await setMeta("last_mem_anniversary", todayMA);
+            hadAnniversary = true;
+            const ev = events[0];
+            setTimeout(() => {
+              const line = memoryAnniversaryLine(ev.name, ev.yearsAgo);
+              say(line, 15000);
+              announce(line);
+            }, 9000);
+          }
+        }
+      }
+
       // a note/capsule from past-you has come due — the pet remembers, so you don't have to.
       // gentle, deferred, and never on top of an anniversary or focus session.
       if (!focusMode && !hadAnniversary) {
@@ -2521,6 +2569,7 @@
     const fidgetTimer = setInterval(fidgetTick, 2600); // ambient blinks / micro-fidgets
     const dreamTimer = setInterval(dreamTick, 22_000); // dream bubbles while sleeping
     const autoTimer = setInterval(autoSwitchTick, 30_000);
+    const reminderTimer = setInterval(() => void reminderTick(), 30_000); // quiet personal nudges
     // Lonely Night Mode — the room dims after midnight
     const checkNight = () => {
       const now = new Date();
@@ -2600,6 +2649,7 @@
       clearInterval(fidgetTimer);
       clearInterval(dreamTimer);
       clearInterval(autoTimer);
+      clearInterval(reminderTimer);
       clearInterval(nightTimer);
       clearInterval(cardPushTimer);
       if (gpuTimer) clearInterval(gpuTimer);
@@ -2709,13 +2759,60 @@
   // context-aware PERSONALITY QUIRK ("it's Monday…", "found another star"), or
   // falls back to a persona/generic murmur. Shown in the bubble only (not spoken
   // aloud) so it stays gentle and non-intrusive.
+  // ── Quiet reminders ────────────────────────────────────────────────
+  // Check every 30s for a reminder whose time matches now. Daily reminders fire once per day
+  // (deduped by lastFired); one-time reminders fire then drop. A nudge, never an alarm.
+  async function reminderTick() {
+    if (phase !== "home") return;
+    const list = await getReminders();
+    if (!list.length) return;
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const today = now.toISOString().slice(0, 10);
+    let changed = false;
+    let fire: Reminder | null = null;
+    const keep: Reminder[] = [];
+    for (const r of list) {
+      let drop = false;
+      if (r.time === hhmm) {
+        if (r.repeat === "once") {
+          if (!fire) fire = r;
+          drop = true; // one-shot: remove after it fires
+          changed = true;
+        } else if (r.lastFired !== today) {
+          r.lastFired = today;
+          changed = true;
+          if (!fire) fire = r;
+        }
+      }
+      if (!drop) keep.push(r);
+    }
+    if (changed) await setReminders(keep);
+    if (fire) await surfaceReminder(fire.text);
+  }
+
+  async function surfaceReminder(text: string) {
+    // make sure it's actually seen even when tucked in the tray — on top, but no focus-steal
+    try { await invoke("surface_window"); } catch { /* not under Tauri */ }
+    setSoundSuspended(false);
+    say(reminderLine(text), 13000);
+    petState = "happy";
+    setTimeout(() => (petState = "idle"), 1500);
+    moodGlow = "#9ad0f0";
+    setTimeout(() => (moodGlow = ""), 12000);
+  }
+
+  const MURMUR_CHANCE = 0.3; // ~3 in 10 idle ticks surface a line (was 0.18 — felt too silent)
   function murmurTick() {
     if (busy() || petState === "sleeping") return;
     if (deepWork()) return; // you're deep in it — the company is the silence
     if (focusMode || companionMode === "just_there") return; // stay quiet
     // Rare signature moment: the founder mark whispers once in a long while (~1/100 murmurs).
     if (Math.random() < FOUNDER_WHISPER_ODDS) { say(FOUNDER_WHISPER, 30000); return; }
-    if (Math.random() > 0.18) return; // rare on purpose
+    // Base murmur chance per ~70s tick. Tunable presence lever — the deepWork/focus/just_there
+    // guards above already keep it SILENT while you're in flow, so raising this only adds gentle
+    // company during ordinary idle (it had drifted too quiet). Still rare on purpose.
+    if (Math.random() > MURMUR_CHANCE) return;
     const now = new Date();
     const ctx = {
       hour: now.getHours(),
@@ -2990,10 +3087,11 @@
     flick();
   }
 
-  async function onMeetingDone(creature: Creature, name: string, building: string) {
+  async function onMeetingDone(creature: Creature, name: string, building: string, birthday = "") {
     await setMeta("dex_id", String(creature.dexId));
     await setMeta("pet_name", name);
     await setMeta("first_met", new Date().toISOString());
+    if (birthday.trim()) await setMeta("user_birthday", birthday.trim()); // theirs, to remember
     if (building.trim()) await addMemory("seed", { text: building.trim() });
     dexId = creature.dexId;
     petName = name;
@@ -3218,6 +3316,8 @@
       <LogMemory onSave={onLogSave} onClose={() => (panel = "none")} />
     {:else if panel === "remind"}
       <RemindMe onClose={() => (panel = "none")} />
+    {:else if panel === "nudge"}
+      <QuietReminders onClose={() => (panel = "none")} />
     {:else if panel === "switch"}
       <SwitchCompanion
         currentDexId={dexId}

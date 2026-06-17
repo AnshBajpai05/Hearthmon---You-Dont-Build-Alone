@@ -5,6 +5,7 @@
   // its palette + light + particle kind. This is the shape that drops into the
   // real widget.
   import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
   import {
     Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture, BlurFilter
   } from "pixi.js";
@@ -2021,8 +2022,20 @@
 
       const onVis = () => (document.hidden ? a.ticker.stop() : a.ticker.start());
       document.addEventListener("visibilitychange", onVis);
+      // Tray-hide doesn't flip document.hidden (only minimize does), so the rAF kept rendering
+      // for a hidden-to-tray widget — burning GPU/CPU for hours while "not noticed". Stop the
+      // ticker on hm-visible:false too (Rust emits it on every hide/show). Fulfils the project's
+      // "pause the rAF loop when hidden-to-tray" rule and trims long-idle webview pressure.
+      let unlistenVis: (() => void) | null = null;
+      listen<boolean>("hm-visible", (e) => (e.payload ? a.ticker.start() : a.ticker.stop()))
+        .then((un) => {
+          if (destroyed) un();
+          else unlistenVis = un;
+        })
+        .catch(() => {}); // not under Tauri (web preview) — fine
       cleanup = () => {
         document.removeEventListener("visibilitychange", onVis);
+        unlistenVis?.();
         ro.disconnect();
         for (const f of frames) f.bmp.close(); // free decoded GIF frames
       };

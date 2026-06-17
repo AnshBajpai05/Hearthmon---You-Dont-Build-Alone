@@ -7,7 +7,7 @@
   import type { WeatherKind } from "./WeatherFx.svelte";
   import type { CompanionMode } from "$lib/lines";
 
-  type Panel = "none" | "mood" | "log" | "remind" | "switch" | "journey" | "jar" | "note" | "vault" | "code" | "wrapped" | "future" | "today" | "movie";
+  type Panel = "none" | "mood" | "log" | "remind" | "nudge" | "switch" | "journey" | "jar" | "note" | "vault" | "code" | "wrapped" | "future" | "today" | "movie";
 
   interface Props {
     // reactive state (drives dynamic labels/icons)
@@ -109,13 +109,14 @@
     },
     {
       id: "care", icon: "❤️", name: "Care",
-      tagline: "Feed · Pet · Evolve · Vault",
+      tagline: "Feed · Pet · Evolve · Reminders · Vault",
       angle: 330, labelSide: "right", dirHint: 1,
       items: [
-        { id: "feed",   icon: "🍙", label: "Feed" },
-        { id: "pet",    icon: "🫳", label: "Pet" },
-        { id: "evolve", icon: "✨", label: "Evolve" },
-        { id: "vault",  icon: "🫂", label: "Vault" },
+        { id: "feed",      icon: "🍙", label: "Feed" },
+        { id: "pet",       icon: "🫳", label: "Pet" },
+        { id: "evolve",    icon: "✨", label: "Evolve" },
+        { id: "reminders", icon: "⏰", label: "Reminders" },
+        { id: "vault",     icon: "🫂", label: "Vault" },
       ],
     },
     {
@@ -240,7 +241,7 @@
   function doSub(catId: CatId, itemId: string) {
     const closeAfter = new Set([
       "memory:mood", "memory:today", "memory:jar", "memory:journey", "memory:recap", "memory:movie", "memory:future", "memory:note",
-      "care:feed", "care:pet", "care:evolve", "care:vault",
+      "care:feed", "care:pet", "care:evolve", "care:reminders", "care:vault",
       "play:battle", "play:switch", "play:random",
       "system:code", "system:quit",
     ]);
@@ -261,6 +262,7 @@
       case "care:feed":      onFeed();                 break;
       case "care:pet":       onPet();                  break;
       case "care:evolve":    onTogglePanel("log");     break; // log = capture the growing moment
+      case "care:reminders": onTogglePanel("nudge");   break;
       case "care:vault":     onTogglePanel("vault");   break;
       // Play
       case "play:battle":    onOpenBattle();           break;

@@ -10,13 +10,15 @@ export interface Creature {
   vibe: string;
 }
 
+// The first six — the classic starters + Pikachu, plus Abra and Gastly for the
+// quiet/mischief vibes. (Any of the full dex is still reachable later via Switch.)
 export const STARTERS: Creature[] = [
-  { id: "rowlet", name: "Rowlet", dexId: 722, vibe: "sleepy night owl" },
-  { id: "eevee", name: "Eevee", dexId: 133, vibe: "warm and loyal" },
-  { id: "gengar", name: "Gengar", dexId: 94, vibe: "chaotic goblin" },
+  { id: "squirtle", name: "Squirtle", dexId: 7, vibe: "cool-headed splash" },
+  { id: "charmander", name: "Charmander", dexId: 4, vibe: "small flame, big heart" },
+  { id: "bulbasaur", name: "Bulbasaur", dexId: 1, vibe: "steady green thumb" },
   { id: "pikachu", name: "Pikachu", dexId: 25, vibe: "classic spark" },
-  { id: "mudkip", name: "Mudkip", dexId: 258, vibe: "easygoing optimist" },
-  { id: "snorlax", name: "Snorlax", dexId: 143, vibe: "professional napper" }
+  { id: "abra", name: "Abra", dexId: 63, vibe: "half-asleep genius" },
+  { id: "gastly", name: "Gastly", dexId: 92, vibe: "mischief in the dark" }
 ];
 
 /** Animated sprite (Pokémon Showdown set — covers all generations). */
