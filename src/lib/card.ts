@@ -199,6 +199,27 @@ export function buildCard(s: CardState): string {
       @keyframes monPlay { from { transform: translateX(0); } to { transform: translateX(-${stripW.toFixed(2)}px); } }`
     : "";
 
+  // ── "Snow-globe" ground: a glowing base + an orbital star band, echoing the Alive renderer ──
+  // Stars sit on flat concentric ellipses around the pet's base; nearer ones (front) read bigger.
+  const gCx = 78, gCy = 150;
+  const groundStars = Array.from({ length: 22 }, (_, i) => {
+    const a = (i / 22) * Math.PI * 2 + (i % 3) * 0.5;
+    const band = 24 + (i % 3) * 15;             // three rings: ~24 / 39 / 54 px
+    const x = (gCx + Math.cos(a) * band).toFixed(1);
+    const y = (gCy + Math.sin(a) * band * 0.26).toFixed(1); // flat orbital plane
+    const front = Math.sin(a) * 0.5 + 0.5;      // 0 behind → 1 toward viewer
+    const r = (0.7 + front * 1.5).toFixed(1);   // nearer = bigger
+    const fill = i % 4 === 0 ? "#ffffff" : accent;
+    const dly = ((i * 0.41) % 3.4).toFixed(2);
+    const dur = (2.2 + (i % 5) * 0.55).toFixed(1);
+    return `<circle class="gstar" cx="${x}" cy="${y}" r="${r}" fill="${fill}" opacity="0.7" style="animation-delay:${dly}s;animation-duration:${dur}s"/>`;
+  }).join("");
+  const groundGlobe =
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="60" ry="18" fill="url(#groundGlow)"/>` +
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="54" ry="13" fill="none" stroke="${accent}" stroke-opacity="0.16" stroke-width="1"/>` +
+    `<ellipse cx="${gCx}" cy="${gCy}" rx="38" ry="9"  fill="none" stroke="${accent}" stroke-opacity="0.12" stroke-width="1"/>` +
+    groundStars;
+
   // ── Speech bubble (the companion's live thought) ─────────────────────────────
   const bubW = Math.min(340, 36 + s.thought.length * 6.8);
 
@@ -214,6 +235,13 @@ export function buildCard(s: CardState): string {
     <!-- Sprite glow -->
     <radialGradient id="sprGlow" cx="50%" cy="60%" r="50%">
       <stop offset="0%"   stop-color="${accent}" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Snow-globe ground glow (echoes the Alive renderer's lit base) -->
+    <radialGradient id="groundGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="${accent}" stop-opacity="0.32"/>
+      <stop offset="55%"  stop-color="${accent}" stop-opacity="0.10"/>
       <stop offset="100%" stop-color="${accent}" stop-opacity="0"/>
     </radialGradient>
 
@@ -300,6 +328,8 @@ export function buildCard(s: CardState): string {
         animation: glowPulse 4s ease-in-out infinite;
       }
 
+      .gstar { animation-name: gtwinkle; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
+      @keyframes gtwinkle { 0%,100% { opacity: 0.18; } 50% { opacity: 1; } }
       .pt { opacity: 0; animation: rise 4.4s ease-in-out infinite; }
       .bub { animation: bubFloat 5s ease-in-out infinite; }
       .aur  { animation: aurDrift  12s ease-in-out infinite alternate; }
@@ -388,8 +418,11 @@ export function buildCard(s: CardState): string {
   <!-- Sprite glow -->
   <ellipse class="sprGlow" cx="78" cy="96" rx="120" ry="108" fill="url(#sprGlow)"/>
 
-  <!-- Ground shadow (synced to monMove) -->
-  <ellipse class="shadow" cx="78" cy="152" rx="44" ry="6.5" fill="#000" fill-opacity="0.38"/>
+  <!-- "Snow-globe" ground: glowing base + faint orbit rings + a twinkling orbital star band -->
+  ${groundGlobe}
+
+  <!-- Ground contact shadow (synced to monMove) -->
+  <ellipse class="shadow" cx="78" cy="152" rx="40" ry="6" fill="#000" fill-opacity="0.3"/>
 
   <!-- Sparkle particles -->
   ${particleSvg}
