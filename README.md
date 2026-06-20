@@ -5,12 +5,12 @@
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
 <p align="center">
-  <img src="./assets/hearthmon-status.svg?v=1781744369" width="750"/>
+  <img src="./assets/hearthmon-status.svg?v=1781941905" width="750"/>
 </p>
 
-**Current Companion:** Mewtwo<br/>
+**Current Companion:** Venusaur<br/>
 **Mood:** Quietly Building<br/>
-**Status:** *"tinkering away"*<br/>
+**Status:** *"in a good rhythm"*<br/>
 
 *↑ This card is **alive** — Hearthmon writes it back into your repo as you build, so your profile breathes.*
 
