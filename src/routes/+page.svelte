@@ -2153,7 +2153,7 @@
   // embed the sprite as a base64 PNG so the card is self-contained (GitHub-safe)
   async function spriteDataUri(): Promise<string> {
     try {
-      const res = await fetch(fallbackUrl(dexId, isShiny));
+      const res = await fetch(megaForm ? formFallbackUrl(megaForm.formId, isShiny) : fallbackUrl(dexId, isShiny));
       if (!res.ok) return "";
       const bytes = new Uint8Array(await res.arrayBuffer());
       let bin = "";
@@ -2173,7 +2173,7 @@
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const IDC = (globalThis as any).ImageDecoder;
       if (!IDC) return null;
-      const res = await fetch(spriteUrl(dexId, isShiny), { mode: "cors" });
+      const res = await fetch(megaForm ? formSpriteUrl(megaForm.formId, isShiny) : spriteUrl(dexId, isShiny), { mode: "cors" });
       if (!res.ok) return null;
       const dec = new IDC({ data: await res.arrayBuffer(), type: "image/gif" });
       await dec.tracks.ready;
@@ -2270,8 +2270,9 @@
               : { icon: "✨", label: "quietly becoming real" };
     const chips = [state, arc];
 
-    // the companion, named — lives INSIDE the card (one artifact → never desyncs)
-    const partner = displayName(dexEntry(dexId)?.name ?? petName);
+    // the companion, named — lives INSIDE the card (one artifact → never desyncs).
+    // reflect the active special form on the card (Mega Venusaur, not Venusaur).
+    const partner = megaForm ? megaForm.label : displayName(dexEntry(dexId)?.name ?? petName);
 
     // an emotional footer, never a metric
     const footer =
