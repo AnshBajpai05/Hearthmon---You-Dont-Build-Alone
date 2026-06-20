@@ -1650,6 +1650,7 @@
   let audioEnergy = $state(0); // smoothed overall loudness 0..1
   let audioBeat = $state(0); // increments on each detected beat (PixiStage reacts)
   let audioStrength = $state(0); // 0..1 strength of the latest beat (drops ≈ 1)
+  let audioMusical = $state(0); // 0..1 confidence the audio is MUSIC (regular onsets + bass), not speech
   // Classic music reactivity (parity with Alive): energy → a gentle bob, a beat → a soft scale
   // pump. Companion first, visualizer second — small on purpose. Only computed in Classic mode.
   let audioBob = $derived(renderMode === "classic" && audioAware ? Math.min(3, audioEnergy * 3) : 0);
@@ -1674,6 +1675,10 @@
   let _bassAvg = 0;
   let _lastBeatAt = 0;
   let _musicSlow = 0; // slow EMA (~3s) of loudness → calm vs hype classification
+  let _pB = 0, _pM = 0, _pH = 0; // previous-frame band magnitudes (for spectral flux)
+  let _fluxAvg = 0; // adaptive onset baseline (recent flux average)
+  let _voiceish = 0; // EMA of mid-dominant frames → speech-likeness (voice sits in the mid band)
+  let _intervals: number[] = []; // recent inter-onset gaps (ms) → tempo regularity
   let lastMusicLineAt = 0;
   // current vibe mode set when a music line fires — drives vibeTick animations for 30s
   let musicVibe = $state<"none" | "calm" | "chill" | "hype">("none");
@@ -1686,28 +1691,49 @@
     clearTimeout(vibeReactionEndTimer);
     vibeReactionTimer = undefined;
   }
-  function onAudioBands(b: number, m: number, _h: number, lvl: number) {
+  function onAudioBands(b: number, m: number, h: number, lvl: number) {
     audioEnergy = +(audioEnergy + 0.18 * (lvl - audioEnergy)).toFixed(3);
     _musicSlow += 0.01 * (lvl - _musicSlow);
     _bassAvg += 0.08 * (b - _bassAvg); // running bass floor
+    // speech sits mostly in the MID band with little bass; track how mid-dominant we are over time
+    _voiceish += 0.03 * ((m > b * 1.15 && m > h * 1.15 ? 1 : 0) - _voiceish);
+    // ── multi-band spectral flux onset (bass kicks + snare/hi-hats, not just bass) ──
+    const flux = Math.max(0, b - _pB) * 1.0 + Math.max(0, m - _pM) * 0.8 + Math.max(0, h - _pH) * 0.6;
+    _pB = b; _pM = m; _pH = h;
+    _fluxAvg += 0.15 * (flux - _fluxAvg); // adaptive threshold baseline
     const now = performance.now();
-    // onset: a bass spike above the floor, with a refractory gap (no 140bpm seizure)
-    if (b > _bassAvg * 1.35 + 0.06 && now - _lastBeatAt > 180) {
+    const gap = now - _lastBeatAt;
+    if (flux > _fluxAvg * 1.7 + 0.02 && gap > 140) {
+      // a real onset: clearly above the adaptive baseline, past the refractory window
+      if (gap > 250 && gap < 1500) { _intervals.push(gap); if (_intervals.length > 10) _intervals.shift(); } // tempo
       _lastBeatAt = now;
-      audioStrength = Math.min(1, (b - _bassAvg) / Math.max(0.12, _bassAvg)) * (0.6 + 0.4 * m);
+      audioStrength = Math.min(1, flux / (_fluxAvg * 2.2 + 0.05)) * (0.7 + 0.3 * m);
       audioBeat++;
+      // music confidence: steady onset spacing (low CV) + actual bass presence → music, not speech/noise
+      if (_intervals.length >= 4) {
+        const mean = _intervals.reduce((a, c) => a + c, 0) / _intervals.length;
+        const varc = _intervals.reduce((a, c) => a + (c - mean) ** 2, 0) / _intervals.length;
+        const cv = Math.sqrt(varc) / Math.max(1, mean);
+        const regular = Math.max(0, 1 - cv * 1.6);
+        const bass = Math.min(1, _bassAvg * 3.5);
+        audioMusical = +Math.min(1, regular * (0.45 + 0.55 * bass)).toFixed(3);
+      }
+    } else if (gap > 1800) {
+      audioMusical *= 0.97; // no recent beats → confidence decays (speech / silence)
+      if (audioMusical < 0.02) { audioMusical = 0; _intervals.length = 0; }
     }
   }
   async function setAudioAware(on: boolean) {
     audioAware = on;
     await setMeta("audio_aware", on ? "1" : "0");
     try { await invoke("set_audio_aware", { on }); } catch { /* not under Tauri */ }
-    if (!on) { audioEnergy = 0; audioStrength = 0; }
+    if (!on) { audioEnergy = 0; audioStrength = 0; audioMusical = 0; _intervals.length = 0; }
   }
   // ~30s: a short, grounded line about whatever's playing — calm vs hype by energy.
   // Also kicks off a 30s vibe mode that drives matching animations via vibeTick.
   function maybeMusicLine() {
     if (!audioAware || audioEnergy < 0.06) return;
+    if (audioMusical < 0.25 && _voiceish > 0.55) return; // looks like speech/voice, not music — stay quiet
     if (phase !== "home" || battleOpen || evoActive || evoOffer || switchFx !== "none") return;
     if (focusMode || petState === "sleeping" || panel !== "none") return;
     if (Date.now() - lastMusicLineAt < 28_000) return;
@@ -4203,6 +4229,7 @@
           {audioEnergy}
           {audioBeat}
           {audioStrength}
+          {audioMusical}
         />
       </div>
     {/if}

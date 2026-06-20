@@ -37,6 +37,7 @@
     audioEnergy?: number; // 0..1 smoothed system-audio loudness (music awareness)
     audioBeat?: number; // increments on each detected beat
     audioStrength?: number; // 0..1 strength of the latest beat
+    audioMusical?: number; // 0..1 confidence it's MUSIC (vs speech) — gates the drop eruption
     spriteOverride?: string | null; // mega/special form: a full sprite URL replacing the dex sprite
     spriteFallback?: string | null; // if spriteOverride fails, drop to THIS (the form's own static) — not the base
     typeOverride?: string | null; // mega/special form element shift → biome + ambient
@@ -94,6 +95,7 @@
     audioEnergy = 0,
     audioBeat = 0,
     audioStrength = 0,
+    audioMusical = 0,
     spriteOverride = null,
     spriteFallback = null,
     typeOverride = null,
@@ -1143,15 +1145,17 @@
             squash.nudge(0.5 + s * 1.6); // a little body bounce on the beat
             beatT = 0.32;
             beatS = s;
-            if (petType === "electric") petLight = Math.max(petLight, 0.25 + 0.45 * s);
-            if (petType === "electric" && s > 0.82) beatStrike = true; // a beat → GLOBE strike (stays lively)
-            // The GROUND eruption is reserved for a real MUSICAL drop: a very strong bass beat WHILE
-            // overall energy is high (sustained, rhythmic loudness) + a long cooldown. Loopback can't
-            // truly tell music from a YouTube video, but talk/most video audio rarely sustains this,
-            // so the floor stops erupting on every loud sound and the drop keeps its impact.
-            if (petType === "electric" && s > 0.9 && audioEnergy > 0.45 && superCd <= 0) {
-              groundErupt = true;
-              superCd = 16 + Math.random() * 10; // ≥16s between ground eruptions
+            petLight = Math.max(petLight, 0.2 + 0.4 * s); // the beat lights the body (every type now)
+            if (petType === "electric" && s > 0.82) beatStrike = true; // electric: a GLOBE strike (its signature)
+            // A real MUSICAL DROP: a very strong onset + sustained energy + CONFIRMED music (regular
+            // onsets + bass, not speech — audioMusical) + a long cooldown. Now fires for EVERY type,
+            // flavoured by lightCol (the ground discharge is already type-tinted), not just electric.
+            if (s > 0.9 && audioEnergy > 0.45 && audioMusical > 0.5 && superCd <= 0) {
+              groundErupt = true; // globe ground discharge (type-tinted, when the globe is on)
+              superCd = 16 + Math.random() * 10; // ≥16s between drops
+              squash.nudge(2.2); // a big body pop on the drop
+              petLight = Math.max(petLight, 0.6);
+              spawnSparks("#" + lightCol.toString(16).padStart(6, "0"), "burst", 1); // type-coloured burst
             }
           }
         }
