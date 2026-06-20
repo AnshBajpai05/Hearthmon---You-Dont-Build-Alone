@@ -350,7 +350,7 @@
   let megaOffer = $state(false);
   let megaSince = 0; // when the current mon became active (continuous-session clock)
   let megaOfferedDex = -1; // offer once per mon-session, don't pester
-  const MEGA_MIN_MS = 15_000; // ⚠️ TEMP for testing — RESTORE to 60 * 60_000 (1hr) before shipping
+  const MEGA_MIN_MS = 60 * 60_000; // one continuous hour together before the mega gift is offered
   // ---- evolution ceremony ----
   let evoOffer = $state(false); // the gentle "ready to grow?" prompt
   let evoActive = $state(false); // the white-silhouette ceremony is playing
