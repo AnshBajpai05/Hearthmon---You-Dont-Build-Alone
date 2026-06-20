@@ -13,8 +13,9 @@
     displayName,
     type DexEntry
   } from "../sprites";
-  import { maxHpFor, firstSide, calcTurn, effText } from "../battle";
+  import { maxHpFor, firstSide, calcTurn, effText, statsFor } from "../battle";
   import { chooseMove } from "../combat/ai";
+  import { speciesIdentity } from "../combat/identity";
   import { playCry, voiceCry, playVoiceClip, thump } from "../sound";
   import {
     animKind,
@@ -60,6 +61,11 @@
   let intro = $state(false);
   let srcL = $state("");
   let srcR = $state("");
+
+  // ---- encounters (v5): framing + difficulty over the same auto-spar ----
+  let encounter = $state<"spar" | "wild" | "trainer" | "boss" | "legendary">("spar");
+  let introLine = $state(""); // framing shown during the intro ("A wild X appeared!")
+  let hpMul = 1; // boss/legendary tankiness (encounter difficulty — a fatter HP pool, not a stat edit)
 
   // ---- fx state ----
   let arenaEl = $state<HTMLDivElement | null>(null);
@@ -131,12 +137,61 @@
     impactFx = null;
   }
 
+  // ── Encounters — auto-pick the opponent by kind, set difficulty + intro framing, then spar.
+  // A framed delight to WATCH (wild/trainer/boss/legendary), never a game mode (SOUL / §10). ──
+  function bst(idn: number): number {
+    const s = statsFor(idn);
+    return s.hp + s.atk + s.def + s.spa + s.spd + s.spe;
+  }
+  let legendPool: number[] = [];
+  let bossPool: number[] = [];
+  function ensurePools() {
+    if (legendPool.length) return;
+    for (const e of POKEDEX) {
+      const idn = speciesIdentity(e.id);
+      if (idn.legendary) legendPool.push(e.id);
+      else if (idn.stage >= 2 && bst(e.id) >= 540) bossPool.push(e.id); // pseudo-legend tier
+    }
+  }
+  function randEntry(pool: number[], excl?: number): DexEntry | null {
+    const p = pool.filter((x) => x !== excl);
+    return p.length ? (dexEntry(p[Math.floor(Math.random() * p.length)]) ?? null) : null;
+  }
+  function wildEntry(excl?: number): DexEntry {
+    let e = randomEntry(excl);
+    for (let i = 0; i < 6 && speciesIdentity(e.id).legendary; i++) e = randomEntry(excl); // wild ≠ legendary
+    return e;
+  }
+  function startEncounter(kind: "wild" | "trainer" | "boss" | "legendary") {
+    ensurePools();
+    if (!selL) selL = defaultSelL;
+    const excl = selL?.id;
+    let foe: DexEntry | null;
+    if (kind === "legendary") { foe = randEntry(legendPool, excl); hpMul = 2.0; }
+    else if (kind === "boss") { foe = randEntry(bossPool, excl); hpMul = 1.6; }
+    else if (kind === "trainer") {
+      foe = wildEntry(excl);
+      for (let i = 0; i < 4 && speciesIdentity(foe.id).stage < 2; i++) foe = wildEntry(excl); // a trained, evolved mon
+      hpMul = 1;
+    } else { foe = wildEntry(excl); hpMul = 1; } // wild
+    if (!foe) foe = wildEntry(excl); // empty pool → fall back to any wild
+    selR = foe;
+    encounter = kind;
+    const nm = disp(foe);
+    introLine =
+      kind === "wild" ? `A wild ${nm} appeared!`
+      : kind === "trainer" ? `A Trainer sent out ${nm}!`
+      : kind === "boss" ? `Boss battle — ${nm}!`
+      : `⚡ The Legendary ${nm} challenges you!`;
+    startBattle();
+  }
+
   async function startBattle() {
     if (!selL || !selR) return;
     srcL = spriteBackUrl(selL.id);
     srcR = spriteUrl(selR.id);
     maxL = maxHpFor(selL.id);
-    maxR = maxHpFor(selR.id);
+    maxR = Math.round(maxHpFor(selR.id) * hpMul); // boss/legendary get a fatter HP pool (difficulty)
     hpL = ghostL = maxL;
     hpR = ghostR = maxR;
     animL = animR = "idle";
@@ -146,7 +201,7 @@
     clearFx();
     phase = "battle";
     intro = true;
-    msg = "";
+    msg = introLine; // encounter framing during the intro ("" for a plain spar)
     playVoiceClip(["lets-have-a-battle", "lets-do-this", "i-got-this"], 0.85, 0.7);
     setTimeout(() => selL && voiceCry(selL.id, disp(selL), 0.3), 1100);
     setTimeout(() => selR && voiceCry(selR.id, disp(selR), 0.3), 1950);
@@ -353,6 +408,9 @@
     phase = "setup";
     msg = "";
     confetti = [];
+    encounter = "spar";
+    hpMul = 1;
+    introLine = "";
   }
 </script>
 
@@ -362,6 +420,13 @@
   {#if phase === "setup"}
     <div class="setup">
       <h2>⚔ Battle</h2>
+      <div class="encounters">
+        <button class="enc enc-wild" onclick={() => startEncounter("wild")}>🌿 Wild</button>
+        <button class="enc enc-trainer" onclick={() => startEncounter("trainer")}>🧢 Trainer</button>
+        <button class="enc enc-boss" onclick={() => startEncounter("boss")}>👑 Boss</button>
+        <button class="enc enc-legendary" onclick={() => startEncounter("legendary")}>⚡ Legendary</button>
+      </div>
+      <div class="enchint">quick encounter — auto-picks a foe · or hand-pick below</div>
       <div class="cols">
         {#each [{ side: "L" as const }, { side: "R" as const }] as col (col.side)}
           <div class="col">
@@ -413,12 +478,16 @@
           </div>
         {/each}
       </div>
-      <button class="fight" disabled={!selL || !selR} onclick={startBattle}>FIGHT!</button>
+      <button class="fight" disabled={!selL || !selR} onclick={() => { encounter = "spar"; hpMul = 1; introLine = ""; startBattle(); }}>FIGHT!</button>
     </div>
   {:else}
     <div class="arena" class:zoom bind:this={arenaEl}>
       <div class="platform pR"></div>
       <div class="platform pL"></div>
+
+      {#if encounter === "boss" || encounter === "legendary"}
+        <div class="encbadge enc-{encounter}">{encounter === "legendary" ? "⚡ LEGENDARY" : "👑 BOSS"}</div>
+      {/if}
 
       {#if selR}
         <div class="hpbox boxR">
@@ -590,6 +659,54 @@
     padding: 12px 14px;
     height: 100%;
     box-sizing: border-box;
+  }
+  /* encounters — quick framed battles (auto-pick the foe) */
+  .encounters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .enc {
+    padding: 6px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: #f6f1ff;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.12s, background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  }
+  .enc:hover { transform: translateY(-1px); background: rgba(255, 255, 255, 0.1); }
+  .enc-wild:hover { border-color: #6fcf5f; }
+  .enc-trainer:hover { border-color: #58a8f0; }
+  .enc-boss:hover { border-color: #f0b66a; }
+  .enc-legendary:hover { border-color: #ffd94a; box-shadow: 0 0 12px rgba(255, 217, 74, 0.35); }
+  .enchint { font-size: 9.5px; color: #8d82ab; }
+  .encbadge {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 3px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    z-index: 6;
+    pointer-events: none;
+  }
+  .encbadge.enc-boss {
+    background: rgba(240, 182, 106, 0.16);
+    color: #f0b66a;
+    border: 1px solid rgba(240, 182, 106, 0.5);
+  }
+  .encbadge.enc-legendary {
+    background: rgba(255, 217, 74, 0.16);
+    color: #ffd94a;
+    border: 1px solid rgba(255, 217, 74, 0.55);
+    box-shadow: 0 0 14px rgba(255, 217, 74, 0.3);
   }
   h2 {
     margin: 0;
