@@ -38,6 +38,9 @@
     onToggleSoundPanel: () => void;
     onQuit:             () => void;
     onPushCard:         () => void;
+    // dev: show/hide the 🧠 audio-class (mus/spch) readout — button only renders in dev builds
+    audioVoteOn?:       boolean;
+    onToggleAudioVote?: () => void;
     // pet reaction hooks
     onMenuOpen:       () => void;     // called when menu blooms
     onDirHint:        (d: 1|-1|0) => void; // pet turns toward hovered cat
@@ -48,8 +51,11 @@
     onTogglePanel, onFeed, onPet, onOpenBattle, onSwitchRandom,
     onToggleMute, onToggleNight, onToggleFocus, onToggleRoam, onCycleMode, onCycleBg, onCycleRoom, onCycleWeather,
     onNudgeScale, onToggleSoundPanel, onQuit, onPushCard,
+    audioVoteOn, onToggleAudioVote,
     onMenuOpen, onDirHint,
   }: Props = $props();
+
+  const DEV = import.meta.env.DEV; // gate the dev-only audio-vote toggle button
 
   // ─── geometry ────────────────────────────────────────────
   // Rings scale with the pet so the category buttons always bloom just OUTSIDE
@@ -311,6 +317,15 @@
   <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>+</button>
   <button class="quick-pill" title="Smaller" aria-label="Smaller" onclick={() => onNudgeScale(-0.15)}>－</button>
   <button class="quick-pill" title="Random companion" aria-label="Random companion" onclick={onSwitchRandom}>🎲</button>
+  {#if DEV && onToggleAudioVote}
+    <button
+      class="quick-pill"
+      class:off={!audioVoteOn}
+      title={audioVoteOn ? "Hide audio vote (mus/spch)" : "Show audio vote (mus/spch)"}
+      aria-label="Toggle audio vote readout"
+      onclick={onToggleAudioVote}
+    >🎶</button>
+  {/if}
 </div>
 
 <!-- ─── Mute safety pill — always visible ─────────────────── -->
@@ -437,6 +452,7 @@
     transform: translateY(-1px);
   }
   .quick-pill:active { transform: translateY(0) scale(0.92); }
+  .quick-pill.off { opacity: 0.4; filter: grayscale(1); } /* audio-vote toggle: dim when hidden */
 
   /* Mute pill — always shown (safety action) */
   .mute-pill {

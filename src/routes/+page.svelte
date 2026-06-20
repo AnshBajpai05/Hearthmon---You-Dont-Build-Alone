@@ -81,6 +81,7 @@
   import { quirkLine } from "$lib/quirks";
   import { deriveTemperament, driftLine, type Temperament } from "$lib/drift";
   import { buildCard } from "$lib/card";
+  import { momentScore, type AudioSourceCat } from "$lib/audio_moment";
   import { biomeForType } from "$lib/biomes";
   import { daysTogether, bondStageIndex, BOND_STAGES } from "$lib/bond";
   import {
@@ -1557,7 +1558,7 @@
   let lastFrictionCue = $state(0);
   // foreground-app rhythm (process NAMES only — never titles/keystrokes/content)
   let flowAware = $state(true);
-  let curCat = ""; // editor / terminal / browser / other
+  let curCat = $state(""); // foreground category: editor / terminal / browser / music / comms / other
   let curCatSince = 0;
   let switchTimes: number[] = []; // recent app-switch timestamps
 
@@ -1651,6 +1652,41 @@
   let audioBeat = $state(0); // increments on each detected beat (PixiStage reacts)
   let audioStrength = $state(0); // 0..1 strength of the latest beat (drops ≈ 1)
   let audioMusical = $state(0); // 0..1 confidence the audio is MUSIC (regular onsets + bass), not speech
+  const DEV = import.meta.env.DEV; // dev-only audio HUD (compiled out of production builds)
+  let showAudioVote = $state(true); // quickbar 🧠 toggles the mus/spch readout (persisted)
+  async function setShowAudioVote(v: boolean) {
+    showAudioVote = v;
+    await setMeta("show_audio_vote", v ? "1" : "0");
+  }
+  let _recBuf: string[] | null = null; // dev A/B recorder: buffers CSV rows of live audio features
+  let _recLabel = $state(""); // HUD status for the recorder
+  // ── Moment Engine state ──
+  let audioSustain = $state(0); // seconds the audio has stayed music-like (persistence vote)
+  let _sustainStart = 0;
+  let corrections = $state<Record<string, number>>({}); // learned per-source bias from user taps
+  let correctChip = $state<{ source: string } | null>(null); // active-learning prompt (rare, gentle)
+  let _lastAskAt = 0;
+  let audioSrcReal = $state(""); // WASAPI: the process category actually EMITTING audio (Layer 2)
+  let audioSrcName = $state(""); // WASAPI: the exe name of that process (diagnostic + future classify)
+  // YAMNet audio-class vote (Rust): independent sigmoid probs this 0.96s is Music / Speech. The
+  // strong vote that separates a talking video from real music — what the heuristics can't do.
+  let audioMusicProb = $state(0);
+  let audioSpeechProb = $state(0);
+  // the source vote: the real audio-emitting process (WASAPI) beats the foreground-app guess — it
+  // catches background Spotify while you code, which the foreground never could.
+  const audioSrc = $derived((audioSrcReal || curCat) as AudioSourceCat);
+  // Moment Engine: combine the votes (audio + source + persistence + learned corrections) into one
+  // listening confidence. YAMNet becomes one more vote here later, not a rewrite.
+  const listening = $derived(
+    momentScore({
+      musical: audioMusical,
+      source: audioSrc,
+      sustainedS: audioSustain,
+      bias: corrections[audioSrc] ?? 0,
+      yamnetMusic: audioMusicProb,
+      yamnetSpeech: audioSpeechProb
+    })
+  );
   // Classic music reactivity (parity with Alive): energy → a gentle bob, a beat → a soft scale
   // pump. Companion first, visualizer second — small on purpose. Only computed in Classic mode.
   let audioBob = $derived(renderMode === "classic" && audioAware ? Math.min(3, audioEnergy * 3) : 0);
@@ -1678,7 +1714,19 @@
   let _pB = 0, _pM = 0, _pH = 0; // previous-frame band magnitudes (for spectral flux)
   let _fluxAvg = 0; // adaptive onset baseline (recent flux average)
   let _voiceish = 0; // EMA of mid-dominant frames → speech-likeness (voice sits in the mid band)
-  let _intervals: number[] = []; // recent inter-onset gaps (ms) → tempo regularity
+  let _lastKickAt = 0; // last BASS-onset (kick) time — tempo regularity is measured on KICKS only
+  let _kickIvs: number[] = []; // recent kick-to-kick gaps (ms); steady gaps = a real tempo = music
+  let _eMean = 0, _eVar = 0, _steadyStart = 0, _lastLoudAt = 0; // energy stats + steady-loud timer
+  // STALENESS WATCHDOG: WASAPI loopback stops delivering callbacks on a true pause/stop, so EVERY
+  // derived audio value freezes at its last reading (musical=1.00, listening=react) and the orb keeps
+  // "reacting" to nothing. Track the last frame time; if frames stop arriving, force everything to rest.
+  let _lastBandsAt = 0;
+  let _audioStaleTimer: ReturnType<typeof setInterval> | undefined;
+  function resetAudioState() {
+    audioEnergy = 0; audioMusical = 0; audioStrength = 0; audioSustain = 0;
+    _kickIvs.length = 0; _steadyStart = 0; _sustainStart = 0; _voiceish = 0;
+    audioMusicProb = 0; audioSpeechProb = 0; // drop the stale YAMNet vote when audio stops
+  }
   let lastMusicLineAt = 0;
   // current vibe mode set when a music line fires — drives vibeTick animations for 30s
   let musicVibe = $state<"none" | "calm" | "chill" | "hype">("none");
@@ -1692,60 +1740,150 @@
     vibeReactionTimer = undefined;
   }
   function onAudioBands(b: number, m: number, h: number, lvl: number) {
+    _lastBandsAt = performance.now(); // watchdog: prove frames are still flowing
     audioEnergy = +(audioEnergy + 0.18 * (lvl - audioEnergy)).toFixed(3);
     _musicSlow += 0.01 * (lvl - _musicSlow);
     _bassAvg += 0.08 * (b - _bassAvg); // running bass floor
     // speech sits mostly in the MID band with little bass; track how mid-dominant we are over time
     _voiceish += 0.03 * ((m > b * 1.15 && m > h * 1.15 ? 1 : 0) - _voiceish);
-    // ── multi-band spectral flux onset (bass kicks + snare/hi-hats, not just bass) ──
+    const now = performance.now();
+    // ── visual beat: multi-band spectral flux (bass + snare/hi-hats — busy/rich is fine for FX) ──
     const flux = Math.max(0, b - _pB) * 1.0 + Math.max(0, m - _pM) * 0.8 + Math.max(0, h - _pH) * 0.6;
     _pB = b; _pM = m; _pH = h;
-    _fluxAvg += 0.15 * (flux - _fluxAvg); // adaptive threshold baseline
-    const now = performance.now();
-    const gap = now - _lastBeatAt;
-    if (flux > _fluxAvg * 1.7 + 0.02 && gap > 140) {
-      // a real onset: clearly above the adaptive baseline, past the refractory window
-      if (gap > 250 && gap < 1500) { _intervals.push(gap); if (_intervals.length > 10) _intervals.shift(); } // tempo
+    _fluxAvg += 0.15 * (flux - _fluxAvg);
+    if (flux > _fluxAvg * 1.6 + 0.02 && now - _lastBeatAt > 120) {
       _lastBeatAt = now;
       audioStrength = Math.min(1, flux / (_fluxAvg * 2.2 + 0.05)) * (0.7 + 0.3 * m);
       audioBeat++;
-      // music confidence: steady onset spacing (low CV) + actual bass presence → music, not speech/noise
-      if (_intervals.length >= 4) {
-        const mean = _intervals.reduce((a, c) => a + c, 0) / _intervals.length;
-        const varc = _intervals.reduce((a, c) => a + (c - mean) ** 2, 0) / _intervals.length;
-        const cv = Math.sqrt(varc) / Math.max(1, mean);
-        const regular = Math.max(0, 1 - cv * 1.6);
-        const bass = Math.min(1, _bassAvg * 3.5);
-        audioMusical = +Math.min(1, regular * (0.45 + 0.55 * bass)).toFixed(3);
-      }
-    } else if (gap > 1800) {
-      audioMusical *= 0.97; // no recent beats → confidence decays (speech / silence)
-      if (audioMusical < 0.02) { audioMusical = 0; _intervals.length = 0; }
     }
+    // ── musical confidence: measured on the KICK (bass onset) ONLY. A kick is ~one hit per beat, so
+    // its gaps reflect the real TEMPO; multi-band onsets fire on subdivisions and can't gauge tempo. ──
+    if (b > _bassAvg * 1.4 + 0.05 && now - _lastKickAt > 200) {
+      const gap = now - _lastKickAt;
+      _lastKickAt = now;
+      if (gap > 240 && gap < 1200) { _kickIvs.push(gap); if (_kickIvs.length > 8) _kickIvs.shift(); }
+      if (_kickIvs.length >= 4) {
+        const mean = _kickIvs.reduce((a, c) => a + c, 0) / _kickIvs.length;
+        const varc = _kickIvs.reduce((a, c) => a + (c - mean) ** 2, 0) / _kickIvs.length;
+        const cv = Math.sqrt(varc) / Math.max(1, mean); // steady tempo = low CV
+        const regular = Math.max(0, 1 - cv * 1.4);
+        const bass = Math.min(1, _bassAvg * 3);
+        audioMusical = +Math.min(1, regular * (0.55 + 0.45 * bass)).toFixed(3);
+      }
+    } else if (now - _lastKickAt > 2000) {
+      audioMusical *= 0.95; // no steady kick lately → confidence decays (talk / silence)
+      if (audioMusical < 0.02) { audioMusical = 0; _kickIvs.length = 0; }
+    }
+    // STEADINESS vote: heavily-compressed music has NO relative bass spikes (the kick detector goes
+    // blind → m=0), but it IS loud + sustained + low-variance; speech dips between words. So treat
+    // "loud, steady, uninterrupted" as music-like and fold it into the confidence (fixes YouTube
+    // Music / Spotify-in-a-PWA where the kick path reads 0).
+    _eMean += 0.05 * (audioEnergy - _eMean);
+    _eVar += 0.05 * ((audioEnergy - _eMean) ** 2 - _eVar);
+    // loud + not-wildly-varying = music-like. Brief dips (a song's breath) are tolerated via a 0.7s
+    // grace; only a real gap (speech between sentences) resets the timer.
+    if (audioEnergy > 0.12 && _eVar < 0.02) {
+      _lastLoudAt = now;
+      if (!_steadyStart) _steadyStart = now;
+    } else if (now - _lastLoudAt > 700) {
+      _steadyStart = 0;
+    }
+    // SPEECH GUARD: a continuous monologue (YouTube tutorial, a cooking video) is ALSO loud + steady,
+    // so steadyMusic alone reads it as music. _voiceish (mid-band-dominant = voice) tells them apart —
+    // gate the steady-music vote by it so speech can't pin musical high. The kick-tempo path is left
+    // intact (speech has no steady kick), so real music with low _voiceish is unaffected.
+    const steadyMusic =
+      _steadyStart ? Math.min(1, (now - _steadyStart) / 1000 / 5) * (1 - 0.9 * _voiceish) : 0; // ~1 after ~5s
+    audioMusical = +Math.max(audioMusical, steadyMusic).toFixed(3);
+    // persistence: count how long the audio has stayed music-LIKE (only accrues while musical>0.4,
+    // so a talking tutorial never builds up → the Moment Engine separates code+music from code+talk)
+    if (audioMusical > 0.4) { if (!_sustainStart) _sustainStart = now; } else { _sustainStart = 0; }
+    audioSustain = _sustainStart ? +((now - _sustainStart) / 1000).toFixed(1) : 0;
+    if (_recBuf) {
+      _recBuf.push(
+        [now | 0, b.toFixed(4), m.toFixed(4), h.toFixed(4), lvl.toFixed(4), audioEnergy, audioMusical,
+          audioBeat, audioStrength.toFixed(3), _bassAvg.toFixed(3), _voiceish.toFixed(3), _kickIvs.length].join(",")
+      );
+    }
+  }
+  // Dev A/B recorder: capture ~18s of live audio features to a CSV the agent can read. Label only
+  // A or B — the recording never knows (nor is told) whether it's music or speech. Reuses write_card.
+  function recordSample(label: string) {
+    if (_recBuf) return; // already recording
+    _recBuf = ["t,bass,mid,high,lvl,energy,musical,beat,strength,bassAvg,voiceish,kicks"];
+    const DUR = 60; // seconds — long enough to capture a real rhythmic pattern
+    let left = DUR;
+    _recLabel = `rec ${label} · ${left}s`;
+    const cd = setInterval(() => { left -= 1; _recLabel = `rec ${label} · ${left}s`; }, 1000);
+    setTimeout(async () => {
+      clearInterval(cd);
+      const csv = (_recBuf ?? []).join("\n");
+      _recBuf = null;
+      const path = `f:/AMRITA ALL SEMESTER/projects/Pokemon Widget/hearthmon/_audio_${label}.csv`;
+      try {
+        await invoke("write_card", { path, svg: csv });
+        _recLabel = `${label} saved ✓`;
+      } catch (e) {
+        _recLabel = `err: ${e}`;
+      }
+      setTimeout(() => (_recLabel = ""), 5000);
+    }, DUR * 1000);
   }
   async function setAudioAware(on: boolean) {
     audioAware = on;
     await setMeta("audio_aware", on ? "1" : "0");
     try { await invoke("set_audio_aware", { on }); } catch { /* not under Tauri */ }
-    if (!on) { audioEnergy = 0; audioStrength = 0; audioMusical = 0; _intervals.length = 0; }
+    clearInterval(_audioStaleTimer);
+    if (on) {
+      _lastBandsAt = performance.now();
+      // if no audio frame has arrived for ~800ms, the source paused/stopped → snap back to rest so the
+      // companion stops reacting to silence. (~2-3 missed frames at the ~30Hz Rust emit rate.)
+      _audioStaleTimer = setInterval(() => {
+        if (performance.now() - _lastBandsAt > 800 && (audioEnergy > 0 || audioMusical > 0)) resetAudioState();
+      }, 300);
+    } else {
+      resetAudioState();
+    }
   }
-  // ~30s: a short, grounded line about whatever's playing — calm vs hype by energy.
-  // Also kicks off a 30s vibe mode that drives matching animations via vibeTick.
-  function maybeMusicLine() {
-    if (!audioAware || audioEnergy < 0.06) return;
-    if (audioMusical < 0.25 && _voiceish > 0.55) return; // looks like speech/voice, not music — stay quiet
-    if (phase !== "home" || battleOpen || evoActive || evoOffer || switchFx !== "none") return;
-    if (focusMode || petState === "sleeping" || panel !== "none") return;
+  function musicEnvOk(): boolean {
+    return (
+      audioAware && audioEnergy >= 0.06 && phase === "home" && !battleOpen && !evoActive &&
+      !evoOffer && switchFx === "none" && !focusMode && petState !== "sleeping" && panel === "none"
+    );
+  }
+  // a short grounded line about what's playing (calm/chill/hype by slow energy) + a 30s vibe mode.
+  function sayMusicLine() {
     if (Date.now() - lastMusicLineAt < 28_000) return;
     lastMusicLineAt = Date.now();
     const kind = _musicSlow > 0.45 ? "hype" : _musicSlow < 0.22 ? "calm" : "chill";
     const bank = kind === "hype" ? musicHypeLines : kind === "calm" ? musicCalmLines : musicChillLines;
     say(pick(bank), 7000);
-    // enter vibe mode for 30s; clear any running reaction so a fresh one picks immediately
     clearTimeout(musicVibeTimer);
     clearVibeReaction();
     musicVibe = kind;
     musicVibeTimer = setTimeout(() => { musicVibe = "none"; clearVibeReaction(); }, 30_000);
+  }
+  // ~30s: the Moment Engine decides. react → music line + vibe; ask (uncertain) → rarely surface a
+  // gentle "is this music?" the user answers (active learning); quiet → nothing.
+  function maybeMusicLine() {
+    if (!musicEnvOk()) return;
+    if (listening.band === "react") sayMusicLine();
+    else if (listening.band === "ask") maybeAskCorrection();
+  }
+  function maybeAskCorrection() {
+    if (correctChip || Date.now() - _lastAskAt < 15 * 60_000) return; // rare — never nag (soul)
+    _lastAskAt = Date.now();
+    correctChip = { source: audioSrc || "other" };
+    setTimeout(() => { if (correctChip) correctChip = null; }, 14_000); // auto-dismiss, no pressure
+  }
+  function recordCorrection(verdict: "music" | "not") {
+    const src = correctChip?.source ?? audioSrc ?? "other";
+    correctChip = null;
+    const cur = corrections[src] ?? 0;
+    const next = Math.max(-1, Math.min(1, cur + (verdict === "music" ? 0.35 : -0.35)));
+    corrections = { ...corrections, [src]: next };
+    void setMeta("audio_corr", JSON.stringify(corrections)); // learns YOUR setup over time
+    if (verdict === "music" && musicEnvOk()) sayMusicLine(); // honour the confirmation right now
   }
 
   // Sustains a picked reaction for 10s by repeating `action` every `repeatMs`.
@@ -2548,6 +2686,7 @@
       flowAware = (await getMeta("flow_aware")) !== "0"; // foreground flow sensing (default on)
       try { await invoke("set_flow_aware", { on: flowAware }); } catch { /* not under Tauri */ }
       if ((await getMeta("audio_aware")) === "1") await setAudioAware(true); // music awareness (default off)
+      try { const c = await getMeta("audio_corr"); if (c) corrections = JSON.parse(c); } catch { /* learned audio corrections */ }
       {
         const lp = (await getMeta("train_log_path")) ?? "";
         if (lp) {
@@ -2582,6 +2721,7 @@
       nightForced = (await getMeta("night_forced")) === "1";
       bgStyle = (await getMeta("bg_style") as ("orb" | "square" | "ground" | "off") | null) ?? "orb";
       widgetOpacity = Number((await getMeta("widget_opacity")) ?? 1) || 1;
+      showAudioVote = (await getMeta("show_audio_vote")) !== "0"; // default on
       evoCount = Number((await getMeta("evo_count")) ?? 0) || 0;
       refreshComfort();
       refreshAutostart();
@@ -2938,6 +3078,19 @@
     // music awareness: ephemeral energy bands [bass, mid, high, level] (opt-in)
     let unlistenAudio: (() => void) | undefined;
     listen<[number, number, number, number]>("audio-bands", (e) => onAudioBands(...e.payload)).then((un) => (unlistenAudio = un));
+    // Layer 2: which process is actually emitting audio (WASAPI session source) — beats the foreground guess
+    let unlistenAudioSrc: (() => void) | undefined;
+    listen<string>("audio-source", (e) => {
+      const [cat, name] = e.payload.split("|");
+      audioSrcReal = cat ?? "";
+      audioSrcName = name ?? "";
+    }).then((un) => (unlistenAudioSrc = un));
+    // YAMNet audio-class vote (music_prob, speech_prob) ~1.4Hz — the strong speech-vs-music signal
+    let unlistenAudioClass: (() => void) | undefined;
+    listen<[number, number]>("audio-class", (e) => {
+      audioMusicProb = +e.payload[0].toFixed(3);
+      audioSpeechProb = +e.payload[1].toFixed(3);
+    }).then((un) => (unlistenAudioClass = un));
     // hush all audio/speech whenever the window is hidden to the tray (X / tray-hide / re-show),
     // so the companion never talks to an empty screen. Rust emits this on every hide/show.
     let unlistenVisible: (() => void) | undefined;
@@ -2980,6 +3133,8 @@
       unlistenActive?.();
       unlistenFocus?.();
       unlistenAudio?.();
+      unlistenAudioSrc?.();
+      unlistenAudioClass?.();
       unlistenVisible?.();
       document.removeEventListener("visibilitychange", onVisDoc);
       clearInterval(remotePollTimer);
@@ -3723,6 +3878,22 @@
 
 <svelte:window onkeydown={onShortcut} onmousemove={onMouseLook} />
 
+<!-- hidden while hovering the widget: that's exactly when the quick tray, transparency slider and
+     radial menu bloom into the same bottom-center spot, so the readout would overlap them -->
+{#if audioAware && DEV && showAudioVote && !hovering}
+  <div class="audiohud">
+    🎶/🗣️ mus {audioMusicProb.toFixed(2)}/spch {audioSpeechProb.toFixed(2)}
+  </div>
+{/if}
+
+{#if correctChip}
+  <div class="correctchip">
+    <span>🎵 enjoying music?</span>
+    <button onclick={() => recordCorrection("music")}>yes</button>
+    <button onclick={() => recordCorrection("not")}>not music</button>
+  </div>
+{/if}
+
 <main
   class="widget"
   class:idle={idleNow}
@@ -4412,6 +4583,8 @@
       onToggleSoundPanel={() => (soundPanel = !soundPanel)}
       onPushCard={pushCard}
       onQuit={quit}
+      audioVoteOn={showAudioVote}
+      onToggleAudioVote={() => void setShowAudioVote(!showAudioVote)}
       onMenuOpen={() => { petState = 'happy'; setTimeout(() => (petState = 'idle'), 800); }}
       onDirHint={onRadialDirHint}
     />
@@ -4483,6 +4656,52 @@
 </main>
 
 <style>
+  /* dev-only audio debug readout (energy · musical-confidence · beat count) */
+  .audiohud {
+    position: fixed;
+    bottom: 46px; /* sit just above the transparency controller (.opacitybar, bottom: 7px) */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(8, 6, 18, 0.82);
+    color: #9fe0ff;
+    font: 10px/1.6 ui-monospace, monospace;
+    pointer-events: none;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  /* active-learning chip — rare, gentle, dismissible (teaches the Moment Engine your setup) */
+  .correctchip {
+    position: fixed;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: rgba(22, 15, 36, 0.92);
+    border: 1px solid rgba(159, 224, 255, 0.35);
+    color: #e9e2fb;
+    font: 11px/1.4 system-ui, sans-serif;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+  .correctchip button {
+    padding: 2px 9px;
+    border-radius: 8px;
+    border: 1px solid rgba(159, 224, 255, 0.4);
+    background: rgba(159, 224, 255, 0.12);
+    color: #cdecff;
+    font: inherit;
+    cursor: pointer;
+  }
+  .correctchip button:hover { background: rgba(159, 224, 255, 0.22); }
   .widget {
     position: relative;
     width: 100vw;

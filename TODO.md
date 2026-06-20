@@ -72,6 +72,13 @@
 - [x] **Mega FX deepened** — flat ellipse aura → **fire** (rising tongues + hot core + embers, additive); **`FORM_FLAME`** single colour source (fire orange · dragon = Charizard X blue) drives aura + room atmosphere + **attacks + irritate beats** (blue-X throws blue fire); mega **dictates the room** like a hearth mon (PixiStage mega ambient branch) + **hover stokes it** (`hoverE`); flamethrower breath = 4-layer gradient.
 - [ ] **v5 — battle** (sim reads stats, presentation reads identity — NEVER entangled). Next.
 
+### Audio Awareness → YAMNet speech/music vote ✅ 2026-06-20
+> The companion reacts to music *at the right moments*. Heuristics provably can't separate speech from music (blind A/B: `voiceish ~0.32` for both), so this adds the real classifier — as a VOTE in the Moment Engine, not a rewrite.
+- [x] **Freeze bug fixed** — the orb kept "reacting" while everything was paused (WASAPI stops delivering callbacks → every derived audio value froze at its last reading, `musical=1.00`). Added a JS staleness watchdog (no frames for 800ms → reset to rest) + a Rust silence gate (sub-‑60dBFS emits zeros so the AGC stops amplifying paused-video hiss into "loud").
+- [x] **YAMNet audio-class vote (SOTA, pure-Rust)** — exported canonical YAMNet's MobileNet core to ONNX (`tools/yamnet_export/`), hand-wrote the log-mel front-end in Rust (`src-tauri/src/audio_class.rs`), runs via `tract` (no native DLL; raw audio never leaves the process — same soul rule as the loopback bands). Validated raw-waveform→scores against TensorFlow to **1.2e-5**; in-tree regression test `tests/yamnet_smoke.rs`. The classifier thread (`spawn_audio_classifier`) buffers loopback samples → resamples to 16kHz → classifies ~1.4×/s → emits `audio-class (music, speech)` → `momentScore` adds `(music − speech) × 0.6` as the strong vote (`audio_moment.ts`). Model loads LAZILY on first opt-in (privacy off-by-default).
+- [x] **Dev HUD** — `🎶/🗣️ mus/spch` readout bottom-center; quickbar **🎶** toggle (persisted, dev-only); auto-hides while hovering so it never overlaps the quick tray / transparency slider / radial menu.
+- [ ] **Later polish (not blocking):** quantize model fp32 15MB → int8 ~4MB; broaden `music_prob` from the single `Music` class to the 75-class music family if real music ever under-reads.
+
 ---
 
 ## ✅ Already Shipped
@@ -407,4 +414,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: 2026-06-17 — V2 on branch `v2`. Latest (2026-06-17): (1) `existing_issues.md` audit FULLY closed (all §1–§7.10, two passes, both gates green) + murmur cadence bump + auto-close mitigation; (2) Phase 3 — user birthday, quiet reminders, memory anniversaries, new starter roster; (3) Alive ground rework — energized orbital star rings + chain lightning + music-drop gating + level scaling + electric white-gold harmony + legendary multi-strike event. Committed on `v2` (not yet pushed). Next: layer the other biomes + Moonlit Shore polish, then the Writing & Interaction passes from `15_jun.md`.*
+*Last updated: 2026-06-20 — V2 on branch `v2`. Latest (2026-06-20): (1) Combat Identity v2→v4 + Mega Evolution — 26 attack archetypes, per-species overrides, PokeAPI form-IDs, real mega fire that dictates the room; (2) Audio Awareness → YAMNet speech/music vote — freeze bug fixed (watchdog + silence gate), and the SOTA classifier shipped (YAMNet core in pure-Rust `tract`, log-mel in Rust, validated to 1.2e-5 vs TensorFlow, vote wired into `momentScore`, dev HUD + 🎶 toggle). See `fixed_issues.md` for the full per-issue log. Next: v5 battle; layer the other biomes + Moonlit Shore polish, then the Writing & Interaction passes from `15_jun.md`.*

@@ -1,3 +1,4 @@
+mod audio_class;
 mod chapter;
 
 use std::io::{Read, Seek, SeekFrom};
@@ -324,7 +325,22 @@ fn app_category(proc_name: &str) -> &'static str {
         "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "arc.exe", "zen.exe",
         "vivaldi.exe",
     ];
-    if EDITORS.contains(&proc_name) || proc_name.contains("idea") || proc_name.contains("pycharm") {
+    // Layer 2 (audio source context): dedicated media players → "music"; calls → "comms". Process
+    // NAME only (never titles/URLs) — same privacy bar as the rest of flow-awareness.
+    const MUSIC: &[&str] = &[
+        "spotify.exe", "music.exe", "applemusic.exe", "musicbee.exe", "foobar2000.exe", "itunes.exe",
+        "deezer.exe", "tidal.exe", "aimp.exe", "winamp.exe", "ytmdesktop.exe", "audacious.exe",
+        "clementine.exe", "strawberry.exe",
+    ];
+    const COMMS: &[&str] = &[
+        "discord.exe", "zoom.exe", "teams.exe", "ms-teams.exe", "msteams.exe", "slack.exe",
+        "skype.exe", "telegram.exe", "webexmta.exe",
+    ];
+    if MUSIC.contains(&proc_name) {
+        "music"
+    } else if COMMS.contains(&proc_name) {
+        "comms"
+    } else if EDITORS.contains(&proc_name) || proc_name.contains("idea") || proc_name.contains("pycharm") {
         "editor"
     } else if TERMS.contains(&proc_name) {
         "terminal"
@@ -499,10 +515,22 @@ fn is_dev_build() -> bool {
 /// (unplugged headphones → speakers) and rebuild — otherwise the stream stays bound to a gone
 /// device and audio awareness silently dies until restart (existing_issues.md — audio device
 /// invalidation). `err_flag` is raised from the stream's error callback for the same reason.
+// Raw mono samples at the device rate, shared from the loopback callback (producer) to the YAMNet
+// classifier thread (consumer). Bounded to ~2s. The classifier resamples to 16kHz on read. This is
+// the ONLY place raw audio is buffered, and it never leaves the process (same soul rule as bands).
+#[derive(Default)]
+struct AudioRing {
+    samples: std::collections::VecDeque<f32>,
+    sr: u32,
+    updated: Option<std::time::Instant>, // last producer write — lets the classifier skip a stale
+                                         // buffer on pause instead of re-emitting phantom "music"
+}
+
 #[cfg(windows)]
 fn build_loopback(
     handle: &tauri::AppHandle,
     err_flag: std::sync::Arc<AtomicBool>,
+    ring: std::sync::Arc<std::sync::Mutex<AudioRing>>,
 ) -> Option<(cpal::Stream, String)> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     let host = cpal::default_host();
@@ -525,12 +553,20 @@ fn build_loopback(
     let mut peak = 0.0008f32;
     let mut last = std::time::Instant::now();
     let h = handle.clone();
+    // record the device rate so the classifier knows how to resample; reset stale samples on rebuild
+    if let Ok(mut r) = ring.lock() {
+        r.sr = sr as u32;
+        r.samples.clear();
+    }
+    let ring_cb = ring.clone();
     let stream = device
         .build_input_stream(
             &cfg,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let mut mono = Vec::with_capacity(data.len() / ch + 1);
                 for frame in data.chunks(ch) {
                     let x = frame.iter().copied().sum::<f32>() / ch as f32;
+                    mono.push(x); // feed the YAMNet ring (speech-vs-music vote), separate from bands
                     lp1 += a1 * (x - lp1);
                     lp2 += a2 * (x - lp2);
                     let bass = lp1;
@@ -541,10 +577,31 @@ fn build_loopback(
                     sh += high * high;
                     n += 1;
                 }
+                // push this block to the classifier ring every callback (independent of the 33ms
+                // band-emit throttle and the silence gate below), bounded to ~2s of audio.
+                if let Ok(mut r) = ring_cb.lock() {
+                    let cap = (r.sr as usize).max(16000) * 2;
+                    r.samples.extend(mono.iter().copied());
+                    while r.samples.len() > cap {
+                        r.samples.pop_front();
+                    }
+                    r.updated = Some(std::time::Instant::now());
+                }
                 if n > 0 && last.elapsed().as_millis() >= 33 {
                     let nn = n as f32;
                     let (b, m, hi) = ((sb / nn).sqrt(), (sm / nn).sqrt(), (sh / nn).sqrt());
                     let lvl = (b + m + hi) / 3.0;
+                    // SILENCE GATE: the AGC `peak` decays toward its 0.0008 floor, so during a pause the
+                    // tiny residual noise floor gets normalised UP into a "loud" reading and the UI keeps
+                    // reacting to nothing. Below an absolute RMS floor (~-60 dBFS), it's silence — emit
+                    // zeros so the frontend rests instead of chasing amplified hiss. (Tunable.)
+                    const SILENCE: f32 = 0.0010;
+                    if lvl < SILENCE {
+                        let _ = h.emit("audio-bands", (0.0f32, 0.0f32, 0.0f32, 0.0f32));
+                        sb = 0.0; sm = 0.0; sh = 0.0; n = 0;
+                        last = std::time::Instant::now();
+                        return;
+                    }
                     peak = (peak * 0.995).max(lvl).max(0.0008); // faster decay → no minutes-long suppression (§4)
                     let nz = |v: f32| (v / peak).clamp(0.0, 1.0);
                     let _ = h.emit("audio-bands", (nz(b), nz(m), nz(hi), nz(lvl)));
@@ -568,6 +625,9 @@ fn build_loopback(
 #[cfg(windows)]
 fn spawn_audio_watcher(handle: tauri::AppHandle) {
     use cpal::traits::{DeviceTrait, HostTrait};
+    // shared raw-audio ring feeding the YAMNet classifier thread (speech-vs-music vote)
+    let ring = std::sync::Arc::new(std::sync::Mutex::new(AudioRing::default()));
+    spawn_audio_classifier(handle.clone(), ring.clone());
     std::thread::spawn(move || {
         let mut stream: Option<cpal::Stream> = None;
         let mut bound_device = String::new(); // the output device our stream is bound to
@@ -602,7 +662,7 @@ fn spawn_audio_watcher(handle: tauri::AppHandle) {
             }
             if stream.is_none() {
                 err_flag.store(false, Ordering::Relaxed);
-                if let Some((s, name)) = build_loopback(&handle, err_flag.clone()) {
+                if let Some((s, name)) = build_loopback(&handle, err_flag.clone(), ring.clone()) {
                     stream = Some(s);
                     bound_device = name;
                 }
@@ -614,6 +674,175 @@ fn spawn_audio_watcher(handle: tauri::AppHandle) {
 
 #[cfg(not(windows))]
 fn spawn_audio_watcher(_handle: tauri::AppHandle) {}
+
+/// YAMNet audio-class vote: every ~700ms, take the most recent ~0.96s from the ring, resample to
+/// 16kHz, run the YAMNet core, and emit `audio-class` = (music_prob, speech_prob). The model is
+/// loaded LAZILY on first opt-in (privacy-off-by-default keeps ~15MB unloaded until the user asks).
+/// This is the strong vote the Moment Engine can't get from heuristics — speech vs music.
+#[cfg(windows)]
+fn spawn_audio_classifier(handle: tauri::AppHandle, ring: std::sync::Arc<std::sync::Mutex<AudioRing>>) {
+    std::thread::spawn(move || {
+        let mut clf: Option<audio_class::Classifier> = None;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            let want = handle.state::<AudioAware>().0.load(Ordering::Relaxed)
+                && handle.state::<Visible>().0.load(Ordering::Relaxed);
+            if !want {
+                continue;
+            }
+            if clf.is_none() {
+                match audio_class::Classifier::load() {
+                    Ok(c) => clf = Some(c),
+                    Err(e) => {
+                        eprintln!("[hearthmon] yamnet load failed: {e}");
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                        continue;
+                    }
+                }
+            }
+            let (data, sr, fresh) = {
+                let r = ring.lock().unwrap();
+                let fresh = matches!(r.updated, Some(t) if t.elapsed().as_millis() < 400);
+                (r.samples.iter().copied().collect::<Vec<f32>>(), r.sr, fresh)
+            };
+            // skip a stale buffer (producer paused) so we don't re-emit phantom classes
+            if !fresh || sr == 0 {
+                continue;
+            }
+            // +64 samples of headroom: linear resampling rounds the output length down by up to a
+            // sample, which would leave us 1 short of a full patch (classify -> None). Grab a hair
+            // more device audio so the 16k window is always >= one patch; classify takes the newest.
+            let need_dev = ((audio_class::PATCH_SAMPLES + 64) as f32 * sr as f32 / 16000.0).ceil() as usize;
+            if data.len() < need_dev {
+                continue; // not enough audio buffered yet (just started / silent)
+            }
+            let wav16 = audio_class::resample_to_16k(&data[data.len() - need_dev..], sr);
+            if let Some((music, speech)) = clf.as_ref().unwrap().classify(&wav16) {
+                let _ = handle.emit("audio-class", (music, speech));
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn spawn_audio_classifier(_h: tauri::AppHandle, _r: std::sync::Arc<std::sync::Mutex<AudioRing>>) {}
+
+// ── Layer 2: which PROCESS is actually emitting audio (WASAPI sessions) ───────────
+// The decisive source signal: enumerate the default render device's audio sessions, take the one
+// with the loudest current peak (= what you're actually hearing), resolve its process NAME, and
+// classify it (music/comms/browser/…). Works even when the player is in the BACKGROUND (coding +
+// Spotify) — which the foreground app can never tell us. Process name only — no titles, no content.
+#[cfg(windows)]
+fn proc_name_of(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h == 0 {
+            return None;
+        }
+        let mut cap = 1024usize;
+        let out = loop {
+            let mut buf = vec![0u16; cap];
+            let mut len = cap as u32;
+            if QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len) != 0 {
+                let s = String::from_utf16_lossy(&buf[..len as usize]);
+                break s.rsplit(|c| c == '\\' || c == '/').next().map(|x| x.to_lowercase());
+            }
+            if GetLastError() == ERROR_INSUFFICIENT_BUFFER && cap < 32_768 {
+                cap *= 2;
+                continue;
+            }
+            break None;
+        };
+        CloseHandle(h);
+        out
+    }
+}
+
+/// (category, exe-name) of the process producing the loudest audio on the default output (or None).
+#[cfg(windows)]
+fn active_audio_source() -> Option<(String, String)> {
+    use windows::core::Interface;
+    use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
+    use windows::Win32::Media::Audio::{
+        eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+        MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    unsafe {
+        let enumr: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+        let device = enumr.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+        let mgr: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
+        let sessions = mgr.GetSessionEnumerator().ok()?;
+        let count = sessions.GetCount().ok()?;
+        let own_pid = std::process::id();
+        let mut best_peak = 0.0f32;
+        let mut best_pid = 0u32;
+        for i in 0..count {
+            let ctrl = match sessions.GetSession(i) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let meter: IAudioMeterInformation = match ctrl.cast() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let peak = meter.GetPeakValue().unwrap_or(0.0);
+            if peak < 0.01 || peak <= best_peak {
+                continue; // inaudible / not the loudest session
+            }
+            let ctrl2: IAudioSessionControl2 = match ctrl.cast() {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let pid = ctrl2.GetProcessId().unwrap_or(0);
+            if pid == 0 || pid == own_pid {
+                continue; // system sounds, OR our own audio (cries/sfx) — never the music source
+            }
+            best_peak = peak;
+            best_pid = pid;
+        }
+        if best_pid == 0 {
+            return None;
+        }
+        let name = proc_name_of(best_pid)?;
+        Some((app_category(&name).to_string(), name))
+    }
+}
+
+/// Poll the active audio source ~1.5s while music-awareness is on; emit `audio-source` on change.
+#[cfg(windows)]
+fn spawn_audio_source_watcher(handle: tauri::AppHandle) {
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+    std::thread::spawn(move || {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+        let mut last = String::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let want = handle.state::<AudioAware>().0.load(Ordering::Relaxed)
+                && handle.state::<Visible>().0.load(Ordering::Relaxed);
+            if !want {
+                last.clear();
+                continue;
+            }
+            let payload = active_audio_source()
+                .map(|(cat, name)| format!("{cat}|{name}"))
+                .unwrap_or_default();
+            if payload != last {
+                last = payload.clone();
+                let _ = handle.emit("audio-source", payload); // "category|exe.name"
+            }
+        }
+    });
+}
+#[cfg(not(windows))]
+fn spawn_audio_source_watcher(_handle: tauri::AppHandle) {}
 
 // ── Training Awareness via log-watch ───────────────────────────────
 // The user points us at a training log file OR a folder (we follow the
@@ -988,6 +1217,8 @@ pub fn run() {
             spawn_focus_watcher(app.handle().clone());
             // Music awareness: idle until the user opts in (set_audio_aware true).
             spawn_audio_watcher(app.handle().clone());
+            spawn_audio_source_watcher(app.handle().clone()); // Layer 2: which process emits audio
+
             // Tray: the companion rests here instead of quitting — it never truly leaves.
             let show = MenuItem::with_id(app, "show", "Show Hearthmon", true, None::<&str>)?;
             let hide = MenuItem::with_id(app, "hide", "Hide to tray", true, None::<&str>)?;

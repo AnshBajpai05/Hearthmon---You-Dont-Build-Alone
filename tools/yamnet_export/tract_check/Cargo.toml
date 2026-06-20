@@ -1,0 +1,12 @@
+[package]
+name = "tract_check"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+tract-onnx = "0.21"
+rustfft = "6"
+
+[[bin]]
+name = "tract_check"
+path = "main.rs"
