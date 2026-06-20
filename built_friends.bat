@@ -27,7 +27,7 @@ set "UPDATER_KEY=%~dp0..\hearthmon_updater.key"
 if not exist "%UPDATER_KEY%" (
   echo [built_friends] ERROR: updater signing key not found at "%UPDATER_KEY%".
   echo   Generate it once:  npm run tauri signer generate -- -w ..\hearthmon_updater.key
-  echo   Then paste the printed PUBLIC key into src-tauri\tauri.conf.json (plugins.updater.pubkey).
+  echo   Then paste the printed PUBLIC key into src-tauri\tauri.conf.json ^(plugins.updater.pubkey^).
   echo   Full checklist: UPDATER_SETUP.md
   exit /b 1
 )
