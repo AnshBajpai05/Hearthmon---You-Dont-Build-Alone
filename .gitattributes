@@ -1,0 +1,4 @@
+# Windows batch/cmd scripts MUST stay CRLF — with LF endings cmd.exe mis-parses
+# multi-line `if (...)` blocks and dies with ". was unexpected at this time."
+*.bat text eol=crlf
+*.cmd text eol=crlf
