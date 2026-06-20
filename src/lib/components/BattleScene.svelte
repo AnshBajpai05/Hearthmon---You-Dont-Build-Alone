@@ -16,6 +16,7 @@
   import { maxHpFor, firstSide, calcTurn, effText, statsFor } from "../battle";
   import { chooseMove } from "../combat/ai";
   import { speciesIdentity } from "../combat/identity";
+  import { movesFor, type Move } from "../attackfx";
   import { playCry, voiceCry, playVoiceClip, thump } from "../sound";
   import {
     animKind,
@@ -66,6 +67,12 @@
   let encounter = $state<"spar" | "wild" | "trainer" | "boss" | "legendary">("spar");
   let introLine = $state(""); // framing shown during the intro ("A wild X appeared!")
   let hpMul = 1; // boss/legendary tankiness (encounter difficulty — a fatter HP pool, not a stat edit)
+  // per-side control: "cpu" = identity AI (watch), "you" = pick the moves. Default BOTH cpu — the
+  // soul default is a spar to WATCH; manual control is an opt-in, never forced into a game loop.
+  let ctrlL = $state<"cpu" | "you">("cpu");
+  let ctrlR = $state<"cpu" | "you">("cpu");
+  let pendingMoves = $state<Move[] | null>(null); // shown when a "you" side must choose its move
+  let resolveMove: ((m: Move) => void) | null = null;
 
   // ---- fx state ----
   let arenaEl = $state<HTMLDivElement | null>(null);
@@ -92,7 +99,10 @@
   }
 
   let alive = true;
-  onDestroy(() => (alive = false));
+  onDestroy(() => {
+    alive = false;
+    if (resolveMove && pendingMoves) resolveMove(pendingMoves[0]); // unblock a pending pick on unmount
+  });
 
   const suggested: DexEntry[] = STARTERS.map(
     (s) => POKEDEX.find((e) => e.id === s.dexId)!
@@ -244,12 +254,30 @@
     );
   }
 
+  // self-control: pause the acting side's turn for a move pick (resolved by a button click).
+  function playerMove(dexId: number): Promise<Move> {
+    pendingMoves = movesFor(dexId).slice(0, 4); // the learnset's top four
+    msg = "Choose a move…";
+    return new Promise((res) => (resolveMove = res));
+  }
+  function pickPlayerMove(m: Move) {
+    pendingMoves = null;
+    const r = resolveMove;
+    resolveMove = null;
+    r?.(m);
+  }
+
   async function doTurn(side: Side) {
     const atk = side === "L" ? selL : selR;
     const def = side === "L" ? selR : selL;
     if (!atk || !def) return;
     const defSide: Side = side === "L" ? "R" : "L";
-    const mv = chooseMove(atk.id, def.type, side === "L" ? hpL / maxL : hpR / maxR); // identity/temperament AI
+    const ctrl = side === "L" ? ctrlL : ctrlR;
+    const mv =
+      ctrl === "you"
+        ? await playerMove(atk.id) // self-control: wait for the player's pick
+        : chooseMove(atk.id, def.type, side === "L" ? hpL / maxL : hpR / maxR); // identity/temperament AI
+    if (!alive || phase !== "battle") return;
     const res = calcTurn(mv, atk.id, def.id, atk.type, def.type); // sim: stats → damage (separate from the choice)
     const kind = FAMILY[animKind(mv, atk.id)]; // battle reads the 8 render families (melee/burst/breath/…)
     const A = anchor(side);
@@ -431,6 +459,10 @@
         {#each [{ side: "L" as const }, { side: "R" as const }] as col (col.side)}
           <div class="col">
             <div class="corner">{col.side === "L" ? "left corner" : "right corner"}</div>
+            <div class="ctrl">
+              <button class:on={(col.side === "L" ? ctrlL : ctrlR) === "cpu"} onclick={() => { if (col.side === "L") ctrlL = "cpu"; else ctrlR = "cpu"; }}>🤖 Auto</button>
+              <button class:on={(col.side === "L" ? ctrlL : ctrlR) === "you"} onclick={() => { if (col.side === "L") ctrlL = "you"; else ctrlR = "you"; }}>🎮 You</button>
+            </div>
             <div class="chosen">
               {#if col.side === "L" ? selL : selR}
                 {@const s = col.side === "L" ? selL! : selR!}
@@ -604,6 +636,17 @@
 
       <div class="msg">{msg}</div>
 
+      {#if pendingMoves}
+        <div class="movepick">
+          {#each pendingMoves as m (m.name)}
+            <button class="mvbtn" style="--mc: {m.color}" onclick={() => pickPlayerMove(m)}>
+              <span class="mvname">{displayName(m.name)}</span>
+              <span class="mvmeta">{m.type}{m.power ? ` · ${m.power}` : ""}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+
       {#if phase === "over"}
         <div class="overbtns">
           <button onclick={rematch}>rematch</button>
@@ -708,6 +751,60 @@
     border: 1px solid rgba(255, 217, 74, 0.55);
     box-shadow: 0 0 14px rgba(255, 217, 74, 0.3);
   }
+  /* per-side control toggle (Auto = watch · You = pick) */
+  .ctrl {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+  }
+  .ctrl button {
+    flex: 1;
+    padding: 3px 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: #8d82ab;
+    font-size: 9.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .ctrl button.on {
+    background: rgba(240, 182, 106, 0.16);
+    color: #f0b66a;
+    border-color: rgba(240, 182, 106, 0.5);
+  }
+  /* self-control move picker (only when a "You" side is acting) */
+  .movepick {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    transform: translateX(-50%);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    width: min(86%, 360px);
+    z-index: 7;
+  }
+  .mvbtn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 7px 10px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--mc, #888) 55%, transparent);
+    background: color-mix(in srgb, var(--mc, #888) 16%, #160f24);
+    color: #f6f1ff;
+    cursor: pointer;
+    text-align: left;
+    transition: transform 0.1s, background 0.1s;
+  }
+  .mvbtn:hover {
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--mc, #888) 28%, #160f24);
+  }
+  .mvname { font-size: 11px; font-weight: 700; }
+  .mvmeta { font-size: 9px; color: #b9aee0; text-transform: capitalize; }
   h2 {
     margin: 0;
     font-size: 15px;
