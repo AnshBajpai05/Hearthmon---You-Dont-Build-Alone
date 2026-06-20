@@ -374,8 +374,9 @@
     >
       <span class="cat-icon">{cat.icon}</span>
 
-      <!-- Hover whisper label -->
-      {#if isHov || isAct}
+      <!-- Hover whisper: a PREVIEW before opening. Hidden once active, because the sub-item fan
+           blooms on the same side and the labeled pills already say everything (no overlap). -->
+      {#if isHov && !isAct}
         <span class="whisper whisper-{cat.labelSide}">
           <strong>{cat.name}</strong>
           <em>{cat.tagline}</em>

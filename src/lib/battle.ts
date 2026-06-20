@@ -56,17 +56,19 @@ export function statsFor(dexId: number): BaseStats {
   return { hp: s[0], atk: s[1], def: s[2], spa: s[3], spd: s[4], spe: s[5] };
 }
 
-/** Real HP pools: a Blissey (255 hp) tanks, a Diglett (10 hp) folds. */
+/** Real HP pools, buffed so a single strong hit can't one-shot: a Blissey (255 hp) really tanks,
+ * a Diglett (10 hp) still folds, but a typical mon now survives 2-4 solid hits (fights have arcs). */
 export function maxHpFor(dexId: number): number {
-  return Math.round(statsFor(dexId).hp * 1.5 + 55);
+  return Math.round(statsFor(dexId).hp * 2 + 120);
 }
 
-/** Faster Pokémon moves first, like the games. */
+/** Who strikes first: a SPEED-WEIGHTED coin toss — the faster mon is favoured but never certain,
+ * so there's a real toss before each battle instead of a foregone conclusion. */
 export function firstSide(leftId: number, rightId: number): "L" | "R" {
   const l = statsFor(leftId).spe;
   const r = statsFor(rightId).spe;
-  if (l === r) return Math.random() < 0.5 ? "L" : "R";
-  return l > r ? "L" : "R";
+  const pL = l + r > 0 ? l / (l + r) : 0.5; // share of speed = chance to win the toss
+  return Math.random() < pL ? "L" : "R";
 }
 
 export interface TurnResult {

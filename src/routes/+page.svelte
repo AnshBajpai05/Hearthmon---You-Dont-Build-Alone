@@ -169,6 +169,8 @@
     nextEvolution,
     hasEvolution,
     evolutionStepsAhead,
+    evoStage,
+    finalEvolution,
     hasMega,
     megaForms,
     formSpriteUrl,
@@ -349,9 +351,43 @@
   // optional offer; ignoring it costs nothing. Reverts on a companion switch.
   let megaForm = $state<SpecialForm | null>(null); // active special form (null = base)
   let megaOffer = $state(false);
-  let megaSince = 0; // when the current mon became active (continuous-session clock)
   let megaOfferedDex = -1; // offer once per mon-session, don't pester
-  const MEGA_MIN_MS = 60 * 60_000; // one continuous hour together before the mega gift is offered
+  // ── Earned-evolution clock (persisted) ───────────────────────────────
+  // Evolution is paced by TIME-IN-STAGE, building toward Mega stage-by-stage (never base→mega):
+  //   stage 1 (base) → next evo offered after 10 min · stage 2 → after 20 min · then, fully evolved,
+  //   the Mega gift unlocks after a further 30 min held at the final stage.
+  // So Mega-remaining falls out of the chain: base 60 · stage-2 50 · stage-3 30 — including when the
+  // user PICKS a mid-evolution from search. Saying "Not yet" restarts the current stage's clock.
+  let stageSince = 0; // when the current evolution stage began (ms epoch, persisted)
+  const EVO_WAIT_MS = [0, 10 * 60_000, 20 * 60_000]; // index by stage (1→10min, 2→20min)
+  const MEGA_HOLD_MS = 30 * 60_000; // held at the FINAL evolved stage before the mega gift is offered
+  function evoWaitMs(stage: number): number { return EVO_WAIT_MS[stage] ?? 20 * 60_000; }
+  async function resetStageClock() {
+    stageSince = Date.now();
+    _megaWhispered = false; // re-arm the "almost mega" whisper for the new stage
+    await setMeta("stage_since", String(stageSince));
+  }
+  let evoShimmer = $state(false); // subtle pre-evolution glow (~30s before an offer appears)
+  let _megaWhispered = false; // "almost mega" whisper guard (once per final-stage hold)
+  let megaRestUntil = 0; // after reverting a mega, it rests before it can be offered again
+  const MEGA_REST_MS = 8 * 60_000;
+  // Pre-evolution shimmer + "almost mega" whisper — growth feels SENSED, not sudden (no visible timer).
+  function polishTick() {
+    if (phase !== "home") { evoShimmer = false; return; }
+    const wait = evoWaitMs(evoStage(dexId));
+    const since = Date.now() - stageSince;
+    evoShimmer =
+      hasEvolution(dexId) && !evoOffer && !evoActive && !megaForm &&
+      petState !== "sleeping" && since >= wait - 30_000 && since < wait;
+    if (
+      !megaForm && !megaOffer && hasMega(dexId) && !hasEvolution(dexId) &&
+      Date.now() >= megaRestUntil && !_megaWhispered && !focusMode && petState !== "sleeping" &&
+      since >= MEGA_HOLD_MS - 5 * 60_000 && since < MEGA_HOLD_MS
+    ) {
+      _megaWhispered = true;
+      say("I feel something stirring…", 8000);
+    }
+  }
   // ---- evolution ceremony ----
   let evoOffer = $state(false); // the gentle "ready to grow?" prompt
   let evoActive = $state(false); // the white-silhouette ceremony is playing
@@ -367,6 +403,8 @@
   // backdrop style: glossy "orb" sphere · "ground" curved platform · "off"
   let bgStyle = $state<"orb" | "square" | "ground" | "off">("orb");
   const curType = $derived(megaForm?.type ?? dexEntry(dexId)?.type ?? "normal"); // mega may shift element
+  // does THIS evolution line eventually reach a Mega? (used to hint the payoff on the evolve offer)
+  const evoLineHasMega = $derived(hasMega(finalEvolution(dexId)));
   // A special form's signature FX colour (Charizard X → blue): tints its attacks + irritate beats
   // to match its aura, so a blue-fire mega throws blue fire. null = no override → normal move colour.
   const megaFx = $derived(megaForm ? (FORM_FLAME[curType] ?? null) : null);
@@ -2670,7 +2708,9 @@
       dexId = Number(dex);
       petName = (await getMeta("pet_name")) ?? "Friend";
       isShiny = (await getMeta("shiny")) === "1";
-      megaSince = Date.now(); // start the continuous-session mega clock for this companion
+      // resume the earned-evolution clock; first run for an existing companion starts it now
+      stageSince = Number((await getMeta("stage_since")) ?? 0) || Date.now();
+      if (!(await getMeta("stage_since"))) await setMeta("stage_since", String(stageSince));
       muted = (await getMeta("muted")) === "1";
       setSoundEnabled(!muted);
       focusMode = (await getMeta("focus_mode")) === "1";
@@ -2760,6 +2800,7 @@
       if (!hasToken && (await getMeta("gh_onboard_skipped")) !== "1") {
         ghOnboardAsk = true;
       }
+      void maybeAskAudioOnboard(); // existing companions get asked once now that music awareness exists
       // personality signal: which part of the day you tend to show up (once per launch)
       {
         const h0 = new Date().getHours();
@@ -3029,6 +3070,7 @@
     const dreamTimer = setInterval(dreamTick, 22_000); // dream bubbles while sleeping
     const autoTimer = setInterval(autoSwitchTick, 30_000);
     const reminderTimer = setInterval(() => void reminderTick(), 30_000); // quiet personal nudges
+    const polishTimer = setInterval(polishTick, 5000); // pre-evolution shimmer + "almost mega" whisper
     // Lonely Night Mode — the room dims after midnight
     const checkNight = () => {
       const now = new Date();
@@ -3122,6 +3164,8 @@
       clearInterval(dreamTimer);
       clearInterval(autoTimer);
       clearInterval(reminderTimer);
+      clearInterval(polishTimer);
+      clearTimeout(reminderSnoozeTimer);
       clearInterval(nightTimer);
       clearInterval(cardPushTimer);
       if (gpuTimer) clearInterval(gpuTimer);
@@ -3233,6 +3277,22 @@
   // context-aware PERSONALITY QUIRK ("it's Monday…", "found another star"), or
   // falls back to a persona/generic murmur. Shown in the bubble only (not spoken
   // aloud) so it stays gentle and non-intrusive.
+  // prominent reminder card (the ringing clock) — holds the reminder cause for ~25s
+  let reminderOverlay = $state<string | null>(null);
+  let reminderOverlayTimer: ReturnType<typeof setTimeout> | undefined;
+  let reminderSnoozeTimer: ReturnType<typeof setTimeout> | undefined;
+  function dismissReminder() {
+    clearTimeout(reminderOverlayTimer);
+    reminderOverlay = null;
+  }
+  function snoozeReminder() {
+    const text = reminderOverlay;
+    dismissReminder();
+    if (text) {
+      clearTimeout(reminderSnoozeTimer);
+      reminderSnoozeTimer = setTimeout(() => void surfaceReminder(text), 10 * 60_000); // nudge again in 10 min
+    }
+  }
   // ── Quiet reminders ────────────────────────────────────────────────
   // Check every 30s for reminders due since the last check. ALL matches this tick surface together,
   // and only the ones that actually fire are marked/dropped (§8.1 — no same-minute loss). Daily
@@ -3303,6 +3363,11 @@
     setTimeout(() => (petState = "idle"), 1500);
     moodGlow = "#9ad0f0";
     setTimeout(() => (moodGlow = ""), 12000);
+    // attention-grabber: a ringing-clock card showing WHAT the reminder was, held ~25s (or dismissed).
+    // This is a user-SCHEDULED promise, so it's allowed to be prominent (not proactive chatter).
+    reminderOverlay = text;
+    clearTimeout(reminderOverlayTimer);
+    reminderOverlayTimer = setTimeout(() => (reminderOverlay = null), 25000);
   }
 
   const MURMUR_CHANCE = 0.3; // ~3 in 10 idle ticks surface a line (was 0.18 — felt too silent)
@@ -3504,10 +3569,11 @@
       dexId = entry.id;
       petName = newName;
       isShiny = becomesShiny;
-      megaForm = null; // a new companion reverts to base; its mega session starts fresh
-      megaSince = Date.now();
+      megaForm = null; // a new companion reverts to base; its evolution journey starts fresh
+      void resetStageClock(); // a picked stage starts its clock now → Mega-remaining = 50/30 by stage
       megaOfferedDex = -1;
       megaOffer = false;
+      megaRestUntil = 0; // a fresh companion carries no mega-rest from the last one
       await setMeta("dex_id", String(entry.id));
       await setMeta("pet_name", newName);
       await setMeta("shiny", becomesShiny ? "1" : "0");
@@ -3541,7 +3607,9 @@
     if (megaForm || megaOffer || evoOffer || evoActive || switchFx !== "none" || battleOpen) return;
     if (phase !== "home" || focusMode || petState === "sleeping" || panel !== "none") return;
     if (!hasMega(dexId) || megaOfferedDex === dexId) return;
-    if (!megaSince || Date.now() - megaSince < MEGA_MIN_MS) return; // one continuous sitting together
+    if (hasEvolution(dexId)) return; // stage-by-stage ONLY — never base→mega; must be fully evolved
+    if (Date.now() < megaRestUntil) return; // resting after a recent mega — keep it special
+    if (!stageSince || Date.now() - stageSince < MEGA_HOLD_MS) return; // held at the final stage
     megaOfferedDex = dexId; // offer once per mon-session — never pester
     megaOffer = true;
   }
@@ -3572,7 +3640,10 @@
     evoFlash = true;
     setTimeout(() => (megaForm = null), 240);
     setTimeout(() => (evoFlash = false), 480);
-    say("Back to my usual self.", 4000);
+    // a mega takes a lot out of them — rest before it can be offered again (keeps it rare/special)
+    megaRestUntil = Date.now() + MEGA_REST_MS;
+    megaOfferedDex = -1; // allow a future re-offer, but only after the rest passes
+    say("That took a lot out of me… back to my usual self.", 5000);
   }
 
   // ---- evolution ceremony ----
@@ -3581,11 +3652,8 @@
   async function maybeOfferEvolution() {
     if (evoOffer || evoActive || switchFx !== "none" || battleOpen || phase !== "home") return;
     if (petState === "sleeping" || !hasEvolution(dexId)) return;
-    const interactions = Number((await getMeta("interactions")) ?? 0);
-    const need = 12 + evoCount * 18; // escalates with each evolution
-    if (interactions < need) return;
-    const declined = Number((await getMeta(`evo_declined_${dexId}`)) ?? 0);
-    if (Date.now() - declined < 24 * 3_600_000) return; // respect a recent "not yet"
+    // earned over TIME, not instantly: 10 min at the base stage, 20 min at the second
+    if (Date.now() - stageSince < evoWaitMs(evoStage(dexId))) return;
     evoTarget = nextEvolution(dexId);
     if (evoTarget) {
       evoOffer = true;
@@ -3595,7 +3663,7 @@
 
   async function declineEvolution() {
     evoOffer = false;
-    await setMeta(`evo_declined_${dexId}`, String(Date.now()));
+    await resetStageClock(); // "Not yet" restarts this stage's clock (and pushes Mega back)
     say(pick(evolveDeclineLines), 7000);
   }
 
@@ -3630,6 +3698,7 @@
           await setMeta("dex_id", String(target.id));
           evoCount += 1;
           await setMeta("evo_count", String(evoCount));
+          await resetStageClock(); // a new stage begins — its clock (and the Mega countdown) restarts
           await addMemory("note", { text: `evolved into ${displayName(target.name)}` });
           playCry(target.id, 1);
         }, 220);
@@ -3655,6 +3724,7 @@
     await setMeta("dex_id", String(creature.dexId));
     await setMeta("pet_name", name);
     await setMeta("first_met", new Date().toISOString());
+    await resetStageClock(); // begin the earned-evolution clock for this new companion
     if (birthday.trim()) await setMeta("user_birthday", birthday.trim()); // theirs, to remember
     if (building.trim()) await addMemory("seed", { text: building.trim() });
     await setMeta("render_mode", mode); // the skin they chose at first meeting (switchable later via V)
@@ -3673,6 +3743,7 @@
     if (!hasToken && (await getMeta("gh_onboard_skipped")) !== "1") {
       ghOnboardAsk = true;
     }
+    void maybeAskAudioOnboard(); // queues behind the GitHub ask; shows once for new companions
   }
 
   function onPetTap() {
@@ -3874,6 +3945,26 @@
     ghOnboardAsk = false;
     await setMeta("gh_onboard_skipped", "1");
   }
+
+  // ---- music-awareness onboarding (asked once; opt-in, off by default for privacy) ----
+  let audioOnboardAsk = $state(false);
+  async function maybeAskAudioOnboard() {
+    if ((await getMeta("audio_onboard_asked")) === "1") return;
+    if ((await getMeta("audio_aware")) === "1") { // already turned it on themselves → don't ask
+      await setMeta("audio_onboard_asked", "1");
+      return;
+    }
+    audioOnboardAsk = true; // dialog gates itself behind startup/gh asks so prompts never stack
+  }
+  async function audioOnboardYes() {
+    audioOnboardAsk = false;
+    await setMeta("audio_onboard_asked", "1");
+    await setAudioAware(true);
+  }
+  async function audioOnboardNo() {
+    audioOnboardAsk = false;
+    await setMeta("audio_onboard_asked", "1"); // never nag again — they can flip it on in Code anytime
+  }
 </script>
 
 <svelte:window onkeydown={onShortcut} onmousemove={onMouseLook} />
@@ -4052,6 +4143,34 @@
       </div>
     {/if}
 
+    {#if reminderOverlay}
+      <div class="reminder-overlay" role="alertdialog" aria-label="Reminder">
+        <div class="rem-card">
+          <div class="rem-clock" aria-hidden="true">⏰</div>
+          <div class="rem-title">Reminder</div>
+          <p class="rem-cause">{reminderOverlay}</p>
+          <div class="rem-btns">
+            <button class="rem-ok" onclick={dismissReminder}>Got it</button>
+            <button class="rem-snooze" onclick={snoozeReminder}>10 min</button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if audioOnboardAsk && !startupAsk && !ghOnboardAsk}
+      <div class="startup-ask" role="dialog" aria-label="Enable music awareness?">
+        <div class="sa-card">
+          <img class="sa-pet" src={spriteUrl(dexId, isShiny)} alt="" onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(dexId))} />
+          <p class="sa-q">Want me to vibe with your music? I'll gently react when you're listening — I only sense the sound, never record it.</p>
+          <p class="sa-note">You can turn this on or off anytime in ⚙️ System → 🧑‍💻 Code → Music awareness.</p>
+          <div class="sa-btns">
+            <button class="sa-yes" onclick={audioOnboardYes}>Yes, vibe with me</button>
+            <button class="sa-no" onclick={audioOnboardNo}>Not now</button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
     {#if isNight}
       <div class="nightveil" aria-hidden="true"></div>
       <span class="moon" aria-hidden="true">🌙</span>
@@ -4075,6 +4194,10 @@
 
     {#if moodGlow}
       <div class="moodglow" style="--mg: {moodGlow}" aria-hidden="true"></div>
+    {/if}
+    {#if evoShimmer}
+      <!-- growth is near: a soft pulsing aura ~30s before the evolve offer (renderer-agnostic) -->
+      <div class="evo-shimmer" aria-hidden="true"></div>
     {/if}
     {#if delight === "star"}
       <span class="shootingstar" aria-hidden="true">✦</span>
@@ -4539,6 +4662,9 @@
     {#if evoOffer && evoTarget}
       <div class="evo-offer">
         <p class="evo-q">Ready to grow — together?</p>
+        {#if evoLineHasMega}
+          <p class="evo-hint">Each evolution brings me closer to my Mega form. ✦</p>
+        {/if}
         <div class="evo-btns">
           <button class="evo-yes" onclick={acceptEvolution}>Evolve ✦</button>
           <button class="evo-no" onclick={declineEvolution}>Not yet</button>
@@ -6023,6 +6149,85 @@
     background: rgba(8, 6, 16, 0.62);
     backdrop-filter: blur(3px);
   }
+  /* prominent reminder — a ringing clock + the cause, centred on top for ~25s. Overlay itself is
+     click-through (pointer-events:none) so it grabs the eye without locking the widget; only the
+     card + button are interactive. */
+  .reminder-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    animation: rem-in 0.3s ease both;
+  }
+  .rem-card {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    max-width: 78%;
+    padding: 20px 24px;
+    border-radius: 18px;
+    text-align: center;
+    background: linear-gradient(180deg, #1d1733, #14102a);
+    border: 1px solid rgba(159, 224, 255, 0.45);
+    box-shadow: 0 12px 44px rgba(0, 0, 0, 0.55), 0 0 0 5px rgba(159, 224, 255, 0.08);
+  }
+  .rem-clock {
+    font-size: 52px;
+    line-height: 1;
+    transform-origin: 50% 12%;
+    animation: rem-ring 0.7s ease-in-out infinite;
+    filter: drop-shadow(0 0 14px rgba(159, 224, 255, 0.55));
+  }
+  .rem-title {
+    font: 600 11px/1 system-ui, sans-serif;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #9fe0ff;
+  }
+  .rem-cause {
+    margin: 0;
+    font: 15px/1.4 system-ui, sans-serif;
+    color: #f4f0ff;
+    font-weight: 600;
+  }
+  .rem-btns { display: flex; gap: 8px; margin-top: 4px; }
+  .rem-ok,
+  .rem-snooze {
+    padding: 6px 18px;
+    border-radius: 999px;
+    border: 1px solid rgba(159, 224, 255, 0.5);
+    background: rgba(159, 224, 255, 0.14);
+    color: #eaf6ff;
+    font: 12.5px/1 system-ui, sans-serif;
+    cursor: pointer;
+  }
+  .rem-snooze {
+    border-color: rgba(185, 168, 230, 0.5);
+    background: rgba(185, 168, 230, 0.12);
+    color: #d8ccf6;
+  }
+  .rem-ok:hover { background: rgba(159, 224, 255, 0.24); }
+  .rem-snooze:hover { background: rgba(185, 168, 230, 0.22); }
+  @keyframes rem-in {
+    from { opacity: 0; transform: scale(0.94); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  @keyframes rem-ring {
+    0%, 100% { transform: rotate(0deg); }
+    15% { transform: rotate(-13deg); }
+    30% { transform: rotate(11deg); }
+    45% { transform: rotate(-8deg); }
+    60% { transform: rotate(6deg); }
+    75% { transform: rotate(-3deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rem-clock { animation: none; }
+  }
   .sa-card {
     display: flex;
     flex-direction: column;
@@ -6048,6 +6253,12 @@
     font-size: 13.5px;
     color: #f6f1ff;
     font-weight: 600;
+  }
+  .sa-note {
+    margin: -2px 0 0;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #b9add6;
   }
   .sa-btns {
     display: flex;
@@ -6710,6 +6921,28 @@
     transition: opacity 2s ease;
   }
 
+  /* pre-evolution shimmer: a soft golden aura that breathes around the pet just before it's ready */
+  .evo-shimmer {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 62%;
+    height: 62%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 226, 138, 0.32) 0%, rgba(255, 210, 120, 0.12) 42%, transparent 68%);
+    animation: evoShimmer 2.4s ease-in-out infinite;
+  }
+  @keyframes evoShimmer {
+    0%, 100% { opacity: 0.25; transform: translate(-50%, -50%) scale(0.92); }
+    50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.06); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .evo-shimmer { animation: none; opacity: 0.4; }
+  }
+
   /* comfort mode: a warm, slow-breathing hearth-glow that just stays with you */
   .comfortglow {
     position: absolute;
@@ -6991,6 +7224,13 @@
     margin: 0;
     font-size: 12.5px;
     color: #dce6ff;
+    text-align: center;
+  }
+  .evo-hint {
+    margin: 2px 0 0;
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: #b9a8e6;
     text-align: center;
   }
   .evo-btns {

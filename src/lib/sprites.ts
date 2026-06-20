@@ -190,6 +190,27 @@ export function hasEvolution(dexId: number): boolean {
   return !!EVOLVES_INTO[dexId]?.length;
 }
 
+// reverse of EVOLVES_INTO: the (first) species that evolves INTO a given dex id
+const EVOLVES_FROM: Record<number, number> = (() => {
+  const m: Record<number, number> = {};
+  for (const k in EVOLVES_INTO) for (const to of EVOLVES_INTO[k]) if (m[to] == null) m[to] = Number(k);
+  return m;
+})();
+
+/** Evolution depth from the base form: 1 = base, 2 = first evolution, 3 = second. */
+export function evoStage(dexId: number): number {
+  let s = 1, cur = dexId, guard = 0;
+  while (EVOLVES_FROM[cur] != null && guard++ < 6) { cur = EVOLVES_FROM[cur]; s += 1; }
+  return s;
+}
+
+/** The final form of this line (follows the first branch). */
+export function finalEvolution(dexId: number): number {
+  let cur = dexId, guard = 0;
+  while (EVOLVES_INTO[cur]?.length && guard++ < 6) cur = EVOLVES_INTO[cur][0];
+  return cur;
+}
+
 /** How many evolutions remain ahead of this form (follows the first branch). */
 export function evolutionStepsAhead(dexId: number): number {
   let steps = 0;

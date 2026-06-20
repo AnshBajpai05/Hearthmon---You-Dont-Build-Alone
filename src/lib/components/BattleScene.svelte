@@ -73,6 +73,16 @@
   let ctrlR = $state<"cpu" | "you">("cpu");
   let pendingMoves = $state<Move[] | null>(null); // shown when a "you" side must choose its move
   let resolveMove: ((m: Move) => void) | null = null;
+  // Heavy-move cooldown: a strong move can't be SPAMMED — after use it's locked for the next 2 of
+  // that side's turns (per move, so you rotate your kit instead of mashing one button).
+  let pickSide = $state<Side>("L"); // which side is currently choosing (cooldown lookup)
+  let turnNo = $state<{ L: number; R: number }>({ L: 0, R: 0 }); // each side's completed picks
+  let lockedUntil = $state<{ L: Record<string, number>; R: Record<string, number> }>({ L: {}, R: {} });
+  const HEAVY_POWER = 90; // power at/above which a move counts as "heavy"
+  const HEAVY_CD = 2; // turns a heavy move stays locked after use
+  const isHeavy = (m: Move) => (m.power ?? 0) >= HEAVY_POWER;
+  const moveCdLeft = (side: Side, m: Move) =>
+    Math.max(0, (lockedUntil[side][m.name] ?? -1) - turnNo[side] + 1);
 
   // ---- fx state ----
   let arenaEl = $state<HTMLDivElement | null>(null);
@@ -206,6 +216,8 @@
     hpR = ghostR = maxR;
     animL = animR = "idle";
     chargedL = chargedR = false;
+    turnNo = { L: 0, R: 0 }; // fresh heavy-move cooldowns each battle
+    lockedUntil = { L: {}, R: {} };
     callout = null;
     confetti = [];
     clearFx();
@@ -220,7 +232,10 @@
     msg = `${disp(selL)} vs ${disp(selR)}!`;
     await wait(700);
 
-    let turn: Side = firstSide(selL.id, selR.id); // faster Pokémon strikes first
+    let turn: Side = firstSide(selL.id, selR.id); // speed-weighted coin toss — fast favoured, not certain
+    const tossWinner = turn === "L" ? selL : selR;
+    showCallout(`🪙 ${disp(tossWinner)} moves first!`, "charge");
+    await wait(900);
     while (alive && phase === "battle" && hpL > 0 && hpR > 0) {
       await doTurn(turn);
       turn = turn === "L" ? "R" : "L";
@@ -255,12 +270,16 @@
   }
 
   // self-control: pause the acting side's turn for a move pick (resolved by a button click).
-  function playerMove(dexId: number): Promise<Move> {
+  function playerMove(dexId: number, side: Side): Promise<Move> {
+    pickSide = side;
+    turnNo[side] += 1; // advance this side's turn counter (drives cooldowns)
     pendingMoves = movesFor(dexId).slice(0, 4); // the learnset's top four
     msg = "Choose a move…";
     return new Promise((res) => (resolveMove = res));
   }
   function pickPlayerMove(m: Move) {
+    if (moveCdLeft(pickSide, m) > 0) return; // on cooldown — the button is disabled anyway
+    if (isHeavy(m)) lockedUntil[pickSide][m.name] = turnNo[pickSide] + HEAVY_CD; // lock for 2 turns
     pendingMoves = null;
     const r = resolveMove;
     resolveMove = null;
@@ -275,7 +294,7 @@
     const ctrl = side === "L" ? ctrlL : ctrlR;
     const mv =
       ctrl === "you"
-        ? await playerMove(atk.id) // self-control: wait for the player's pick
+        ? await playerMove(atk.id, side) // self-control: wait for the player's pick
         : chooseMove(atk.id, def.type, side === "L" ? hpL / maxL : hpR / maxR); // identity/temperament AI
     if (!alive || phase !== "battle") return;
     const res = calcTurn(mv, atk.id, def.id, atk.type, def.type); // sim: stats → damage (separate from the choice)
@@ -639,9 +658,16 @@
       {#if pendingMoves}
         <div class="movepick">
           {#each pendingMoves as m (m.name)}
-            <button class="mvbtn" style="--mc: {m.color}" onclick={() => pickPlayerMove(m)}>
+            {@const cd = moveCdLeft(pickSide, m)}
+            <button
+              class="mvbtn"
+              class:cooling={cd > 0}
+              disabled={cd > 0}
+              style="--mc: {m.color}"
+              onclick={() => pickPlayerMove(m)}
+            >
               <span class="mvname">{displayName(m.name)}</span>
-              <span class="mvmeta">{m.type}{m.power ? ` · ${m.power}` : ""}</span>
+              <span class="mvmeta">{cd > 0 ? `⏳ ${cd} turn${cd > 1 ? "s" : ""}` : `${m.type}${m.power ? ` · ${m.power}` : ""}`}</span>
             </button>
           {/each}
         </div>
@@ -802,6 +828,15 @@
   .mvbtn:hover {
     transform: translateY(-1px);
     background: color-mix(in srgb, var(--mc, #888) 28%, #160f24);
+  }
+  .mvbtn.cooling {
+    opacity: 0.45;
+    filter: grayscale(0.7);
+    cursor: not-allowed;
+  }
+  .mvbtn.cooling:hover {
+    transform: none;
+    background: color-mix(in srgb, var(--mc, #888) 16%, #160f24);
   }
   .mvname { font-size: 11px; font-weight: 700; }
   .mvmeta { font-size: 9px; color: #b9aee0; text-transform: capitalize; }
