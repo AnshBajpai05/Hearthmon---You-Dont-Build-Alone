@@ -6,6 +6,13 @@ node_modules
 secret_key.txt
 /dist/
 
+# Updater signing key (NEVER commit — rotating it breaks every existing update + signature).
+# Lives one level up like secret_key.txt; these are defensive entries in case it's ever copied in.
+hearthmon_updater.key
+hearthmon_updater.key.pub
+updater_key_password.txt
+*.key
+
 # Founder's Mark: local builder registry (CRM from issued passes — handles + machine hashes).
 # Stays local; commit only the derived badge snippet from tools/builders_badge.ps1.
 /tools/builders.json
@@ -28,6 +35,10 @@ vite.config.ts.timestamp-*
 # python caches
 __pycache__/
 *.pyc
+
+# Combat Identity: raw PokeAPI CSV inputs (bulk + re-downloadable by tools/gen_combat_identity.ps1).
+# The DERIVED truth — src/lib/combat_identity.ts — is committed; these raw inputs are not.
+/tools/pokeapi/
 
 # kaggle voice-clone kit: ship the scripts, never the IP audio or the zip
 /kaggle_voice_clone/reference_clips/*.mp3

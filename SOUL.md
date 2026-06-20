@@ -27,6 +27,7 @@ month six, not day one — because history accumulates.
 - ❌ A comparison/leaderboard/social-competition surface
 - ❌ A hustle-culture cheerleader ("YOU GOT THIS!!!")
 - ❌ A pet that dies, gets sick, or decays if you don't show up
+- ❌ A maintenance game — draining bars, required feeding, or upkeep loops (the number becomes the feature)
 
 ---
 
@@ -67,6 +68,9 @@ month six, not day one — because history accumulates.
 - **Local-first, always.** Everything lives in one SQLite file on the user's machine. Nothing is uploaded.
 - This is the trust foundation. Any future cloud/AI feature must be **opt-in** and must not weaken it.
 - The user's memories are their journal. Treat the data with the gravity that implies.
+- **The Hearth Shelf** — the things a user chooses to preserve (people, pets, places, objects,
+  projects, even comfort characters) — is the gravest data we hold. A bug there is a *betrayal*,
+  not an annoyance; **export is non-negotiable.** Full doctrine: [docs/HEARTH_SHELF.md](docs/HEARTH_SHELF.md).
 
 ## Healthy attachment
 
@@ -74,6 +78,16 @@ month six, not day one — because history accumulates.
   "reach out to someone?" is good. Fostering dependency is not.
 - If moods trend very dark for days: one quiet, non-pushy line pointing toward a real person
   they trust. Designed up front (see The Vault / safety design), never bolted on, never repeated into nagging.
+
+## Care & engagement
+
+> **Care may create rewards. Care may never prevent penalties.**
+
+Optional care (treats, play, rest, habitat) exists to create *opportunities* to interact, never
+*obligations*. The pet may become treat-curious, playful, sleepy, or cozy — invitations that pass
+harmlessly if ignored. Interaction must **build** warmth (keepsakes that only accumulate), never
+spend it. No draining bar, ever. A week away earns "had a long nap, welcome back" — nothing else.
+Full design: [docs/CARE_SYSTEM.md](docs/CARE_SYSTEM.md).
 
 ---
 

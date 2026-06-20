@@ -2,11 +2,15 @@
 
 Hey — Ansh made this and sent it to you. 2-minute guide so you're not lost.
 
-## ▶ Run it
-- **Windows 10 / 11.** Just double-click **`Hearthmon-Friend.exe`**. No install.
+## ▶ Install it (once)
+- **Windows 10 / 11.** Grab the latest **Hearthmon setup** from the
+  [Releases page](https://github.com/AnshBajpai05/Hearthmon-Trial_Beta/releases/latest) and run it.
 - Windows may say *"Windows protected your PC"* → click **More info → Run anyway**.
   (That's just because it's not code-signed — not because it's unsafe.)
 - Nothing is uploaded. It runs **100% on your machine**, no account, no server.
+- **Updates come to you.** When Ansh ships a new build, Hearthmon notices it on launch and offers
+  **Update now** — your **memories, settings, and companion are all kept**. No re-downloading, no
+  reinstalling. Prefer to wait? Tap **Later** — it won't pester you; it just asks again another day.
 
 ## ✦ What it is
 A little Pokémon that lives in the corner of your screen while you work. It mostly

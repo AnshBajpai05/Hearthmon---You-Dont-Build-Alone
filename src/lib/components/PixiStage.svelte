@@ -10,7 +10,8 @@
     Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture, BlurFilter
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
-  import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL } from "$lib/sprites";
+  import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL, FORM_FLAME } from "$lib/sprites";
+  import { type AnimKind, FAMILY, VARIANT } from "$lib/fx";
   import { STATS } from "$lib/stats";
   import { founderMark } from "$lib/founder";
   import { biomeForType } from "$lib/biomes";
@@ -36,16 +37,22 @@
     audioEnergy?: number; // 0..1 smoothed system-audio loudness (music awareness)
     audioBeat?: number; // increments on each detected beat
     audioStrength?: number; // 0..1 strength of the latest beat
+    spriteOverride?: string | null; // mega/special form: a full sprite URL replacing the dex sprite
+    spriteFallback?: string | null; // if spriteOverride fails, drop to THIS (the form's own static) — not the base
+    typeOverride?: string | null; // mega/special form element shift → biome + ambient
+    mega?: boolean; // in a special form → draw the energy aura
   }
   // every FX signal Classic renders on its DOM pet, bridged for the Pixi body
   export interface AliveFx {
     switchFx: "none" | "recall" | "ballout" | "gap" | "throw" | "release";
     attacking: boolean;
-    atkKind: "beam" | "orb" | "stream" | "slash" | "bolt" | "quake" | "status" | null;
+    atkKind: AnimKind | null;
     atkColor: string;
     atkEmoji: string;
     atkName: string;
     atkCls: 1 | 2 | 3;
+    atkIntensity: number; // 0..1 (move power) → scales size / particles
+    atkFlavor: string; // v4: move colour tinted toward the species' 2nd type → sparks + glow
     dir: 1 | -1;
     evoActive: boolean;
     evoFlash: boolean;
@@ -56,11 +63,15 @@
     eating: boolean;
     birthday: boolean;
     breakthrough: boolean; // triggers a brief environmental bloom
+    reactionKind: string | null; // v3 poke/irritate beat (flare/phase/doze/aura/spark/shiver/bounce/turn)
+    reactionN: number; // nonce — rising edge replays the beat
+    reactionColor: string; // pet's primary type colour for the beat FX
   }
   const NO_FX: AliveFx = {
     switchFx: "none", attacking: false, atkKind: null, atkColor: "#ffffff", atkEmoji: "✨",
-    atkName: "", atkCls: 2, dir: -1, evoActive: false, evoFlash: false, visitorId: null,
-    visitorShiny: false, visitorX: 0, visitorFlip: false, eating: false, birthday: false, breakthrough: false
+    atkName: "", atkCls: 2, atkIntensity: 0.5, atkFlavor: "#ffffff", dir: -1, evoActive: false, evoFlash: false, visitorId: null,
+    visitorShiny: false, visitorX: 0, visitorFlip: false, eating: false, birthday: false, breakthrough: false,
+    reactionKind: null, reactionN: 0, reactionColor: "#ffffff"
   };
   let {
     dexId,
@@ -82,7 +93,11 @@
     fx = NO_FX,
     audioEnergy = 0,
     audioBeat = 0,
-    audioStrength = 0
+    audioStrength = 0,
+    spriteOverride = null,
+    spriteFallback = null,
+    typeOverride = null,
+    mega = false
   }: Props = $props();
 
   let host: HTMLDivElement;
@@ -104,7 +119,7 @@
       const a = new Application();
       // biome palette is MUTABLE so a form switch can change the whole world live
       // (no teardown). applyBiome() recomputes these + recolors the scene.
-      let petType = dexEntry(dexId)?.type ?? "normal"; // drives type-specific idles
+      let petType = typeOverride ?? dexEntry(dexId)?.type ?? "normal"; // drives type-specific idles (mega may shift it)
       // "level"/power proxy from the species base-stat total → scales ground-lightning size & impact
       // (a small early mon = small bolts; a legendary = big ones). 0 (weak) .. 1 (legendary-tier).
       const bstPower = (d: number) => {
@@ -127,8 +142,17 @@
       let ambKind = "none"; // type-driven premium ambient: lightning | flare | rays
       let vpSig = ""; // gradient repaint signature (cleared on biome change)
 
-      // transparent — so the desktop shows through (parity with the see-through widget)
-      await a.init({ backgroundAlpha: 0, antialias: true, resizeTo: host });
+      // transparent — so the desktop shows through (parity with the see-through widget).
+      // PIN WebGL (not WebGPU): the vanish-recovery below hooks `webglcontextlost` + polls
+      // `gl.isContextLost()`, both WebGL-only. Left unpinned, Pixi v8 on WebView2 can pick WebGPU,
+      // whose device-loss is a different (Promise) API → our recovery becomes dead code and a lost
+      // canvas stays blank forever (= "the widget vanished"). `low-power` binds the always-on
+      // integrated GPU rather than a discrete GPU that power-gates on idle (the usual trigger);
+      // failIfMajorPerformanceCaveat:false lets it fall back to software instead of going blank.
+      await a.init({
+        backgroundAlpha: 0, antialias: true, resizeTo: host,
+        preference: "webgl", powerPreference: "low-power", failIfMajorPerformanceCaveat: false
+      });
       if (destroyed) {
         a.destroy(true);
         return;
@@ -172,6 +196,11 @@
         const b = Math.round((c0 & 255) + ((c1 & 255) - (c0 & 255)) * t);
         return (r << 16) | (g << 8) | b;
       };
+      // Rich, saturated flame colours for special forms (the biome `light` is a pale ambient tint
+      // that washes out as fire). ONE source — FORM_FLAME (shared with the attack/irritate FX so a
+      // form's whole presence reads in one colour); converted to ints once for the render hot-path.
+      const MEGA_FLAME: Record<string, number> = {};
+      for (const [k, v] of Object.entries(FORM_FLAME)) MEGA_FLAME[k] = hexNum(v);
       function band(x: number, y: number, w: number, h: number, c0: number, c1: number, n: number) {
         for (let i = 0; i < n; i++) back.rect(x, y + (h * i) / n, w, h / n + 1).fill({ color: lerpCol(c0, c1, i / n) });
       }
@@ -187,7 +216,7 @@
       // ════ PARTICLES (kind-driven) ════
 
       const applyBiome = (newDex: number) => {
-        petType = dexEntry(newDex)?.type ?? "normal";
+        petType = typeOverride ?? dexEntry(newDex)?.type ?? "normal";
         petPower = bstPower(newDex);
         biome = biomeForType(petType);
         sky0 = hexNum(biome.wall[0]);
@@ -340,7 +369,7 @@
         // ── animated path: decode FRAME 0, show it immediately, stream the rest ──
         if (ImageDecoderCtor) {
           try {
-            const resp = await fetch(spriteUrl(newDex, newShiny), { mode: "cors" });
+            const resp = await fetch(spriteOverride || spriteUrl(newDex, newShiny), { mode: "cors" });
             if (!live()) return;
             if (resp.ok) {
               const buf = await resp.arrayBuffer();
@@ -373,7 +402,7 @@
         }
 
         // ── fallback: a single static image (no WebCodecs / decode failed) ──
-        const staticImg = (await loadImg(spriteUrl(newDex, newShiny))) ?? (await loadImg(fallbackUrl(newDex, newShiny)));
+        const staticImg = (await loadImg(spriteOverride || spriteUrl(newDex, newShiny))) ?? (await loadImg((spriteOverride && spriteFallback) || fallbackUrl(newDex, newShiny)));
         if (!live()) return;
         if (!staticImg) { petReady = true; return; }
         natW = staticImg.naturalWidth || 96;
@@ -464,6 +493,9 @@
       const petSep = new Graphics(); // soft dark halo behind the pet → silhouette reads first
       petSep.filters = [new BlurFilter({ strength: 20, quality: 3 })];
       petSep.visible = false;
+      const megaAura = new Graphics(); // mega/special-form energy aura — additive, pulsing
+      megaAura.blendMode = "add";
+      megaAura.visible = false;
       const petShadow = new Graphics();
       drawShadow = () => {
         petShadow.clear();
@@ -857,7 +889,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        groundRings, groundArcs, scene, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
+        groundRings, groundArcs, scene, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, megaAura, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
       );
 
 
@@ -912,13 +944,13 @@
       const sparkList: { g: Graphics; vx: number; vy: number; life: number }[] = [];
       function spawnSparks(color: string, kind: string, dir: number) {
         const col = hexNum(color);
-        const n = kind === "status" || kind === "quake" ? 12 : 16;
+        const radial = kind === "status" || kind === "burst";
+        const n = radial ? 14 : 16;
         for (let i = 0; i < n; i++) {
           const g = new Graphics().circle(0, 0, 1.5 + Math.random() * 3).fill({ color: col, alpha: 0.95 });
-          const ang =
-            kind === "status" || kind === "quake"
-              ? Math.random() * Math.PI * 2
-              : (dir > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 1.1;
+          const ang = radial
+            ? Math.random() * Math.PI * 2
+            : (dir > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 1.1;
           const sp = 70 + Math.random() * 150;
           sparks.addChild(g);
           sparkList.push({ g, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30, life: 0.45 + Math.random() * 0.45 });
@@ -932,6 +964,8 @@
       const squash = new Spring(0, 220, 16);
       let jiggle = 0;
       let petEnergy = 1; // smoothed environmental coupling parameter
+      let hoverTarget = 0; // 1 while the pointer hovers the creature, else 0
+      let hoverE = 0; // smoothed hover (eases toward hoverTarget) → stokes the mega atmosphere
       let hopBurstT = 0; // tiny burst when jumping
       let prevBreakthrough = false;
       let mode: "idle" | "drag" | "pet" = "idle";
@@ -948,6 +982,8 @@
       // ── FX bookkeeping (rising-edge detection for the bridged brain signals) ──
       let prevAttacking = false;
       let atkT = 0; // seconds into the current attack
+      let prevReactionN = 0; // v3 reaction rising-edge
+      let rxPhaseT = 0; // ghostly "phase" alpha-dip timer (seconds)
       let prevSwitch = "none"; // last switchFx value
       let ceremonyT = 0; // seconds into the current ceremony phase
       let prevVisitorId: number | null = null;
@@ -1003,6 +1039,8 @@
         const gx = e.global.x;
         const gy = e.global.y;
         if (mode !== "drag") lean.target = Math.max(-0.16, Math.min(0.16, (gx - posX.value) / a.screen.width));
+        // hover = pointer near the creature's body (a touch wider than the petting box) → stokes mega FX
+        hoverTarget = mode !== "drag" && Math.abs(gx - posX.value) < petPxRef * 0.75 && Math.abs(gy - (posY.value - petPxRef * 0.45)) < petPxRef * 0.7 ? 1 : 0;
         if (downAt && Math.hypot(gx - downAt.x, gy - downAt.y) > 6) mode = "drag";
         if (mode === "drag") {
           posX.target = gx;
@@ -1046,6 +1084,7 @@
       };
       a.stage.on("pointerup", () => release(true));
       a.stage.on("pointerupoutside", () => release(false));
+      a.stage.on("pointerleave", () => { hoverTarget = 0; }); // pointer left the canvas → drop hover
 
       const layout = () => {
         paintBack();
@@ -1065,16 +1104,31 @@
       let t = 0;
       let prevDexId = dexId;
       let prevShiny = shiny;
+      let prevSpriteOverride = spriteOverride; // mega/form swap → reload the sprite
       
+      // §8.4 — throttle the heavy globe FX (galaxy ~3500 + ring stars ~1500 sprites) to ~30fps
+      // rather than every animation frame. Slow orbital/twinkle motion is imperceptible at 30fps,
+      // but it roughly halves the dominant per-frame sprite work for an always-on desktop widget.
+      // (DPR/resolution is intentionally NOT capped here — that resizes the transparent WebGL
+      // backing store and risks re-triggering the WebView2 "washed globe" recomposite issue.)
+      let heavyAcc = 0;
+      const HEAVY_STEP = 1 / 30;
       const tick = (ticker: { deltaMS: number }) => {
-        if (dexId !== prevDexId || shiny !== prevShiny) {
+        if (dexId !== prevDexId || shiny !== prevShiny || spriteOverride !== prevSpriteOverride) {
           prevDexId = dexId;
           prevShiny = shiny;
+          prevSpriteOverride = spriteOverride;
           void reloadPet(dexId, shiny);
         }
       
         const dt = Math.min(0.05, ticker.deltaMS / 1000);
         t += dt;
+        // §8.4: gate the heavy galaxy/ring sprite loops to ~30fps; carry the accumulated dt so
+        // angular motion advances at the correct speed even though it updates on fewer frames.
+        heavyAcc += dt;
+        let heavyDt = 0;
+        if (heavyAcc >= HEAVY_STEP) { heavyDt = heavyAcc; heavyAcc = 0; }
+        const heavyStep = heavyDt > 0;
         const w = W();
         const h = H();
         const F = fx ?? NO_FX;
@@ -1191,8 +1245,8 @@
           // At y = gcy + 0.62·gR the sphere is 0.785·gR wide; 0.72·gR puts the rim at ~92% → boundary
           const gal = gR * 0.72;
 
-          for (const p of galaxyP) {
-            p.angle += p.speed * dt;
+          if (heavyStep) for (const p of galaxyP) {
+            p.angle += p.speed * heavyDt;
             const ca   = Math.cos(p.angle);
             p.sprite.x = ca * p.radius * 1.25;                        // vessel ASPECT
             p.sprite.y = (1 - p.depth) * 0.40 - p.depth * 0.30 * ca * ca; // vessel RISE
@@ -1233,8 +1287,8 @@
               ringSig = lightCol;
               for (const s of ringStars) s.sprite.tint = lerpCol(lightCol, 0xffffff, s.mix);
             }
-            for (const s of ringStars) {
-              s.ang += s.speed * dt;
+            if (heavyStep) for (const s of ringStars) {
+              s.ang += s.speed * heavyDt;
               const sa = Math.sin(s.ang), R = s.ringR * gR;
               const front = sa * 0.5 + 0.5;             // 0 behind the globe → 1 toward the viewer
               s.sprite.x = cx + Math.cos(s.ang) * R;
@@ -1448,6 +1502,7 @@
         if (targetEnergy - petEnergy > 0.5) hopBurstT = 0.5; // Trigger tiny response burst
         hopBurstT = Math.max(0, hopBurstT - dt);
         petEnergy += (targetEnergy - petEnergy) * (dt / 0.4); // momentum / delayed response
+        hoverE += (hoverTarget - hoverE) * (dt / 0.18); // ease toward hover state (~180ms)
         // normalized breathing sine (-1 to +1) that strictly matches the pet's lung speed
         const petBreath = Math.sin(t * (sleeping ? 1.0 : 1.7));
         const envBreath = (petBreath * 0.45 + 0.5) * petEnergy; // pulse amp trimmed ~10% → subconscious, not a visible effect
@@ -1469,6 +1524,60 @@
         petSep.visible = habitat;
         if (habitat) {
           petSep.ellipse(posX.value, posY.value - petPx * 0.45, petPx * 0.46, petPx * 0.6).fill({ color: 0x05040a, alpha: 0.16 });
+        }
+
+        // mega/special-form FIRE aura — rising flame tongues + hot core + embers, tinted by the
+        // form's element via lightCol (blue for Charizard X's dragon, orange for a fire mega, …).
+        // Additive, so the layers stack into living fire. Replaces the old flat ellipse glow —
+        // signals "this is more than a recolour" even when the form sprite is static.
+        // fire-typed forms borrow the richer hearth-flame orange; other elements keep their light
+        // tint (Charizard X's dragon → blue). Embers ride a hot, near-white tint of that colour.
+        // Hoisted to the tick scope so the mega room-atmosphere below shares the same fire colour.
+        const flameCol = MEGA_FLAME[petType] ?? lightCol;
+        const emberCol = lerpCol(flameCol, 0xffffff, 0.55);
+        megaAura.clear();
+        megaAura.visible = mega;
+        if (mega) {
+          const ax = posX.value;
+          const baseY = posY.value + petPx * 0.06; // flame roots near the feet
+          const baseW = petPx * 0.46; // fire spreads to roughly the body's width
+          const pul = (0.85 + 0.15 * Math.sin(t * 3)) * (1 + hoverE * 0.4); // hover stokes the fire
+
+          // hot core bloom behind the body — the replacement for the flat ellipse "disc"
+          megaAura.ellipse(ax, posY.value - petPx * 0.4, petPx * 0.48 * pul, petPx * 0.7 * pul).fill({ color: flameCol, alpha: 0.1 * pul });
+          megaAura.circle(ax, posY.value - petPx * 0.3, petPx * 0.2 * pul).fill({ color: 0xffffff, alpha: 0.05 });
+
+          // one smooth flame tongue (teardrop): base width w, height h, swaying tip
+          const tongue = (x0: number, w: number, h: number, sway: number, col: number, a: number) => {
+            megaAura.moveTo(x0 - w, baseY);
+            megaAura.quadraticCurveTo(x0 - w * 0.5, baseY - h * 0.55, x0 + sway, baseY - h);
+            megaAura.quadraticCurveTo(x0 + w * 0.5, baseY - h * 0.55, x0 + w, baseY);
+            megaAura.closePath();
+            megaAura.fill({ color: col, alpha: a });
+          };
+
+          // tongues licking around the silhouette — taller in the middle, shorter at the edges, flickering
+          const N = 11;
+          for (let i = 0; i < N; i++) {
+            const u = i / (N - 1);
+            const x0 = ax + (u - 0.5) * 2 * baseW;
+            const seed = i * 1.7;
+            const edge = 1 - Math.abs(u - 0.5) * 1.05; // ~0 at the edges → 1 at the centre
+            const flick = 0.55 + 0.45 * Math.sin(t * 7 + seed * 2.3);
+            const h = petPx * (0.42 + 0.78 * edge) * flick * pul; // centre licks up past the head
+            const w = petPx * 0.085 * (0.7 + 0.6 * edge);
+            const sway = Math.sin(t * 2.6 + seed) * petPx * 0.07;
+            tongue(x0, w, h, sway, flameCol, 0.16); // outer flame (rich fire tint)
+            tongue(x0, w * 0.5, h * 0.62, sway * 0.6, 0xffffff, 0.1); // white-hot inner core
+          }
+
+          // embers peeling off the top, drifting up and fading
+          for (let i = 0; i < 10; i++) {
+            const ph = (t * 0.5 + i * 0.1) % 1;
+            const ex = ax + Math.sin(i * 2.1 + t * 1.3) * baseW * (0.4 + ph * 0.7);
+            const ey = baseY - ph * petPx * 1.15;
+            megaAura.circle(ex, ey, 1.4 * (1 - ph)).fill({ color: emberCol, alpha: 0.9 * (1 - ph) });
+          }
         }
 
         // water-only: reflection + rolling waves
@@ -1538,7 +1647,23 @@
         // Music pulse + Pet influence (breathing and energy)
         const pulse = audioEnergy * 0.8 + (beatT > 0 ? (beatT / 0.32) * 0.4 : 0);
 
-        if (ambKind === "lightning") {
+        if (mega) {
+          // A mega dictates the room like a hearth mon — its element-fire breathes into the whole
+          // viewport, replacing the base element ambient. HOVERING the creature stokes it: the
+          // atmosphere swells, the floor glows hotter and heat motes climb faster toward you.
+          const stoke = 0.45 + 0.4 * petEnergy + hoverE * 0.9;
+          hazeG.rect(vpx, vpy, vpw, vph).fill({ color: flameCol, alpha: Math.min(0.2, 0.045 * stoke) });
+          ambient.ellipse(posX.value, groundY() + 4, pw * (0.7 + hoverE * 0.5) + envBreath * pw * 0.2, pw * 0.16).fill({ color: flameCol, alpha: Math.min(0.3, 0.12 * stoke) });
+          const motes = 5 + Math.round(hoverE * 5); // denser heat-shimmer on hover
+          for (let i = 0; i < motes; i++) {
+            const ph = (t * 0.4 + i / motes) % 1;
+            const mx = posX.value + Math.sin(i * 2.3 + t) * pw * (0.4 + ph * 0.5);
+            const my = groundY() - ph * petPx * (1 + hoverE * 0.4);
+            ambient.circle(mx, my, (1 + hoverE) * (1 - ph)).fill({ color: emberCol, alpha: (0.3 + 0.4 * hoverE) * (1 - ph) });
+          }
+          flash.rect(vpx, vpy, vpw, vph).fill({ color: flameCol, alpha: 0.015 + pulse * 0.04 + envBreath * 0.02 + hoverE * 0.05 });
+          petLight = Math.max(petLight, pulse * 0.18 + envBreath * 0.06 + hoverE * 0.28);
+        } else if (ambKind === "lightning") {
           // Energetic chaos — the only explosive music-sync effect
           hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0x001133, alpha: 0.05 });
           if (beatStrike && strikeT <= 0) {
@@ -1572,7 +1697,8 @@
             }
           }
         } else if (ambKind === "hearth") {
-          // Hearth-fire energy: warm, alive, responds to pet breath and movement
+          // Hearth-fire energy: warm, alive, responds to pet breath and movement.
+          // (Megas never reach here — the mega-atmosphere branch above owns the room for them.)
           hazeG.rect(vpx, vpy, vpw, vph).fill({ color: 0xff6600, alpha: 0.08 * petEnergy });
           for (let i = 0; i < 5; i++) {
             // Micro-variation: dark pockets and slight density changes
@@ -2049,7 +2175,11 @@
         // a tiny energy "vibe" bob — subtle (max ~2.5px), only with audible music
         const vibe = audioEnergy > 0.12 && !sleeping ? Math.sin(t * 9) * audioEnergy * 2.5 : 0;
         mesh.y = posY.value + floatBob - vibe;
-        if (sw !== "recall") mesh.alpha = F.evoActive ? 1 : (sleeping ? 0.84 : 1) * fireFlick;
+        if (sw !== "recall") {
+          // v3 "phase" reaction (ghostly mons): a quick alpha flicker → vanish + reappear.
+          const rxAlpha = rxPhaseT > 0 ? 0.18 + 0.82 * Math.abs(Math.sin(rxPhaseT * 11)) : 1;
+          mesh.alpha = (F.evoActive ? 1 : (sleeping ? 0.84 : 1) * fireFlick) * rxAlpha;
+        }
 
         // zzz while sleeping
         if (sleeping) {
@@ -2114,41 +2244,214 @@
         // attack: rising edge → spawn directional/burst sparks; render the move archetype
         if (F.attacking && !prevAttacking) {
           atkT = 0;
-          spawnSparks(F.atkColor, F.atkKind ?? "stream", dirx);
+          spawnSparks(F.atkFlavor, F.atkKind ?? "stream", dirx); // v4: sparks carry the species tint
         }
         prevAttacking = F.attacking;
         if (F.attacking) atkT += dt;
+
+        // v3 Reaction Identity: each poke (new reactionN) plays a species beat, reusing the
+        // engine's own springs/sparks/light so it feels native, not bolted on.
+        if (F.reactionN !== prevReactionN) {
+          prevReactionN = F.reactionN;
+          const rc = F.reactionColor;
+          switch (F.reactionKind) {
+            case "flare":  squash.nudge(1.5); spawnSparks(rc, "burst", dirx); break;
+            case "bounce": squash.nudge(1.3); spawnSparks(rc, "burst", dirx); break;
+            case "spark":  squash.nudge(0.8); spawnSparks(rc, "dir", dirx); petLight = Math.max(petLight, 0.45); break;
+            case "aura":   spawnSparks(rc, "burst", dirx); petLight = Math.max(petLight, 0.3); break;
+            case "shiver": jiggle = Math.min(14, jiggle + 7); break;
+            case "doze":   squash.nudge(-0.7); break;
+            case "turn":   lean.nudge(dirx * 1.2); break;
+            case "phase":  rxPhaseT = 0.6; break;
+          }
+        }
+        if (rxPhaseT > 0) rxPhaseT = Math.max(0, rxPhaseT - dt);
 
         beamG.clear();
         proj.visible = false;
         callout.visible = false;
         if (F.attacking) {
           const col = hexNum(F.atkColor);
-          const k = F.atkKind;
+          const flav = hexNum(F.atkFlavor); // v4: species secondary-type tint for the outer layer
+          const k = F.atkKind ? FAMILY[F.atkKind] : null; // the 8 render families
+          const vr = F.atkKind ? VARIANT[F.atkKind] : null; // per-kind modulation (spread/speed/shape/…)
+          const kn = F.atkKind; // the specific ~24 kind, for sub-dispatch within a family
+          const I = 0.6 + 0.55 * F.atkIntensity; // power → size multiplier
           if (k === "beam") {
-            const len = size * 1.1;
-            const x0 = dirx > 0 ? size * 0.3 : -size * 0.3 - len;
-            beamG.roundRect(x0, -6, len, 12, 6).fill({ color: col, alpha: 0.55 + Math.random() * 0.3 });
-            beamG.roundRect(x0, -2.5, len, 5, 2.5).fill({ color: 0xffffff, alpha: 0.7 });
-          } else if (k === "bolt") {
-            const seg = (size * 1.0) / 5;
-            beamG.moveTo(dirx * size * 0.3, 0);
-            for (let i = 1; i <= 5; i++) beamG.lineTo(dirx * (size * 0.3 + seg * i), (Math.random() - 0.5) * 22);
-            beamG.stroke({ color: col, width: 3, alpha: 0.9 });
-          } else if (k === "slash") {
-            beamG.arc(dirx * size * 0.2, 0, size * 0.5, -0.9, 0.9).stroke({ color: col, width: 5, alpha: 0.85 });
-            beamG.arc(dirx * size * 0.2, 0, size * 0.5, -0.6, 0.6).stroke({ color: 0xffffff, width: 2, alpha: 0.7 });
-          } else if (k === "status" || k === "quake") {
-            const rr = size * (0.42 + 0.12 * Math.sin(atkT * 12));
-            beamG.circle(0, -size * 0.1, rr).stroke({ color: col, width: 3, alpha: 0.5 });
-            beamG.circle(0, -size * 0.1, rr * 0.66).stroke({ color: col, width: 2, alpha: 0.35 });
+            // focused ray — thick-beam (wide), thin-ray (narrow + long), sky-strike (a bolt from above)
+            if (kn === "sky-strike") {
+              // a jagged bolt striking down onto the pet — Thunder / Thunderbolt
+              let bx = dirx * size * 0.1, by = -size * 1.4;
+              beamG.moveTo(bx, by);
+              for (let i = 1; i <= 5; i++) {
+                bx = dirx * size * 0.1 + (Math.random() - 0.5) * size * 0.3;
+                by = -size * 1.4 + ((size * 1.5) / 5) * i;
+                beamG.lineTo(bx, by);
+              }
+              beamG.stroke({ color: 0xffffff, width: 3 * I, alpha: 0.9 });
+              beamG.circle(dirx * size * 0.1, size * 0.05, size * 0.3 * I).fill({ color: col, alpha: 0.4 });
+            } else {
+              const wd = vr?.spread ?? 1;
+              const len = size * 1.1 * I * (vr?.len ?? 1);
+              const x0 = dirx > 0 ? size * 0.3 : -size * 0.3 - len;
+              beamG.roundRect(x0, -6 * I * wd, len, 12 * I * wd, 6).fill({ color: col, alpha: 0.55 + Math.random() * 0.3 });
+              beamG.roundRect(x0, -2.5 * I * wd, len, 5 * I * wd, 2.5).fill({ color: 0xffffff, alpha: 0.7 });
+            }
+          } else if (k === "breath") {
+            // a widening cone exhaled from the mouth — modulated per kind (vr): flame-cone (soft hot
+            // gradient), spray (droplets), wind (thin streaks), gas (slow faint cloud).
+            const wv = vr?.waver ?? 1;
+            const aMul = vr?.alpha ?? 1;
+            const x0 = dirx * size * 0.28, y0 = -size * 0.05;
+            const len = size * (0.9 + I * 0.5) * (vr?.len ?? 1);
+            const spread = size * (0.26 + I * 0.18) * (vr?.spread ?? 1);
+            const tip = x0 + dirx * len;
+            if (vr?.shape === "cloud") {
+              // gas: a slow, wide, diffuse cloud of puffs — not a sharp cone
+              for (let i = 0; i < 7; i++) {
+                const u = i / 6;
+                beamG.circle(x0 + dirx * len * u, y0 + (Math.random() - 0.5) * spread * (0.6 + u), spread * (0.4 + u * 0.5)).fill({ color: i % 2 ? col : flav, alpha: 0.1 * aMul });
+              }
+            } else {
+              const fan = (a: number, c: number, am: number) => {
+                beamG.moveTo(x0, y0);
+                beamG.lineTo(tip, y0 - spread * a * (0.7 + Math.random() * 0.5 * wv));
+                beamG.lineTo(tip, y0 + spread * a * (0.7 + Math.random() * 0.5 * wv));
+                beamG.closePath();
+                beamG.fill({ color: c, alpha: am * aMul });
+              };
+              fan(1, flav, 0.32); // widest fan = species-flavour edge
+              fan(0.6, col, 0.4); // saturated type-colour body
+              fan(0.32, lerpCol(col, 0xffffff, 0.6), 0.4); // hot near-white inner
+              fan(0.16, 0xffffff, 0.42); // white-hot core at the mouth
+              if (vr?.shape === "droplet") {
+                // spray: scattered droplets riding the cone — Bubble Beam / Hydro Pump
+                for (let i = 0; i < 9; i++) {
+                  const u = 0.2 + Math.random() * 0.8;
+                  beamG.circle(x0 + dirx * len * u, y0 + (Math.random() - 0.5) * spread * u * 1.6, size * 0.03 * (1 - u * 0.5)).fill({ color: lerpCol(col, 0xffffff, 0.4), alpha: 0.6 * aMul });
+                }
+              } else if (vr?.shape === "streak") {
+                // wind: thin fast streaks instead of a solid body — Gust / Air Slash
+                for (let i = 0; i < 6; i++) {
+                  const yo = (Math.random() - 0.5) * spread * 1.6;
+                  beamG.moveTo(x0 + dirx * size * 0.1, y0 + yo * 0.3);
+                  beamG.lineTo(tip + dirx * size * 0.1, y0 + yo).stroke({ color: lerpCol(col, 0xffffff, 0.3), width: 1.5, alpha: 0.5 * aMul });
+                }
+              }
+            }
+          } else if (k === "claw") {
+            // slashes — rake (3-arc), blade (one clean long cut), multi-slash (a fast flurry)
+            if (kn === "blade") {
+              const p = Math.min(1, atkT * 4);
+              const L = size * 0.9 * I * (vr?.len ?? 1);
+              beamG.moveTo(dirx * size * 0.1 - dirx * L * 0.5 * p, -L * 0.5 * p);
+              beamG.lineTo(dirx * size * 0.1 + dirx * L * 0.5 * p, L * 0.5 * p).stroke({ color: 0xffffff, width: 4 * I, alpha: 0.9 * (1 - p * 0.4) });
+            } else {
+              const n2 = kn === "multi-slash" ? 5 : 3;
+              const off = (atkT * 8) % 0.5;
+              for (let i = 0; i < n2; i++) {
+                const yo = (i - (n2 - 1) / 2) * size * (kn === "multi-slash" ? 0.14 : 0.2);
+                const a0 = -0.8 + off + (kn === "multi-slash" ? i * 0.15 : 0);
+                beamG.arc(dirx * size * 0.18, yo, size * 0.45 * I, a0, a0 + 1.6).stroke({ color: i % 2 === 1 ? 0xffffff : col, width: 3.5, alpha: 0.88 - i * 0.08 });
+              }
+            }
+          } else if (k === "bite") {
+            // chomp (jaws snap shut) or throw (a grab-and-slam swing) — Crunch / Seismic Toss
+            if (kn === "throw") {
+              const p = Math.min(1, atkT * 2.5);
+              const ang = -Math.PI * 0.8 + Math.PI * 1.2 * p;
+              beamG.arc(dirx * size * 0.3, -size * 0.1, size * 0.4 * I, -Math.PI * 0.8, ang).stroke({ color: col, width: 4, alpha: 0.7 });
+              beamG.circle(dirx * size * 0.3 + Math.cos(ang) * size * 0.4 * I, -size * 0.1 + Math.sin(ang) * size * 0.4 * I, size * 0.1 * I).fill({ color: col, alpha: 0.6 });
+            } else {
+              const snap = Math.min(1, atkT * 5);
+              const gap = size * 0.28 * (1 - snap);
+              const cx2 = dirx * size * 0.5;
+              beamG.arc(cx2, -gap, size * 0.3 * I, 0.5, Math.PI - 0.5).stroke({ color: col, width: 5, alpha: 0.85 });
+              beamG.arc(cx2, gap, size * 0.3 * I, Math.PI + 0.5, -0.5).stroke({ color: col, width: 5, alpha: 0.85 });
+            }
+          } else if (k === "dash") {
+            // charge — quick-dash (clean streaks), heavy-slam (big impact ring), blitz (elemental trail)
+            const sp = vr?.speed ?? 1;
+            const nL = kn === "blitz" ? 6 : 4;
+            for (let i = 0; i < nL; i++) {
+              const yy = (Math.random() - 0.5) * size * 0.5;
+              beamG.moveTo(-dirx * size * (0.1 + i * 0.12), yy);
+              beamG.lineTo(-dirx * size * (0.42 + i * 0.12) * sp, yy).stroke({ color: kn === "blitz" ? lerpCol(col, 0xffffff, 0.3) : col, width: kn === "blitz" ? 3 : 2.5, alpha: 0.5 });
+            }
+            const p = Math.min(1, atkT * 3);
+            beamG.circle(dirx * size * 0.5, -size * 0.05, size * (kn === "heavy-slam" ? 0.32 : 0.2) * I * p).fill({ color: 0xffffff, alpha: 0.45 * (1 - p) + 0.15 });
+            if (kn === "heavy-slam" && p > 0.6) {
+              beamG.circle(dirx * size * 0.5, size * 0.18, (size * 0.4 * I * (p - 0.6)) / 0.4).stroke({ color: col, width: 4 * (1 - p), alpha: 0.5 * (1 - p) });
+            }
+          } else if (k === "burst") {
+            // area — quake (ground rings + rising shards), nova (radial bloom), wave (sweeping crest),
+            // storm (streaks raining from above).
+            const sprd = vr?.spread ?? 1;
+            if (kn === "storm") {
+              for (let i = 0; i < 10; i++) {
+                const sx = (Math.random() - 0.5) * size * 2.2 * sprd;
+                const sy = -size * (0.6 + Math.random() * 0.9);
+                beamG.moveTo(sx, sy);
+                beamG.lineTo(sx - dirx * size * 0.18, sy + size * 0.5).stroke({ color: i % 2 ? col : lerpCol(col, 0xffffff, 0.5), width: 2, alpha: 0.55 });
+              }
+            } else if (kn === "nova") {
+              const p = Math.min(1, atkT * 2.2);
+              beamG.circle(0, -size * 0.05, size * 0.75 * I * p * sprd).fill({ color: col, alpha: 0.4 * (1 - p) });
+              beamG.circle(0, -size * 0.05, size * 0.42 * I * p).fill({ color: 0xffffff, alpha: 0.35 * (1 - p) });
+            } else if (kn === "wave") {
+              const p = (atkT * 1.2) % 1;
+              for (let i = 0; i < 2; i++) {
+                const pp = (p + i * 0.5) % 1;
+                beamG.ellipse(dirx * size * pp * 1.3, size * 0.16, size * (0.3 + pp * 0.7) * sprd, size * (0.18 + pp * 0.3)).stroke({ color: lerpCol(col, 0xffffff, 0.3), width: 6 * (1 - pp), alpha: 0.55 * (1 - pp) });
+              }
+            } else {
+              const p = (atkT * 1.5) % 1;
+              for (let i = 0; i < 2; i++) {
+                const pp = (p + i * 0.4) % 1;
+                beamG.ellipse(0, size * 0.2, size * (0.2 + pp) * I * sprd, size * (0.08 + pp * 0.4) * I).stroke({ color: col, width: 5 * (1 - pp), alpha: 0.6 * (1 - pp) });
+              }
+              for (let i = 0; i < 4; i++) {
+                const rp = Math.min(1, atkT * 2.5);
+                const rx = (i - 1.5) * size * 0.22;
+                beamG.rect(rx, size * 0.2 - rp * size * 0.25, size * 0.06, rp * size * 0.25).fill({ color: lerpCol(col, 0x000000, 0.2), alpha: 0.6 * (1 - rp) });
+              }
+            }
+          } else if (k === "status") {
+            // self FX — buff (pulsing aura), guard (shield arc), heal (rising motes)
+            if (kn === "guard") {
+              const rr = size * 0.5 * I;
+              beamG.arc(dirx * size * 0.2, -size * 0.1, rr, -1.2, 1.2).stroke({ color: lerpCol(col, 0xffffff, 0.4), width: 4, alpha: 0.6 + 0.2 * Math.sin(atkT * 10) });
+              beamG.arc(dirx * size * 0.2, -size * 0.1, rr * 0.8, -1, 1).stroke({ color: col, width: 2, alpha: 0.4 });
+            } else if (kn === "heal") {
+              for (let i = 0; i < 7; i++) {
+                const ph = (atkT * 0.8 + i / 7) % 1;
+                beamG.circle((Math.random() - 0.5) * size * 0.5, size * 0.2 - ph * size * 0.7, size * 0.03 * (1 - ph)).fill({ color: lerpCol(col, 0xffffff, 0.5), alpha: 0.7 * (1 - ph) });
+              }
+            } else {
+              const rr = size * (0.42 + 0.12 * Math.sin(atkT * 12));
+              beamG.circle(0, -size * 0.1, rr).stroke({ color: col, width: 3, alpha: 0.5 });
+              beamG.circle(0, -size * 0.1, rr * 0.66).stroke({ color: col, width: 2, alpha: 0.35 });
+            }
           } else {
-            // orb / stream → a flying projectile emoji
+            // projectile — a flying energy emoji; modulated: orb-lob (high arc), fast-shot (flat + fast),
+            // multi-shot (a trailing volley), bomb (high lob + a big splat).
+            const sp = vr?.speed ?? 1;
+            const arc = vr?.arc ?? 0.3;
             proj.visible = true;
             proj.text = F.atkEmoji;
-            const p = Math.min(1, atkT * 2.4);
+            const p = Math.min(1, atkT * 2.4 * sp);
             proj.x = dirx * size * (0.2 + p * 0.9);
-            proj.y = -Math.sin(p * Math.PI) * 26 - size * 0.1;
+            proj.y = -Math.sin(p * Math.PI) * (26 + arc * 40) - size * 0.1;
+            if (kn === "multi-shot") {
+              for (let i = 1; i <= 3; i++) {
+                const pp = p - i * 0.18;
+                if (pp > 0) beamG.circle(dirx * size * (0.2 + pp * 0.9), -Math.sin(pp * Math.PI) * (26 + arc * 40) - size * 0.1, size * 0.05 * I).fill({ color: col, alpha: 0.7 });
+              }
+            }
+            if (p > 0.85) {
+              const r = size * (kn === "bomb" ? 0.34 : 0.22) * I * ((p - 0.85) / 0.15);
+              beamG.circle(proj.x, proj.y, r).fill({ color: col, alpha: 0.5 });
+            }
           }
           if (F.atkName) {
             callout.visible = true;
@@ -2215,6 +2518,18 @@
       const onCtxRestored = () => onContextLost?.(); // remount on restore too (Pixi state is stale)
       canvas.addEventListener("webglcontextlost", onCtxLost as EventListener);
       canvas.addEventListener("webglcontextrestored", onCtxRestored as EventListener);
+      // BACKSTOP for when the EVENT never fires. On a WebView2 GPU-process recycle the canvas can go
+      // blank with no `webglcontextlost` at all — exactly the "vanishes after long idle" report. Poll
+      // the live GL context so a silently-lost canvas still triggers a remount. The console.warn is
+      // also the confirmation breadcrumb: if this logs when the widget disappears, the cause IS the
+      // Pixi/WebGL context (not the window). Cheap (4s) and torn down with the component.
+      const ctxWatch = setInterval(() => {
+        const gl = (a.renderer as unknown as { gl?: WebGLRenderingContext }).gl;
+        if (gl?.isContextLost?.()) {
+          console.warn("[PixiStage] WebGL context lost (watchdog) → remount");
+          onContextLost?.();
+        }
+      }, 4000);
       // Tray-hide doesn't flip document.hidden (only minimize does), so the rAF kept rendering
       // for a hidden-to-tray widget — burning GPU/CPU for hours while "not noticed". Stop the
       // ticker on hm-visible:false too (Rust emits it on every hide/show). Fulfils the project's
@@ -2230,6 +2545,7 @@
         document.removeEventListener("visibilitychange", onVis);
         canvas.removeEventListener("webglcontextlost", onCtxLost as EventListener);
         canvas.removeEventListener("webglcontextrestored", onCtxRestored as EventListener);
+        clearInterval(ctxWatch);
         unlistenVis?.();
         ro.disconnect();
         for (const f of frames) f.bmp.close(); // free decoded GIF frames

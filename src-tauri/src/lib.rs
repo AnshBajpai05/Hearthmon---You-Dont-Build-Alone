@@ -792,6 +792,33 @@ fn git_cmd(repo: &std::path::Path) -> std::process::Command {
 fn push_card(path: String, companion: String, mood: String, status: String) -> Result<(), String> {
     let repo_path = std::path::Path::new(&path);
 
+    // §8.3 — never interfere with a repo you're actively coding in. The card flow only touches its
+    // OWN two files; if the working tree has uncommitted changes to anything ELSE, skip this repo
+    // entirely (don't `rebase --autostash` your WIP, don't force-push the branch you're on). The
+    // mirror is for DEDICATED profile/showcase repos; a dev clone (e.g. on `v2`) is left untouched.
+    {
+        const CARD_FILES: &[&str] = &["assets/hearthmon-status.svg", "README.md"];
+        let porcelain = git_capture(&repo_path.to_path_buf(), &["status", "--porcelain"]);
+        let has_unrelated = porcelain.lines().any(|line| {
+            let line = line.trim_end();
+            // Untracked files ("?? path") are never added/stashed/pushed by the card flow (it adds
+            // only the card files + autostashes TRACKED changes), so they're safe — don't block on
+            // them, only on tracked modifications to non-card files.
+            if line.is_empty() || line.starts_with("??") {
+                return false;
+            }
+            // porcelain: "XY <path>" (rename: "R  old -> new"); take the post-status / new path.
+            let p = line.get(3..).unwrap_or("").trim();
+            let p = p.rsplit(" -> ").next().unwrap_or(p);
+            !CARD_FILES.contains(&p)
+        });
+        if has_unrelated {
+            return Err("Skipped the card push — this repo has uncommitted changes you're working \
+                        on. Mirror only dedicated profile/showcase repos."
+                .into());
+        }
+    }
+
     // Integrate any remote changes FIRST (e.g. a README edited on github.com) so
     // the amend + --force-with-lease below can't be rejected as "stale info".
     let branch = git_cmd(repo_path)
@@ -941,6 +968,10 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Auto-update: the frontend drives check/download/install from JS so the UX stays in
+        // Poki's voice; `process` gives us the relaunch after the installer swaps the binary.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Mutex::new(GitWatch::default()))
         .manage(Mutex::new(LogWatch::default()))
         .manage(FlowAware(AtomicBool::new(true)))

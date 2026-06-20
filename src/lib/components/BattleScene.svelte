@@ -17,6 +17,7 @@
   import { playCry, voiceCry, playVoiceClip, thump } from "../sound";
   import {
     animKind,
+    FAMILY,
     impactSparks,
     streamSparks,
     boltPath,
@@ -194,7 +195,7 @@
     const defSide: Side = side === "L" ? "R" : "L";
     const mv = pickBattleMove(atk.id);
     const res = calcTurn(mv, atk.id, def.id, atk.type, def.type);
-    const kind = animKind(mv);
+    const kind = FAMILY[animKind(mv, atk.id)]; // battle reads the 8 render families (melee/burst/breath/…)
     const A = anchor(side);
     const D = anchor(defSide);
     msg = `${disp(atk)} used ${mv.name}!`;
@@ -223,7 +224,7 @@
     const defFrac = defSide === "L" ? hpL / maxL : hpR / maxR;
     const dodged = !charged && Math.random() < Math.min(0.3, 0.1 + (defFrac < 0.35 ? 0.16 : 0));
     if (dodged) {
-      if (kind === "slash") {
+      if (kind === "claw" || kind === "bite" || kind === "dash") {
         dashSide = side;
         setAnim(side, "attack");
       } else {
@@ -251,15 +252,19 @@
       if (!alive) return;
     }
 
-    if (kind === "slash") {
+    if (kind === "claw" || kind === "bite" || kind === "dash") {
       dashSide = side;
       setAnim(side, "attack");
-      await wait(440); // impact lands mid-dash
+      await wait(440); // melee: impact lands mid-dash
     } else {
       setAnim(side, "shoot"); // charge-up glow
       await wait(320);
       if (!alive) return;
-      if (kind === "beam") {
+      if (mv.type === "electric") {
+        // electric reads as a strike from above, whatever the archetype
+        fxBolt = { x: D.x, h: D.y - 6, points: boltPath(D.y - 6) };
+        await wait(300);
+      } else if (kind === "beam") {
         const dx = D.x - A.x;
         const dy = D.y - A.y;
         fxBeam = {
@@ -270,21 +275,19 @@
           color: mv.color
         };
         await wait(400);
-      } else if (kind === "orb") {
-        fxOrb = { x: A.x, y: A.y, tx: D.x - A.x, ty: D.y - A.y, color: mv.color, emoji: mv.emoji };
-        await wait(500);
-      } else if (kind === "bolt") {
-        fxBolt = { x: D.x, h: D.y - 6, points: boltPath(D.y - 6) };
-        await wait(300);
-      } else if (kind === "quake") {
+      } else if (kind === "burst") {
         shake = true;
         setTimeout(() => (shake = false), 750);
         fxRocks = quakeRocks();
         await wait(560);
-      } else {
-        // stream — torrent of energy across the arena
+      } else if (kind === "breath") {
+        // a sustained torrent across the arena
         fxStream = { x: A.x, y: A.y, sparks: streamSparks(mv.color, mv.emoji, D.x - A.x, D.y - A.y) };
         await wait(640);
+      } else {
+        // projectile / status / default — a lobbed energy orb
+        fxOrb = { x: A.x, y: A.y, tx: D.x - A.x, ty: D.y - A.y, color: mv.color, emoji: mv.emoji };
+        await wait(500);
       }
     }
     if (!alive) return;

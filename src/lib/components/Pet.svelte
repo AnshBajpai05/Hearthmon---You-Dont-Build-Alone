@@ -13,6 +13,10 @@
     lookX?: number; // head-tracking offset px
     lookY?: number;
     lookTilt?: number; // head-tracking tilt deg
+    bob?: number; // music reactivity: audio energy → gentle vertical bob (px), parity with Alive
+    pulse?: number; // music reactivity: a beat → a brief soft scale pump (0..1)
+    srcOverride?: string; // mega/special form: a full sprite URL that replaces the dex sprite
+    fallbackOverride?: string; // if srcOverride fails, drop to THIS (the form's own static) — not the base
     onTap?: () => void;
     onPet?: () => void;
   }
@@ -27,15 +31,24 @@
     lookX = 0,
     lookY = 0,
     lookTilt = 0,
+    bob = 0,
+    pulse = 0,
+    srcOverride = undefined,
+    fallbackOverride = undefined,
     onTap,
     onPet
   }: Props = $props();
 
   let failedId = $state(0);
+  let failedSrc = $state(""); // a srcOverride that 404'd → fall back to the base sprite
   const src = $derived(
-    petState === "sleeping" || failedId === dexId
-      ? fallbackUrl(dexId, shiny)
-      : spriteUrl(dexId, shiny)
+    srcOverride && failedSrc !== srcOverride
+      ? srcOverride
+      : srcOverride && fallbackOverride
+        ? fallbackOverride // the override failed → its own static form, never the base sprite
+        : petState === "sleeping" || failedId === dexId
+          ? fallbackUrl(dexId, shiny)
+          : spriteUrl(dexId, shiny)
   );
 
   // type-specific idle behaviour (leaf-sway, mane-flicker, neck-sway, …)
@@ -191,14 +204,14 @@
   {#each hearts as h (h.id)}
     <span class="heart" style="left: {h.x}%" onanimationend={() => dropHeart(h.id)}>♥</span>
   {/each}
-  <div class="petlook" style="transform: rotate({lookTilt}deg) translate({lookX}px, {lookY}px)">
+  <div class="petlook" style="transform: rotate({lookTilt}deg) translate({lookX}px, {lookY - bob}px) scale({1 + pulse * 0.05})">
     <div class="petfx" class:fx-grass={fx === "grass"} class:fx-fire={fx === "fire"} class:fx-water={fx === "water"} class:fx-ice={fx === "ice"} class:fx-electric={fx === "electric"} class:fx-psychic={fx === "psychic"} class:fx-ghost={fx === "ghost"} class:fx-dragon={fx === "dragon"}>
       <img
         {src}
         alt={name}
         style="width: {drawSize}px; height: {drawSize}px"
         draggable="false"
-        onerror={() => (failedId = dexId)}
+        onerror={() => { if (srcOverride && src === srcOverride) failedSrc = srcOverride; else failedId = dexId; }}
       />
     </div>
   </div>
@@ -260,12 +273,12 @@
   }
   /* Aliveness: a gentle breath while awake & idle (not while petting). */
   .pet.idle:not(.petting) img {
-    animation: idlebreath 4.2s ease-in-out infinite;
+    animation: idlebreath 5.4s ease-in-out infinite;
     transform-origin: 50% 100%;
   }
   @keyframes idlebreath {
     0%, 100% { transform: scale(1, 1); }
-    50% { transform: scale(1.012, 1.016); }
+    50% { transform: scale(1.008, 1.011); }
   }
   /* head-tracking: lean toward the cursor; smooth lerp via transition */
   .petlook {
@@ -312,15 +325,15 @@
   }
   @keyframes levitate {
     0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-5px); }
+    50% { transform: translateY(-3px); }
   }
   @keyframes waver {
     0%, 100% { transform: translateX(-3px); opacity: 0.85; }
     50% { transform: translateX(3px); opacity: 1; }
   }
   @keyframes hover {
-    0%, 100% { transform: translateY(-1px) rotate(-1deg); }
-    50% { transform: translateY(-5px) rotate(1deg); }
+    0%, 100% { transform: translateY(-1px) rotate(-0.6deg); }
+    50% { transform: translateY(-3.5px) rotate(0.6deg); }
   }
   @media (prefers-reduced-motion: reduce) {
     .pet.idle:not(.petting) img,

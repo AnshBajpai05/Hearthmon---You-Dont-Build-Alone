@@ -63,6 +63,15 @@
 - [x] **Quiet reminders** — new `QuietReminders.svelte` panel via radial **Care → ⏰ Reminders**; text + time + daily/once, stored as JSON in meta; `reminderTick` (30s) surfaces a gentle bubble at the set time and brings the widget on top from the tray (Rust `surface_window`, no focus-steal). A nudge, never an alarm; fires only while running.
 - [x] **Memory anniversaries** — `anniversaryEvents()` surfaces "this is around when we started X" for chapter/seed memories ~a year+ old, once a day, never stacked. (`memoryAnniversaryLine`.)
 
+### Combat Identity v2→v4 + Mega Evolution ✅ 2026-06-20
+> Pokémon Identity Engine deepened — **derive, don't author** across all 1025 (`docs/COMBAT_IDENTITY.md`). Both skins green.
+- [x] **v2 Species Identity + v3 Reaction Identity + Drift** — build-time `combat_identity.ts` (tempo/scale/power/temperament/motifs via `tools/gen_combat_identity.ps1`), `combat/identity.ts` `speciesIdentity()`, per-species reaction beats on poke/irritate (`combat/reactions.ts`), temperament drift.
+- [x] **v4 archetypes 8→26** — `fx.ts` = `AnimFamily` (8 render branches) × `AnimKind` (26 kinds) × `VARIANT` params; richer `animKind` (signature + patterns). All 3 consumers (+page Classic, PixiStage Alive, BattleScene) switch on `FAMILY[kind]` (atomic-safe). Alive sub-dispatches per kind: breath flame/spray/wind/gas · beam thick/thin/sky-strike · burst quake/nova/wave/storm · claw rake/blade/multi-slash · bite chomp/throw · dash quick/heavy-slam/blitz · projectile orb-lob/fast-shot/multi-shot/bomb · status buff/guard/heal. Classic parity via `data-akind` + `--atk-spread/len/alpha/speed` vars + shape overrides.
+- [x] **v4 per-species overrides** — `combat_overrides.ts` (`MOVE_OVERRIDES[dex][move]→kind`), merged into `animKind(move, dexId?)` FIRST; ~14 iconic seeded (Charizard blast-burn→nova, Blastoise hydro-cannon→thick-beam, …) + generic punch/kick→heavy-slam.
+- [x] **Mega/special forms → PokeAPI form-IDs** — sprites switched Showdown-name → **form-IDs** on githubusercontent (CORS → animated in Alive, not just static); verified all **51 forms** (gif + shiny + png) 200 vs `pokemon.csv`. `formFallbackUrl(formId)` = form-aware static fallback (never silently drops to the base form).
+- [x] **Mega FX deepened** — flat ellipse aura → **fire** (rising tongues + hot core + embers, additive); **`FORM_FLAME`** single colour source (fire orange · dragon = Charizard X blue) drives aura + room atmosphere + **attacks + irritate beats** (blue-X throws blue fire); mega **dictates the room** like a hearth mon (PixiStage mega ambient branch) + **hover stokes it** (`hoverE`); flamethrower breath = 4-layer gradient.
+- [ ] **v5 — battle** (sim reads stats, presentation reads identity — NEVER entangled). Next.
+
 ---
 
 ## ✅ Already Shipped

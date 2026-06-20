@@ -140,13 +140,25 @@
     breakthroughLines,
     chapterMomentLines,
     arcCallbackLine,
+    familiarStruggleLine,
     graceLine,
     chapterIntroLine,
     pauseNoteLine,
     pauseNoteShort,
-    unlockLines
+    unlockLines,
+    updateFoundLine,
+    updatePreservedLine,
+    updateInstallingLine,
+    postUpdateLine
   } from "$lib/lines";
   import type { CompanionMode } from "$lib/lines";
+  import {
+    checkForUpdate,
+    installAndRelaunch,
+    isNewer,
+    getVersion,
+    fetchReleaseNotes
+  } from "$lib/update";
   import {
     dexEntry,
     randomEntry,
@@ -156,9 +168,15 @@
     nextEvolution,
     hasEvolution,
     evolutionStepsAhead,
+    hasMega,
+    megaForms,
+    formSpriteUrl,
+    formFallbackUrl,
+    FORM_FLAME,
     TRAINER_URL,
     type Creature,
-    type DexEntry
+    type DexEntry,
+    type SpecialForm
   } from "$lib/sprites";
   import {
     makeParticles,
@@ -168,7 +186,9 @@
     type Move,
     type Particle
   } from "$lib/attackfx";
-  import { animKind, type AnimKind } from "$lib/fx";
+  import { animKind, attackIntensity, FAMILY, VARIANT, type AnimKind } from "$lib/fx";
+  import { speciesIdentity, attackFlavor } from "$lib/combat/identity";
+  import { reactionFor, rilesToAttack, rileThreshold, type ReactionKind } from "$lib/combat/reactions";
   import { backgroundFor } from "$lib/backgrounds";
 
   type Panel =
@@ -241,6 +261,22 @@
       primeAliveRenderer(); // companion switch re-washes the in-place reload → clean canvas
     }
   });
+  // Same washed-globe fix for special forms: entering OR leaving a mega re-paints the whole globe
+  // (new sprite + the form's room atmosphere), which re-washes under WebView2 — so round-trip
+  // alive→classic→alive on every megaForm change (mega up, manual revert, and switch-companion reset).
+  let primedMega: SpecialForm | null | undefined = undefined; // undefined = unseen → skip the initial run
+  $effect(() => {
+    if (phase !== "home" || renderMode !== "alive") return;
+    const m = megaForm;
+    if (primedMega === undefined) {
+      primedMega = m; // initial state: the onMount boot prime (or the dex effect) already covers it
+      return;
+    }
+    if (m !== primedMega) {
+      primedMega = m;
+      primeAliveRenderer();
+    }
+  });
   // ── Chapter Access (secure_Hearthmon): the gate is DECIDED IN RUST. These are render hints
   // only — flipping them in devtools grants nothing, the lock has no teeth in JS by design.
   type ChapterStatus = {
@@ -269,6 +305,27 @@
   let showChapterChip = $derived(
     chapterPaused && (chapterNudge === "quiet" ? !cardOpen : cardDismissed)
   );
+
+  // ── Auto-update (V2's first online feature) ─────────────────────────
+  // Startup-only check against GitHub Releases; the card surfaces at most once per
+  // calendar day; "Later" simply closes it (no nag). Soul rules hold: an invitation,
+  // never an alarm; nothing is ever lost. See updateAwareness() / detectPostUpdate().
+  let updateCardOpen = $state(false);
+  let updateVersion = $state("");
+  let updateNotes = $state(""); // GitHub Release body — the single source for "What's new"
+  let updateFoundText = $state(""); // picked once when the card opens, so it doesn't re-randomize
+  let updatePhase = $state<"idle" | "downloading" | "installing">("idle");
+  let updatePct = $state(0);
+  let updateError = $state("");
+  let updateInstallingText = $state("");
+  // The opaque Update handle from the updater plugin — not reactive, just held between actions.
+  let pendingUpdate: Awaited<ReturnType<typeof checkForUpdate>> = null;
+  let justUpdated = $state(false); // first launch after an update → one-time line + "What's new" chip
+  let whatsNewOpen = $state(false);
+  let whatsNewVersion = $state("");
+  // The public beta repo that hosts the signed releases + latest.json (see tauri.conf updater).
+  const RELEASE_OWNER = "AnshBajpai05";
+  const RELEASE_REPO = "Hearthmon-Trial_Beta";
   // Founder's Mark provenance — surfaced by clicking the woven signature (look closer → discover
   // the founder). Demonstrable proof of lineage for authorship disputes; never auto-shown.
   type Founder = {
@@ -286,6 +343,14 @@
   let switchFx = $state<SwitchFx>("none");
   let battleOpen = $state(false);
   let isShiny = $state(false);
+  // ---- Mega Evolution (special forms — a reward for time together, never a grind) ----
+  // No visible timer/bar (anti-soul anxiety). Crossing 1hr in one sitting quietly unlocks an
+  // optional offer; ignoring it costs nothing. Reverts on a companion switch.
+  let megaForm = $state<SpecialForm | null>(null); // active special form (null = base)
+  let megaOffer = $state(false);
+  let megaSince = 0; // when the current mon became active (continuous-session clock)
+  let megaOfferedDex = -1; // offer once per mon-session, don't pester
+  const MEGA_MIN_MS = 15_000; // ⚠️ TEMP for testing — RESTORE to 60 * 60_000 (1hr) before shipping
   // ---- evolution ceremony ----
   let evoOffer = $state(false); // the gentle "ready to grow?" prompt
   let evoActive = $state(false); // the white-silhouette ceremony is playing
@@ -300,7 +365,10 @@
   let isWinter = $state(false); // Dec–Feb seasonal snow
   // backdrop style: glossy "orb" sphere · "ground" curved platform · "off"
   let bgStyle = $state<"orb" | "square" | "ground" | "off">("orb");
-  const curType = $derived(dexEntry(dexId)?.type ?? "normal");
+  const curType = $derived(megaForm?.type ?? dexEntry(dexId)?.type ?? "normal"); // mega may shift element
+  // A special form's signature FX colour (Charizard X → blue): tints its attacks + irritate beats
+  // to match its aura, so a blue-fire mega throws blue fire. null = no override → normal move colour.
+  const megaFx = $derived(megaForm ? (FORM_FLAME[curType] ?? null) : null);
   async function cycleBg() {
     bgStyle = bgStyle === "orb" ? "square" : bgStyle === "square" ? "ground" : bgStyle === "ground" ? "off" : "orb";
     await setMeta("bg_style", bgStyle);
@@ -564,7 +632,18 @@
   // ---- attack state ----
   let attacking = $state(false);
   let attackMove = $state<Move | null>(null);
-  let atkKind = $state<AnimKind | null>(null);
+  let atkKind = $state<AnimKind | null>(null); // the ~24 semantic kind (bridged to Alive for variant FX)
+  const atkFamily = $derived(atkKind ? FAMILY[atkKind] : null); // 8 render families — Classic switches on this
+  const atkV = $derived(atkKind ? VARIANT[atkKind] : null); // variant params → CSS vars (Classic parity)
+  let atkIntensity = $state(0.5); // 0..1 (move power) → scales the FX in both renderers
+  let atkFlavor = $state("#ffffff"); // v4: move colour tinted toward the species' 2nd type (FX glow/sparks)
+  // Reaction Identity (v3): a per-species poke/irritate beat, bridged to both skins. `n` is a nonce
+  // so each poke replays the beat; irritation rises with rapid pokes → a riled species attacks.
+  let reaction = $state<{ kind: ReactionKind; n: number } | null>(null);
+  let reactionSeq = 0;
+  let reactionTimer: ReturnType<typeof setTimeout> | undefined;
+  let irritation = 0;
+  let lastPokeAt = 0;
   let particles = $state<Particle[]>([]);
 
   // ---- head-tracking: the pet leans toward the cursor ("it's watching you") ----
@@ -752,13 +831,13 @@
     treat = { from: side * (winW / 2 + 70), to: petX, food: pick(POKE_FOOD) };
     setTimeout(() => {
       treat = null;
-      eating = true; // chomp animation
-      setTimeout(() => (eating = false), 900);
+      eating = true; // chewing animation
+      setTimeout(() => (eating = false), 1500); // eating takes a moment now
       bumpCounter("interactions");
       void bumpCounter("t_aff"); // drift: affectionate temperament
       if (Math.random() < 0.6) voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.2);
       say(pick(treatLines), 5000);
-    }, 760);
+    }, 1400); // slow, gentle float to the pet (was a quick toss)
   }
 
   // ---- battle mode: widen the window for the arena, restore after ----
@@ -901,6 +980,94 @@
     }
   }
 
+  // ── Auto-update ─────────────────────────────────────────────────────
+  // On launch: if a newer signed build exists on GitHub Releases, surface the card ONCE.
+  // Guarded to at most once per calendar day so two relaunches in an afternoon never double-pop —
+  // and we don't even hit the network if we've already nudged today. Silent (no card, no error)
+  // in dev/browser/offline and when already on the latest version — so it never annoys.
+  async function updateAwareness(delayMs = 0): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    if ((await getMeta("update_card_day")) === today) return; // at most once per day
+    let update: Awaited<ReturnType<typeof checkForUpdate>>;
+    try {
+      update = await checkForUpdate();
+    } catch {
+      return; // dev / no endpoint / offline → stay quiet
+    }
+    if (!update) return; // already latest → no popup, no notification, no background chatter
+    await setMeta("update_card_day", today);
+    pendingUpdate = update;
+    updateVersion = update.version;
+    updateNotes = (update.body ?? "").trim();
+    updateFoundText = updateFoundLine();
+    updatePhase = "idle";
+    updatePct = 0;
+    updateError = "";
+    if (delayMs > 0) setTimeout(() => (updateCardOpen = true), delayMs);
+    else updateCardOpen = true;
+  }
+
+  // First launch AFTER an update lands: Poki's one-time "It feels better with this update." line
+  // (the boot greeting is suppressed this once so it truly leads — see onMount initPresence).
+  // Records the running version so a fresh install sets it silently and never false-triggers.
+  async function detectPostUpdate(): Promise<void> {
+    let current = "";
+    try {
+      current = await getVersion();
+    } catch {
+      return; // not under Tauri (browser/dev)
+    }
+    const seen = await getMeta("last_seen_version");
+    if (seen && isNewer(current, seen)) {
+      justUpdated = true;
+      whatsNewVersion = current;
+      updateNotes = (await getMeta("pending_update_notes")) ?? ""; // notes stashed before install
+      await setMeta("pending_update_notes", ""); // consume — show only once
+    }
+    await setMeta("last_seen_version", current);
+  }
+
+  // "Update now": download + verify + install, then relaunch. The pet stays calm — a single
+  // gentle line + a quiet progress bar, never a spinner circus. On failure nothing changed.
+  async function doUpdateNow(): Promise<void> {
+    if (!pendingUpdate) return;
+    updateError = "";
+    updatePhase = "downloading";
+    updatePct = 0;
+    updateInstallingText = updateInstallingLine();
+    say(updateInstallingText, 60000);
+    // Stash the notes so the one-time "What's new" works after the relaunch (offline-safe).
+    await setMeta("pending_update_notes", updateNotes);
+    try {
+      await installAndRelaunch(pendingUpdate, (pct) => {
+        updatePct = pct;
+        if (pct >= 100) updatePhase = "installing";
+      });
+      // relaunch() replaces this process — nothing past here runs on success.
+    } catch (e) {
+      console.warn("[hearthmon] update failed:", e);
+      updatePhase = "idle";
+      updateError = "That didn't go through — nothing changed. We can try again whenever.";
+      // The card stays open for an in-session retry; also clear the once-per-day guard so a
+      // relaunch re-offers it (recovering from a failed install isn't nagging). See §9.1.
+      await setMeta("update_card_day", "");
+    }
+  }
+
+  function dismissUpdate(): void {
+    updateCardOpen = false; // "Later" — quiet until the next calendar day / next launch
+  }
+
+  // Open the "What's new" notes — straight from the GitHub Release body (one source of truth).
+  // Falls back to fetching by tag if they weren't carried across the update; degrades to silence.
+  async function openWhatsNew(): Promise<void> {
+    if (!updateNotes.trim()) {
+      const tag = `v${whatsNewVersion || updateVersion}`;
+      updateNotes = await fetchReleaseNotes(RELEASE_OWNER, RELEASE_REPO, tag);
+    }
+    whatsNewOpen = true;
+  }
+
   // ---- soft failure recovery ----
   // When something genuinely breaks (db hiccup, weather glitch, unexpected throw),
   // the pet notices warmly instead of breaking silently or flashing a raw error.
@@ -919,15 +1086,19 @@
   let birthday = $state(false); // party hat for the day-we-met anniversary
   let breakthroughActive = $state(false);
 
+  // L1 species identity for the live pet — drives reaction beats + (later) species flavor.
+  const petIdentity = $derived(speciesIdentity(dexId));
   // bridge every pet-attached FX into the Alive (Pixi) renderer — one brain, two skins
   const aliveFx = $derived({
     switchFx,
     attacking,
     atkKind,
-    atkColor: attackMove?.color ?? "#ffffff",
+    atkColor: megaFx ?? attackMove?.color ?? "#ffffff",
     atkEmoji: attackMove?.emoji ?? "✨",
     atkName: attackMove?.name ?? "",
     atkCls: (attackMove?.cls ?? 2) as 1 | 2 | 3,
+    atkIntensity,
+    atkFlavor,
     dir,
     evoActive,
     evoShowNew,
@@ -939,7 +1110,10 @@
     visitorFlip: visitor?.flip ?? false,
     eating,
     birthday,
-    breakthrough: breakthroughActive
+    breakthrough: breakthroughActive,
+    reactionKind: reaction?.kind ?? null,
+    reactionN: reaction?.n ?? 0,
+    reactionColor: megaFx ?? petIdentity.palette[0]
   });
 
   // ---- command palette (global Alt+Space): Raycast-for-emotions ----
@@ -1121,6 +1295,14 @@
   let room = $state("none"); // habitat: "none" | "full" | "sphere" | "square" (shape ≠ backdrop)
   const habitatOn = $derived(room !== "none");
   const habitatShape = $derived(room === "none" ? "full" : (room as "full" | "sphere" | "square"));
+  // In a sphere habitat the pet is sized to FIT the globe (like Alive's curScale clamp), not the
+  // user's slider — so it sits inside with headroom instead of overflowing the sphere. Globe is
+  // inset 14px, so its width ≈ winW-28; ~0.42 of that leaves a clear margin all round. Tunable.
+  const petRenderSize = $derived(
+    habitatOn && habitatShape === "sphere"
+      ? Math.min(imgSize, Math.round((winW - 28) * 0.38))
+      : imgSize
+  );
   // the habitat is chosen by the pet's primary type — a Tiny Living Sanctuary
   const currentBiome = $derived(biomeForType(curType));
   // the lantern (identity prop) glows warmer the deeper the bond
@@ -1410,10 +1592,32 @@
     if (c >= 0.7 && now - lastFrictionCue > 60 * 60_000 && !focusMode && companionMode !== "just_there") {
       lastFrictionCue = now;
       fidget("perk"); // the pet just moves a little closer
-      const l = pick(bouncing ? frictionBounceLines : frictionStuckLines);
-      say(l, 8000);
-      announce(l);
+      void fireFrictionCue(bouncing);
     }
+  }
+
+  // Level 2 — Pattern Awareness: RARELY, when the current effortful stretch resembles a kept hard
+  // one, surface a MEMORY ("this feels familiar / we've been in waters like this before"), NEVER a
+  // prediction ("you'll break through"). A wrong prediction drops trust; a true memory never does.
+  // Gated: Trusted-bond+, once per ~12 days, and only when a real past arc exists — so it lands as
+  // remembering, not a parlor trick. Otherwise the generic observational friction line.
+  async function fireFrictionCue(bouncing: boolean) {
+    if (bondTierNow >= 2) {
+      const last = Number((await getMeta("last_familiar_struggle")) ?? 0) || 0;
+      if (Date.now() - last > 12 * 86_400_000 && Math.random() < 0.5) {
+        const arc = await oldArc(7);
+        if (arc) {
+          await setMeta("last_familiar_struggle", String(Date.now()));
+          const l = familiarStruggleLine(monthOf(arc.created_at));
+          say(l, 9000);
+          announce(l);
+          return;
+        }
+      }
+    }
+    const l = pick(bouncing ? frictionBounceLines : frictionStuckLines);
+    say(l, 8000);
+    announce(l);
   }
 
   // foreground app changed — update rhythm, then re-evaluate context
@@ -1446,6 +1650,27 @@
   let audioEnergy = $state(0); // smoothed overall loudness 0..1
   let audioBeat = $state(0); // increments on each detected beat (PixiStage reacts)
   let audioStrength = $state(0); // 0..1 strength of the latest beat (drops ≈ 1)
+  // Classic music reactivity (parity with Alive): energy → a gentle bob, a beat → a soft scale
+  // pump. Companion first, visualizer second — small on purpose. Only computed in Classic mode.
+  let audioBob = $derived(renderMode === "classic" && audioAware ? Math.min(3, audioEnergy * 3) : 0);
+  let beatPulse = $state(0);
+  let _prevBeatPulse = 0;
+  $effect(() => {
+    if (audioBeat === _prevBeatPulse) return;
+    _prevBeatPulse = audioBeat;
+    if (renderMode !== "classic" || !audioAware) return;
+    beatPulse = Math.min(1, 0.45 + audioStrength * 0.6); // weighted: most beats stay subtle
+    setTimeout(() => (beatPulse = 0), 170);
+  });
+
+  // Shared context-engine signal — one source for BOTH renderers (parity). Alive scales pet
+  // energy by it; Classic presents it as a faint flow tint. (Matches the prior inline computation.)
+  let flowCtx = $derived<"none" | "waiting" | "friction" | "focus">(
+    waitingMode() ? "waiting"
+      : Date.now() - lastFrictionCue < 30 * 60_000 ? "friction"
+        : deepWork() ? "focus"
+          : "none"
+  );
   let _bassAvg = 0;
   let _lastBeatAt = 0;
   let _musicSlow = 0; // slow EMA (~3s) of loudness → calm vs hype classification
@@ -2280,6 +2505,7 @@
       dexId = Number(dex);
       petName = (await getMeta("pet_name")) ?? "Friend";
       isShiny = (await getMeta("shiny")) === "1";
+      megaSince = Date.now(); // start the continuous-session mega clock for this companion
       muted = (await getMeta("muted")) === "1";
       setSoundEnabled(!muted);
       focusMode = (await getMeta("focus_mode")) === "1";
@@ -2343,6 +2569,8 @@
       // Chapter Access: evaluated ONCE here, at boot. The pet still renders normally; a pause
       // only layers the dim + handshake card on top (the pet stays alive underneath).
       await loadChapterStatus();
+      // Did we just update? Decide BEFORE initPresence so the post-update line can lead (greet off).
+      await detectPostUpdate();
 
       phase = "home";
       // WebView2 transparent-window quirk: the FIRST Pixi canvas paints washed; only a real
@@ -2353,7 +2581,15 @@
         setTimeout(() => { renderMode = "classic"; }, 500);
         setTimeout(() => { renderMode = "alive"; }, 900);
       }
-      void chapterAwareness(3500); // intro (once) / grace tail — after any greeting plays
+      // Post-update: Poki's one-time line leads (greeting was suppressed this launch). The
+      // "What's new" chip is a brief, dismissible offer — gone after ~15s so it never lingers.
+      if (justUpdated) {
+        say(postUpdateLine, 9000);
+        setTimeout(() => (justUpdated = false), 15000);
+      }
+      void chapterAwareness(justUpdated ? 12000 : 3500); // hold off so the post-update line is heard
+      void updateAwareness(7000); // startup update check; card appears after the greeting settles
+      setTimeout(() => void reminderTick(), 5000); // §8.2a: catch up reminders missed while closed
       if (!hasToken && (await getMeta("gh_onboard_skipped")) !== "1") {
         ghOnboardAsk = true;
       }
@@ -2474,7 +2710,9 @@
       }
       await initPresence(
         { say, setState: (s) => (petState = s) },
-        { onRitual: triggerRitual, onReturn: triggerDustOff }
+        // Suppress the time-of-day greeting on a post-update launch so "It feels better with
+        // this update." is the first thing Poki says (the user's spec). Normal launches greet.
+        { greet: !justUpdated, onRitual: triggerRitual, onReturn: triggerDustOff }
       );
       scheduleWeatherAuto(); // start the periodic natural weather cycle
       // soft hello: says its own name, then its cry (unless we're focusing)
@@ -2493,13 +2731,24 @@
       const days = daysTogether(firstMet);
       let hadAnniversary = false;
 
+      // §8.5 — annual-day match that handles a Feb-29 date in non-leap years (otherwise it's
+      // skipped 3 years out of 4). Falls back to Feb-28 so the day still lands in the birth month.
+      const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+      const sameAnnualDay = (target: Date, when: Date): boolean => {
+        if (target.getMonth() === when.getMonth() && target.getDate() === when.getDate()) return true;
+        if (target.getMonth() === 1 && target.getDate() === 29 && !isLeapYear(when.getFullYear())) {
+          return when.getMonth() === 1 && when.getDate() === 28;
+        }
+        return false;
+      };
+
       // pet birthday — the calendar day we first met (takes precedence over the
       // generic anniversary so they never double up). Party hat for the session.
       let isBday = false;
       if (firstMet && days >= 1 && !focusMode) {
         const fm = new Date(firstMet.replace(" ", "T"));
         const now2 = new Date();
-        if (fm.getMonth() === now2.getMonth() && fm.getDate() === now2.getDate()) {
+        if (sameAnnualDay(fm, now2)) {
           const yr = String(now2.getFullYear());
           if ((await getMeta("last_birthday")) !== yr) {
             isBday = true;
@@ -2539,7 +2788,7 @@
       if (userBday && !focusMode) {
         const b = new Date(userBday.replace(" ", "T"));
         const now4 = new Date();
-        if (!isNaN(b.getTime()) && b.getMonth() === now4.getMonth() && b.getDate() === now4.getDate()) {
+        if (!isNaN(b.getTime()) && sameAnnualDay(b, now4)) {
           const yr = String(now4.getFullYear());
           if ((await getMeta("last_user_birthday")) !== yr) {
             await setMeta("last_user_birthday", yr);
@@ -2803,21 +3052,43 @@
   // falls back to a persona/generic murmur. Shown in the bubble only (not spoken
   // aloud) so it stays gentle and non-intrusive.
   // ── Quiet reminders ────────────────────────────────────────────────
-  // Check every 30s for a reminder whose time matches now. Daily reminders fire once per day
-  // (deduped by lastFired); one-time reminders fire then drop. A nudge, never an alarm.
+  // Check every 30s for reminders due since the last check. ALL matches this tick surface together,
+  // and only the ones that actually fire are marked/dropped (§8.1 — no same-minute loss). Daily
+  // reminders fire once per day (deduped by lastFired); one-time reminders fire then drop.
+  //
+  // §8.2a — missed-fire catch-up: instead of an exact-minute match we fire any reminder whose
+  // scheduled minute today falls in the window (last check, now]. If the app was closed/asleep at
+  // that minute, the window stays open and the reminder still reaches you on the next tick/launch.
+  // First run (no stored last-check) anchors the window at "now" so we never retro-fire old ones.
   async function reminderTick() {
     if (phase !== "home") return;
+    void maybeOfferMega(); // continuous-session mega check (cheap; no UI until 1hr crossed)
     const list = await getReminders();
     if (!list.length) return;
     const now = new Date();
-    const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const nowMs = now.getTime();
     const today = now.toISOString().slice(0, 10);
+    const lastRaw = await getMeta("reminder_last_check");
+    const lastMs = lastRaw ? Number(lastRaw) : nowMs; // first ever tick → no catch-up
+    await setMeta("reminder_last_check", String(nowMs));
+
+    // Today's scheduled instant for an "HH:MM" reminder (model carries no date — "once" = the next
+    // occurrence of that clock time). A daily missed across days only catches up TODAY's, not N days.
+    const scheduledTodayMs = (hhmm: string): number => {
+      const [h, m] = hhmm.split(":").map((n) => Number(n));
+      const d = new Date(now);
+      d.setHours(h, m, 0, 0);
+      return d.getTime();
+    };
+
     let changed = false;
     const fired: Reminder[] = [];
     const keep: Reminder[] = [];
     for (const r of list) {
+      const due = scheduledTodayMs(r.time);
+      const isDue = due > lastMs && due <= nowMs; // exact tick OR a minute missed while away
       let drop = false;
-      if (r.time === hhmm) {
+      if (isDue) {
         if (r.repeat === "once") {
           fired.push(r);
           drop = true; // one-shot: remove after it fires
@@ -2832,6 +3103,10 @@
     }
     if (changed) await setReminders(keep);
     if (fired.length > 0) {
+      // §8.2b (deliberate): reminders are user-SCHEDULED, so they reach you even in Focus /
+      // Just-There and from the tray — a promise the app made, not proactive chatter. Breaking that
+      // ("I set that and it never told me") is worse than a brief, dismissible nudge. surfaceReminder
+      // surfaces on top WITHOUT stealing keyboard focus.
       const text = fired.map((r) => r.text).join(" • ");
       await surfaceReminder(text);
     }
@@ -2962,9 +3237,19 @@
     if (attacking || switchFx !== "none" || moving) return;
     attacking = true;
     attackMove = move ?? randomMove(dexId);
-    atkKind = animKind(attackMove);
+    atkKind = animKind(attackMove, dexId); // dexId → per-species overrides (combat_overrides.ts)
+    // Species identity (v2): magnitude = move power × how hard it hits × how big it is;
+    // pacing = species tempo (slow heavy mons telegraph, fast mons snap). Both skins read these
+    // through the existing atkIntensity / attack-window plumbing — no per-archetype change.
+    const id = speciesIdentity(dexId);
+    atkIntensity = Math.max(
+      0.2,
+      Math.min(1.3, attackIntensity(attackMove) * (0.65 + id.power * 0.5) * (0.8 + id.scale * 0.45))
+    );
+    atkFlavor = megaFx ?? attackFlavor(attackMove.color, id); // mega signature colour, else v4 species tint
     particles = makeParticles(attackMove, dir);
-    const dur = attackMove.cls === 3 ? 1250 : attackMove.cls === 1 ? 1150 : 950;
+    const base = attackMove.cls === 3 ? 1250 : attackMove.cls === 1 ? 1150 : 950;
+    const dur = Math.round(base * (1.4 - id.tempo * 0.7));
     setTimeout(() => {
       attacking = false;
       attackMove = null;
@@ -3037,6 +3322,10 @@
       dexId = entry.id;
       petName = newName;
       isShiny = becomesShiny;
+      megaForm = null; // a new companion reverts to base; its mega session starts fresh
+      megaSince = Date.now();
+      megaOfferedDex = -1;
+      megaOffer = false;
       await setMeta("dex_id", String(entry.id));
       await setMeta("pet_name", newName);
       await setMeta("shiny", becomesShiny ? "1" : "0");
@@ -3061,6 +3350,47 @@
       if (becomesShiny) say(`✨ A shiny ${displayName(entry.name)}! One in a hundred.`, 12000);
       else say(pick(switchLines), 8000);
     }, 480 + 440 + 700 + 680 + 620);
+  }
+
+  // ---- Mega Evolution: a reward for time together, never a grind ----
+  // Offered when you've spent a continuous hour with a mon that HAS a special form. No timer/bar
+  // shown (anti-anxiety); ignoring costs nothing; reverts on switch.
+  async function maybeOfferMega() {
+    if (megaForm || megaOffer || evoOffer || evoActive || switchFx !== "none" || battleOpen) return;
+    if (phase !== "home" || focusMode || petState === "sleeping" || panel !== "none") return;
+    if (!hasMega(dexId) || megaOfferedDex === dexId) return;
+    if (!megaSince || Date.now() - megaSince < MEGA_MIN_MS) return; // one continuous sitting together
+    megaOfferedDex = dexId; // offer once per mon-session — never pester
+    megaOffer = true;
+  }
+  function declineMega() {
+    megaOffer = false; // a gift, never forced — no penalty
+  }
+  function doMega(form: SpecialForm) {
+    megaOffer = false;
+    poke();
+    evoFlash = true; // a bright white reveal flash (bridged to both skins), like an evolution
+    setTimeout(() => {
+      megaForm = form; // sprite swaps at the peak of the flash (keeps nickname + memory)
+      petState = "happy";
+      setTimeout(() => { if (petState === "happy") petState = "idle"; }, 1400);
+      runDelightBurst("fireworks", 4000);
+      playCry(dexId, 1); // the real cry at full volume — a fuller "mega" roar
+      voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.25);
+      say(`${form.label}! ✦`, 9000);
+      announce(form.label);
+      void bumpCounter("interactions");
+    }, 260);
+    setTimeout(() => (evoFlash = false), 520);
+  }
+  // Manual revert (you're never stuck in the form). Switching companions also reverts.
+  function revertMega() {
+    if (!megaForm) return;
+    poke();
+    evoFlash = true;
+    setTimeout(() => (megaForm = null), 240);
+    setTimeout(() => (evoFlash = false), 480);
+    say("Back to my usual self.", 4000);
   }
 
   // ---- evolution ceremony ----
@@ -3168,15 +3498,33 @@
     if (evoActive) return;
     bumpCounter("interactions").then(() => maybeOfferEvolution()); // bond deepens, may be ready to grow
     if (switchFx !== "none" || evoOffer) return;
-    if (Math.random() < 0.12) {
+    // Reaction Identity: rapid pokes build irritation; a fighter snaps into a real move quickly,
+    // others take a lot, sleepy mons never do. Otherwise → the species' signature poke beat.
+    const id = speciesIdentity(dexId);
+    const now = Date.now();
+    irritation = now - lastPokeAt < 1400 ? irritation + 1 : 1;
+    lastPokeAt = now;
+    if (rilesToAttack(id) && irritation >= rileThreshold(id)) {
+      irritation = 0;
       attack();
       return;
     }
-    petState = "happy";
-    setTimeout(() => (petState = "idle"), 950);
-    // usually just a silent bounce — presence > conversation
+    triggerReaction(reactionFor(id));
+  }
+
+  function triggerReaction(kind: ReactionKind) {
+    reaction = { kind, n: ++reactionSeq };
+    // energetic beats use the existing happy bounce; the rest are carried by the reaction overlay
+    // + the data-rx body animation (Classic) / the bridged beat (Alive).
+    if (kind === "flare" || kind === "bounce" || kind === "spark") {
+      petState = "happy";
+      setTimeout(() => { if (petState === "happy") petState = "idle"; }, 900);
+    }
+    clearTimeout(reactionTimer);
+    reactionTimer = setTimeout(() => (reaction = null), kind === "doze" ? 1500 : 900);
+    // soul: a line only rarely — presence > conversation
     if (Math.random() < 0.08) voiceCry(dexId, displayName(dexEntry(dexId)?.name ?? petName), 0.2);
-    else if (Math.random() < 0.25) say(pick(pokeReactions), 2500);
+    else if (Math.random() < 0.22) say(pick(pokeReactions), 2400);
   }
 
   // "Today felt like…" — a lighter, one-word check-in that still feeds the mood timeline
@@ -3551,7 +3899,7 @@
     <!-- background drag handle: grabbing the empty box moves the window -->
     <div class="draglayer" role="presentation" aria-label="Drag to move widget" onpointerdown={startWinDrag}></div>
 
-    {#if bgStyle !== "off" && switchFx === "none"}
+    {#if bgStyle !== "off" && switchFx === "none" && renderMode === "classic"}
       {#if bgStyle === "orb"}
         <!-- Glossy type-energy orb -->
         <div
@@ -3615,11 +3963,21 @@
       >
     {/if}
 
-    <div class="stage" class:pixihide={renderMode === "alive"} class:chapter-dim={chapterPaused}>
+    <div
+      class="stage"
+      class:pixihide={renderMode === "alive"}
+      class:chapter-dim={chapterPaused}
+    >
+      <!-- Flow cue (parity with Alive's context-driven energy): a faint, calm overlay that reads
+           the builder context — focus cools/settles, waiting breathes slow, friction warms. -->
+      {#if flowCtx !== "none"}
+        <div class="flowtint flow-{flowCtx}" aria-hidden="true"></div>
+      {/if}
       {#if habitatOn}
         <!-- Type Habitat: a Tiny Living Sanctuary chosen by the pet's type -->
         <div
           class="roombg"
+          class:sphere={habitatShape === "sphere"}
           style="opacity: {0.96 * widgetOpacity}; border-radius: {habitatShape === 'sphere'
             ? '50%'
             : habitatShape === 'square'
@@ -3655,8 +4013,15 @@
             title="provenance"
             onclick={revealFounder}>{founderMark(currentBiome.scene)}</button>
         </div>
-        <!-- foreground vignette: sits in front of the pet → real depth -->
-        <div class="roomfg" aria-hidden="true"></div>
+        <!-- foreground vignette: sits in front of the pet → real depth. Shape-matches the habitat
+             so a sphere stays a clean circle in day (no square boundary); only night frames it. -->
+        <div
+          class="roomfg"
+          class:sphere={habitatShape === "sphere"}
+          class:nightframe={isNight}
+          style="border-radius: {habitatShape === 'sphere' ? '50%' : habitatShape === 'square' ? '10px' : '20px'}"
+          aria-hidden="true"
+        ></div>
       {/if}
       {#if switchFx !== "none"}
         <img
@@ -3689,7 +4054,8 @@
         class:running
         class:hopping
         class:inroom={habitatOn}
-        style="transform: translateX({petX}px); transition-duration: {moveDur}s; --dir: {dir}; --psize: {imgSize}px; --atkcolor: {attackMove?.color ?? '#fff'}; --rim: {currentBiome.rim || 'transparent'}"
+        data-akind={atkKind ?? ""}
+        style="transform: translateX({petX}px); transition-duration: {moveDur}s; --dir: {dir}; --psize: {petRenderSize}px; --atkcolor: {megaFx ?? attackMove?.color ?? '#fff'}; --atkflavor: {atkFlavor}; --atkpow: {atkIntensity}; --rim: {currentBiome.rim || 'transparent'}; --atk-spread: {atkV?.spread ?? 1}; --atk-len: {atkV?.len ?? 1}; --atk-alpha: {atkV?.alpha ?? 1}; --atk-speed: {atkV?.speed ?? 1}"
       >
         <Bubble text={bubble} />
         {#if attackMove}
@@ -3709,7 +4075,12 @@
           class:perk={oneShot === "perk"}
           class:stretch={ritualStretch}
           class:eat={eating}
+          class:breakthrough={breakthroughActive}
+          data-rx={reaction?.kind ?? ""}
         >
+          {#if megaForm}
+            <span class="mega-aura" style="--mc: {currentBiome.light}" aria-hidden="true"></span>
+          {/if}
           {#if birthday}
             <span class="bday-hat" aria-hidden="true">🎉</span>
           {/if}
@@ -3723,7 +4094,7 @@
               class:revealed={evoFlash}
               src={spriteUrl(evoShowNew && evoTarget ? evoTarget.id : dexId, isShiny)}
               alt="evolving"
-              style="width: {imgSize}px; height: {imgSize}px"
+              style="width: {petRenderSize}px; height: {petRenderSize}px"
             />
           {:else if switchFx === "ballout" || switchFx === "throw"}
             <div class="pokeball" class:flyout={switchFx === "ballout"} class:throwin={switchFx === "throw"}></div>
@@ -3736,28 +4107,50 @@
               name={petName}
               state={petState}
               flip={dir === 1}
-              size={imgSize}
+              size={petRenderSize}
               shiny={isShiny}
               type={curType}
               {lookX}
               {lookY}
               {lookTilt}
+              bob={audioBob}
+              pulse={beatPulse}
+              srcOverride={megaForm ? formSpriteUrl(megaForm.formId, isShiny) : undefined}
+              fallbackOverride={megaForm ? formFallbackUrl(megaForm.formId, isShiny) : undefined}
               onTap={onPetTap}
               onPet={onPetStroke}
             />
           {/if}
         </div>
-        {#if attacking && (atkKind === "beam" || atkKind === "bolt")}
-          <div class="minibeam" aria-hidden="true"></div>
+        <!-- Reaction Identity (v3): a quick FX cue beside the species' body beat (data-rx on the
+             petwrap). Keyed by `n` so each poke replays. Palette-coloured; FX-y kinds only. -->
+        {#if reaction && (reaction.kind === "flare" || reaction.kind === "spark" || reaction.kind === "aura" || reaction.kind === "phase")}
+          {#key reaction.n}
+            <span class="rxfx rxfx-{reaction.kind}" style="--rc: {megaFx ?? petIdentity.palette[0]}" aria-hidden="true"></span>
+          {/key}
         {/if}
-        {#if attacking && (atkKind === "orb" || atkKind === "stream")}
-          <span class="projectile">{attackMove?.emoji}</span>
-        {/if}
-        {#if attacking && atkKind === "slash"}
-          <div class="slasharc" aria-hidden="true"></div>
-        {/if}
-        {#if attacking && atkKind === "status"}
-          <div class="aura" aria-hidden="true"></div>
+
+        <!-- Attack v1: one archetype per move, type-flavored (var --atkcolor) + power-scaled
+             (var --atkpow). The pet's body lunge/channel comes from petwrap.attacking/channeling. -->
+        {#if attacking}
+          {#if atkFamily === "beam"}
+            <div class="minibeam" aria-hidden="true"></div>
+          {:else if atkFamily === "breath"}
+            <div class="breathcone" aria-hidden="true"></div>
+          {:else if atkFamily === "projectile"}
+            <span class="projectile">{attackMove?.emoji}</span>
+          {:else if atkFamily === "claw"}
+            <div class="claws" aria-hidden="true"><i></i><i></i><i></i></div>
+          {:else if atkFamily === "bite"}
+            <div class="bite" aria-hidden="true"><i></i><i></i></div>
+          {:else if atkFamily === "burst"}
+            <div class="aoe" aria-hidden="true"><i></i><i></i></div>
+          {:else if atkFamily === "status"}
+            <div class="aura" aria-hidden="true"></div>
+          {/if}
+          {#if atkFamily === "dash"}
+            <div class="speedlines" aria-hidden="true"></div>
+          {/if}
         {/if}
         {#each particles as p (p.id)}
           <span
@@ -3791,12 +4184,16 @@
           {petState}
           {bubble}
           calm={comfortMode || deepWork()}
-          flowContext={waitingMode() ? "waiting" : (Date.now() - lastFrictionCue < 30 * 60_000) ? "friction" : deepWork() ? "focus" : "none"}
+          flowContext={flowCtx}
           habitat={habitatOn}
           {habitatShape}
           {bgStyle}
           opacity={widgetOpacity}
           dimmed={chapterPaused}
+          spriteOverride={megaForm ? formSpriteUrl(megaForm.formId, isShiny) : null}
+          spriteFallback={megaForm ? formFallbackUrl(megaForm.formId, isShiny) : null}
+          typeOverride={megaForm?.type ?? null}
+          mega={!!megaForm}
           onTap={onPetTap}
           onStroke={onPetStroke}
           onBackgroundDown={beginWindowDrag}
@@ -3811,6 +4208,25 @@
 
     <!-- Chapter Access: the soft pause. Pet stays alive; only the room is quiet. A handshake,
          never a paywall. Dismissible; close-to-tray & quit always work. -->
+    <!-- Mega Evolution: an optional gift after a long sitting together. Dismissible; no penalty. -->
+    {#if megaOffer}
+      <div class="chapter-card">
+        <button class="chapter-x" aria-label="Not now" onclick={declineMega}>×</button>
+        <p class="chapter-note">We've been at this a while together… want to see something? ✦</p>
+        <div class="update-actions">
+          {#each megaForms(dexId) as form (form.formId)}
+            <button class="chapter-btn primary" onclick={() => doMega(form)}>{form.label}</button>
+          {/each}
+        </div>
+        <button class="update-whatsnew" onclick={declineMega}>Not now</button>
+      </div>
+    {/if}
+
+    <!-- while in a special form, a quiet way back (you're never stuck) -->
+    {#if megaForm}
+      <button class="chapter-chip mega-revert" onclick={revertMega} title="Revert to base form">⤺ revert</button>
+    {/if}
+
     {#if showChapterChip}
       <button class="chapter-chip" onclick={() => { cardOpen = true; cardDismissed = false; }}>
         Builder pass available
@@ -3855,6 +4271,48 @@
         <button class="chapter-btn primary" disabled={!passInput.trim()} onclick={submitBuilderPass}>
           Stay a while ✦
         </button>
+      </div>
+    {/if}
+
+    <!-- Auto-update (V2's first online feature): an invitation, never an alarm. Surfaces at most
+         once per calendar day; "Later" just closes it. Nothing is ever lost on update. -->
+    {#if updateCardOpen}
+      <div class="chapter-card update-card">
+        {#if updatePhase === "idle"}
+          <button class="chapter-x" aria-label="Later" onclick={dismissUpdate}>×</button>
+          <p class="chapter-note">{updateFoundText}</p>
+          <p class="update-version">Version {updateVersion}</p>
+          <p class="update-preserved">{updatePreservedLine}</p>
+          <div class="update-actions">
+            <button class="chapter-btn primary" onclick={doUpdateNow}>Update now</button>
+            <button class="chapter-btn" onclick={dismissUpdate}>Later</button>
+          </div>
+          <button class="update-whatsnew" onclick={openWhatsNew}>What's new</button>
+          {#if updateError}<p class="chapter-err">{updateError}</p>{/if}
+        {:else}
+          <p class="chapter-note">{updateInstallingText}</p>
+          <div class="update-progress" aria-hidden="true">
+            <div class="update-bar" style="width:{updatePct}%"></div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- One-time after an update lands: a quiet, brief "What's new" offer beside Poki's line. -->
+    {#if justUpdated && !whatsNewOpen}
+      <button class="chapter-chip whatsnew-chip" onclick={openWhatsNew}>What's new ✦</button>
+    {/if}
+
+    <!-- The notes themselves — pulled straight from the GitHub Release body (one source of truth). -->
+    {#if whatsNewOpen}
+      <div class="chapter-card whatsnew-panel">
+        <button class="chapter-x" aria-label="Close" onclick={() => (whatsNewOpen = false)}>×</button>
+        <p class="whatsnew-title">What's new in v{whatsNewVersion || updateVersion}</p>
+        {#if updateNotes.trim()}
+          <div class="whatsnew-notes">{updateNotes}</div>
+        {:else}
+          <p class="update-preserved">The notes are on the release page.</p>
+        {/if}
       </div>
     {/if}
 
@@ -4667,15 +5125,22 @@
       0 5px 14px rgba(0, 0, 0, 0.45);
     filter: hue-rotate(8deg) brightness(1.04);
   }
-  /* foreground vignette in front of the pet → cinematic depth */
+  /* foreground vignette in front of the pet → cinematic depth. border-radius is set inline to
+     match the habitat shape, so a sphere day-scene has NO square corners. */
   .roomfg {
     position: absolute;
     inset: 14px;
-    border-radius: 20px;
     z-index: 2;
     pointer-events: none;
     box-shadow: inset 0 -34px 44px rgba(0, 0, 0, 0.4),
       inset 0 0 46px rgba(0, 0, 0, 0.22);
+  }
+  /* night only: the boundary square appears (parity with Alive's night frame). Day = clean
+     shape-matched vignette, just habitat + backdrop. */
+  .roomfg.nightframe {
+    border-radius: 10px !important;
+    border: 1px solid rgba(180, 160, 240, 0.18);
+    box-shadow: inset 0 -34px 48px rgba(0, 0, 0, 0.5), inset 0 0 52px rgba(0, 0, 0, 0.3);
   }
 
   .stage {
@@ -4696,6 +5161,19 @@
   /* V2 preview swaps the CSS stage for the Pixi render */
   .stage.pixihide {
     display: none;
+  }
+  /* Sphere habitat: a centred circle sized in vmin (like Alive's 0.84·min(w,h)), NOT the
+     window-filling inset:14px ellipse. This keeps the WHOLE globe in frame with margin all round,
+     and is resize-safe with zero JS — vmin tracks the window natively, so the globe never clips or
+     drifts on resize (parity with Alive's responsive geometry). Tunable via --globe. */
+  .stage .roombg.sphere,
+  .stage .roomfg.sphere {
+    inset: auto;
+    left: 50%;
+    top: 50%;
+    width: var(--globe, 84vmin);
+    height: var(--globe, 84vmin);
+    transform: translate(-50%, -50%);
   }
   .pixilayer {
     position: absolute;
@@ -4918,6 +5396,104 @@
     font-size: 11px;
     color: #ff9b9b;
   }
+  /* Auto-update card — reuses the chapter-card shell; just the bits unique to updating. */
+  .update-card {
+    gap: 7px;
+  }
+  .update-version {
+    margin: 0;
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .update-preserved {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.62);
+  }
+  .update-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 3px;
+  }
+  .update-actions .chapter-btn {
+    flex: 1;
+  }
+  .update-whatsnew {
+    align-self: flex-start;
+    margin-top: 1px;
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 11px;
+    color: rgba(120, 170, 255, 0.82);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .update-whatsnew:hover {
+    color: rgba(150, 190, 255, 1);
+  }
+  .update-progress {
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+  }
+  .update-bar {
+    height: 100%;
+    border-radius: 999px;
+    background: rgba(120, 170, 255, 0.7);
+    transition: width 0.25s ease;
+  }
+  .whatsnew-chip {
+    right: 10px;
+    bottom: 10px;
+  }
+  /* mega revert chip — bottom-left so it never collides with the bottom-right chips */
+  .mega-revert {
+    right: auto;
+    left: 10px;
+    bottom: 10px;
+  }
+  /* mega/special-form aura (Classic) — a pulsing, type-tinted energy glow behind the pet. */
+  .mega-aura {
+    position: absolute;
+    left: 50%;
+    top: 44%;
+    width: calc(var(--psize, 110px) * 1.35);
+    height: calc(var(--psize, 110px) * 1.55);
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: -1;
+    background: radial-gradient(circle, var(--mc, #ffd24a) 0%, transparent 60%);
+    mix-blend-mode: screen;
+    animation: mega-pulse 1.9s ease-in-out infinite;
+  }
+  @keyframes mega-pulse {
+    0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(0.92); }
+    50%      { opacity: 0.7; transform: translate(-50%, -50%) scale(1.08); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mega-aura { animation: none; opacity: 0.5; }
+  }
+  .whatsnew-title {
+    margin: 2px 14px 2px 0;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .whatsnew-notes {
+    max-height: 160px;
+    overflow-y: auto;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.78);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   /* idle: clip the pet/shadow/bubble to the orb so only the sphere shows.
      on hover the mask lifts, so controls and overflow return. */
   .widget.idle .stage {
@@ -5126,6 +5702,67 @@
     0%, 100% { transform: translateY(0) scale(1); }
     45%      { transform: translateY(-3px) scale(1.05); }
   }
+  /* breakthrough moment — Classic parity with Alive's "environmental bloom": a hop + a warm glow
+     bloom around the pet. Brief (drives off breakthroughActive, ~2s). */
+  .petwrap.breakthrough {
+    animation: bt-hop 0.9s cubic-bezier(0.34, 1.35, 0.6, 1);
+  }
+  .petwrap.breakthrough::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: 8%;
+    width: calc(var(--psize, 110px) * 1.1);
+    height: calc(var(--psize, 110px) * 1.1);
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 226, 150, 0.5) 0%, transparent 62%);
+    pointer-events: none;
+    animation: bt-bloom 1.4s ease-out forwards;
+    z-index: -1;
+  }
+  @keyframes bt-hop {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    25%      { transform: translateY(-16px) scale(1.05, 0.97); }
+    55%      { transform: translateY(0) scale(1.08, 0.9); }
+    72%      { transform: translateY(-4px) scale(0.98, 1.03); }
+  }
+  @keyframes bt-bloom {
+    0%   { opacity: 0; transform: translateX(-50%) scale(0.5); }
+    30%  { opacity: 1; }
+    100% { opacity: 0; transform: translateX(-50%) scale(1.6); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .petwrap.breakthrough { animation: none; }
+  }
+  /* Flow cue overlay (Classic) — faint, calm, read-the-room ambient. Very low alpha on purpose
+     (soul: never loud); focus cools, waiting breathes slow, friction warms slightly. */
+  .flowtint {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    border-radius: inherit;
+  }
+  .flow-focus {
+    background: radial-gradient(circle at 50% 60%, rgba(90, 140, 210, 0.1), transparent 70%);
+    animation: flowbreath 7s ease-in-out infinite;
+  }
+  .flow-waiting {
+    background: radial-gradient(circle at 50% 60%, rgba(150, 160, 190, 0.08), transparent 72%);
+    animation: flowbreath 5s ease-in-out infinite;
+  }
+  .flow-friction {
+    background: radial-gradient(circle at 50% 62%, rgba(240, 170, 90, 0.1), transparent 68%);
+    animation: flowbreath 3.4s ease-in-out infinite;
+  }
+  @keyframes flowbreath {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .flowtint { animation: none; }
+  }
 
   /* ---- bond-tier ceremony banner ---- */
   /* startup "ask first" prompt (boot-launch) */
@@ -5263,6 +5900,213 @@
     .bday-hat { animation: none; }
   }
 
+  /* ════ Attack archetypes (v1) — type-flavored (--atkcolor) + power-scaled (--atkpow).
+     The body lunge/channel comes from petwrap.attacking/channeling; these layer the move's FX. ════ */
+  /* breath cone: a widening exhale from the mouth (Flamethrower, Heat Wave) */
+  /* breath cone (Flamethrower / Heat Wave): a widening flame cone from the mouth — white-hot core
+     → type colour → species-flavour edge (v4). */
+  .breathcone {
+    position: absolute;
+    top: 30%;
+    left: 50%;
+    width: calc(var(--psize, 110px) * (0.7 + var(--atkpow, 0.5) * 0.6) * var(--atk-len, 1));
+    height: calc(var(--psize, 110px) * (0.42 + var(--atkpow, 0.5) * 0.3) * var(--atk-spread, 1));
+    opacity: var(--atk-alpha, 1);
+    background: linear-gradient(90deg, #fff, color-mix(in srgb, var(--atkcolor) 60%, #fff) 16%, var(--atkcolor) 44%, var(--atkflavor, var(--atkcolor)) 72%, transparent 88%);
+    clip-path: polygon(0 44%, 100% 0, 100% 100%, 0 56%);
+    filter: blur(2px) brightness(1.15);
+    pointer-events: none;
+    z-index: 4;
+    animation: breathpuff 0.5s ease-out forwards;
+  }
+  @keyframes breathpuff {
+    0% { opacity: 0; transform: translate(calc(-50% + var(--dir) * 22%), -50%) scaleX(calc(var(--dir) * 0.6)); }
+    25% { opacity: 0.95; }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--dir) * 52%), -50%) scaleX(var(--dir)); }
+  }
+  /* v4 per-kind tweaks layered on the family class (data-akind = the specific kind). Numeric spread/
+     len/alpha/speed already modulate via CSS vars above; these add the shape-distinct exceptions. */
+  .mover[data-akind="gas"] .breathcone { filter: blur(5px) brightness(1); clip-path: none; border-radius: 60% 50% 55% 50%; }
+  .mover[data-akind="wind"] .breathcone { filter: blur(1px) brightness(1.25); }
+  .mover[data-akind="sky-strike"] .minibeam {
+    width: 8px;
+    height: calc(var(--psize, 110px) * 1.4);
+    top: calc(var(--psize, 110px) * -1.2);
+    bottom: auto;
+    margin-top: 0;
+    transform: none;
+    border-radius: 4px;
+    background: linear-gradient(to right, transparent, #fff 50%, var(--atkcolor) 78%, transparent);
+  }
+  .mover[data-akind="blade"] .claws i:nth-child(2),
+  .mover[data-akind="blade"] .claws i:nth-child(3) { display: none; }
+  /* claw rake: three staggered slash streaks */
+  .claws {
+    position: absolute;
+    top: 30%;
+    left: 50%;
+    transform: translate(-50%, -50%) scaleX(var(--dir));
+    pointer-events: none;
+    z-index: 4;
+  }
+  .claws i {
+    position: absolute;
+    width: calc(var(--psize, 110px) * 0.5 * (0.7 + var(--atkpow, 0.5) * 0.5));
+    height: 3px;
+    border-radius: 2px;
+    background: linear-gradient(90deg, transparent, var(--atkcolor) 60%, #fff);
+    box-shadow: 0 0 6px var(--atkflavor, var(--atkcolor));
+    opacity: 0;
+    animation: clawflash 0.4s ease-out forwards;
+  }
+  .claws i:nth-child(1) { transform: rotate(-26deg) translate(-30%, -22px); }
+  .claws i:nth-child(2) { transform: rotate(-20deg) translate(-30%, 0); animation-delay: 0.07s; }
+  .claws i:nth-child(3) { transform: rotate(-14deg) translate(-30%, 22px); animation-delay: 0.14s; }
+  @keyframes clawflash { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
+  /* bite: two jaws snapping shut (Crunch, Fire Fang, Seismic Toss grab) */
+  .bite {
+    position: absolute;
+    top: 30%;
+    left: 50%;
+    transform: translate(calc(-50% + var(--dir) * 34%), -50%) scaleX(var(--dir));
+    pointer-events: none;
+    z-index: 4;
+  }
+  .bite i {
+    position: absolute;
+    left: 50%;
+    width: calc(var(--psize, 110px) * 0.34 * (0.8 + var(--atkpow, 0.5) * 0.4));
+    height: calc(var(--psize, 110px) * 0.16);
+    margin-left: calc(var(--psize, 110px) * -0.17 * (0.8 + var(--atkpow, 0.5) * 0.4));
+    border: 3px solid var(--atkcolor);
+    box-shadow: 0 0 6px var(--atkflavor, var(--atkcolor));
+  }
+  .bite i:nth-child(1) { border-radius: 50% 50% 0 0; border-bottom: none; animation: jawtop 0.38s ease-out forwards; }
+  .bite i:nth-child(2) { border-radius: 0 0 50% 50%; border-top: none; animation: jawbot 0.38s ease-out forwards; }
+  @keyframes jawtop { 0% { transform: translateY(-20px); opacity: 0; } 30% { opacity: 1; } 72% { transform: translateY(-2px); } 100% { opacity: 0; } }
+  @keyframes jawbot { 0% { transform: translateY(20px); opacity: 0; } 30% { opacity: 1; } 72% { transform: translateY(2px); } 100% { opacity: 0; } }
+  /* area burst: expanding ground rings at the feet (Earthquake, Surf, Discharge) */
+  .aoe {
+    position: absolute;
+    bottom: 6%;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 4;
+  }
+  .aoe i {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: calc(var(--psize, 110px) * (0.7 + var(--atkpow, 0.5) * 0.8) * var(--atk-spread, 1));
+    height: calc(var(--psize, 110px) * 0.26 * (0.7 + var(--atkpow, 0.5) * 0.8) * var(--atk-spread, 1));
+    border: 3px solid var(--atkcolor);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--atkflavor, var(--atkcolor));
+    opacity: 0;
+    animation: aoering 0.7s ease-out forwards;
+  }
+  .aoe i:nth-child(2) { animation-delay: 0.22s; }
+  @keyframes aoering {
+    0% { transform: translate(-50%, 0) scale(0.25); opacity: 0.85; }
+    100% { transform: translate(-50%, 0) scale(1.35); opacity: 0; }
+  }
+  /* dash: speed streaks trailing the lunging pet (Quick Attack, Flare Blitz) */
+  .speedlines {
+    position: absolute;
+    top: 36%;
+    left: 50%;
+    width: calc(var(--psize, 110px) * 0.85);
+    height: 46%;
+    transform: translate(calc(-50% - var(--dir) * 52%), -50%) scaleX(var(--dir));
+    pointer-events: none;
+    z-index: 3;
+    background: repeating-linear-gradient(90deg, transparent 0 6px, var(--atkcolor) 6px 8px, transparent 8px 18px);
+    -webkit-mask: linear-gradient(90deg, transparent, #000 65%);
+    mask: linear-gradient(90deg, transparent, #000 65%);
+    opacity: 0;
+    animation: speedstreak 0.42s linear forwards;
+  }
+  @keyframes speedstreak { 0% { opacity: 0; } 30% { opacity: 0.6; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .breathcone, .claws i, .bite i, .aoe i, .speedlines { animation-duration: 0.01s; }
+  }
+
+  /* ════ Reaction Identity (v3) — per-species poke beat. Body motion = .petwrap[data-rx]; a small
+     palette-coloured FX cue = .rxfx. Brief + gentle (soul: a delight, not a slot machine). ════ */
+  .rxfx {
+    position: absolute;
+    top: 34%;
+    left: 50%;
+    width: calc(var(--psize, 110px) * 0.5);
+    height: calc(var(--psize, 110px) * 0.5);
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 2px solid var(--rc, #fff);
+    box-shadow: 0 0 10px var(--rc, #fff);
+    pointer-events: none;
+    z-index: 4;
+    opacity: 0;
+    animation: rxpop 0.6s ease-out forwards;
+  }
+  .rxfx-spark { border-style: dashed; }
+  .rxfx-phase { border-style: dotted; }
+  @keyframes rxpop {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+    30% { opacity: 0.7; }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+  }
+  .petwrap[data-rx="phase"] { animation: rxphase 0.6s ease; }
+  @keyframes rxphase {
+    0%, 100% { opacity: 1; }
+    35% { opacity: 0.12; transform: translateX(-8px) scale(0.96); }
+    62% { opacity: 0.12; transform: translateX(8px); }
+  }
+  .petwrap[data-rx="doze"] { animation: rxdoze 1.4s ease; }
+  @keyframes rxdoze {
+    0%, 100% { transform: translateY(0) scaleY(1); }
+    40% { transform: translateY(6px) scaleY(0.93); }
+    72% { transform: translateY(4px) scaleY(0.96); }
+  }
+  .petwrap[data-rx="aura"] { animation: rxaura 0.9s ease; }
+  @keyframes rxaura {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-9px); }
+  }
+  .petwrap[data-rx="spark"] { animation: rxspark 0.4s ease; }
+  @keyframes rxspark {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-3px); }
+    45% { transform: translateX(3px); }
+    70% { transform: translateX(-2px); }
+  }
+  .petwrap[data-rx="shiver"] { animation: rxshiver 0.5s linear; }
+  @keyframes rxshiver {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+  }
+  .petwrap[data-rx="bounce"] { animation: rxbounce 0.5s cubic-bezier(0.34, 1.4, 0.6, 1); }
+  @keyframes rxbounce {
+    0%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-12px); }
+  }
+  .petwrap[data-rx="turn"] { animation: rxturn 0.7s ease; }
+  @keyframes rxturn {
+    0%, 100% { transform: scaleX(1); }
+    50% { transform: scaleX(-1); }
+  }
+  .petwrap[data-rx="flare"] { animation: rxflare 0.5s ease; }
+  @keyframes rxflare {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(calc(var(--dir, 1) * -6px)) scale(1.04); }
+    55% { transform: translateX(calc(var(--dir, 1) * 5px)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rxfx { animation-duration: 0.01s; }
+    .petwrap[data-rx] { animation: none; }
+  }
+
   /* ---- sleep dream bubble ---- */
   .dreambubble {
     position: absolute;
@@ -5396,9 +6240,9 @@
     position: absolute;
     bottom: calc(var(--psize, 110px) * 0.5);
     left: 50%;
-    width: calc(var(--psize, 110px) * 1.5);
-    height: 10px;
-    margin-top: -5px;
+    width: calc(var(--psize, 110px) * 1.5 * var(--atk-len, 1));
+    height: calc(10px * var(--atk-spread, 1));
+    margin-top: calc(-5px * var(--atk-spread, 1));
     transform: scaleX(var(--dir));
     transform-origin: left center;
     border-radius: 5px;
@@ -5749,42 +6593,47 @@
   /* ---- a treat tossed in, arcing toward the pet, then chomped ---- */
   .treat {
     position: absolute;
-    bottom: calc(var(--psize, 110px) * 0.42);
+    bottom: 50%; /* arrives at the pet's body, not its feet (window-relative; --psize doesn't reach here) */
     left: 50%;
     z-index: 3;
     font-size: 20px;
     pointer-events: none;
     filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.4));
-    animation: treattoss 0.76s cubic-bezier(0.4, 0, 0.7, 1) forwards;
+    /* slow, gentle glide toward the pet — a drift, not a thrown arc */
+    animation: treatfly 1.4s cubic-bezier(0.3, 0.55, 0.4, 1) forwards;
   }
-  @keyframes treattoss {
+  @keyframes treatfly {
     0% {
-      transform: translateX(calc(-50% + var(--from))) translateY(-6px) scale(1) rotate(0);
+      transform: translateX(calc(-50% + var(--from))) translateY(2px) scale(0.9) rotate(-5deg);
       opacity: 0;
     }
-    12% {
+    14% {
       opacity: 1;
     }
-    55% {
-      transform: translateX(calc(-50% + (var(--from) * 0.35 + var(--to) * 0.65))) translateY(-52px)
-        scale(1.05) rotate(210deg);
+    /* mostly-horizontal float with a soft rise-and-settle; barely rotating — it drifts in */
+    62% {
+      transform: translateX(calc(-50% + (var(--from) * 0.28 + var(--to) * 0.72))) translateY(-9px)
+        scale(1) rotate(4deg);
     }
-    88% {
-      transform: translateX(calc(-50% + var(--to))) translateY(0) scale(1) rotate(355deg);
+    90% {
+      transform: translateX(calc(-50% + var(--to))) translateY(0) scale(1) rotate(0);
       opacity: 1;
     }
     100% {
-      transform: translateX(calc(-50% + var(--to))) translateY(3px) scale(0.2) rotate(380deg);
-      opacity: 0;
+      transform: translateX(calc(-50% + var(--to))) translateY(0) scale(0.16) rotate(0);
+      opacity: 0; /* nibbled away at the pet, not dropped at its feet */
     }
   }
-  /* the eat: a happy little chomp + bob */
+  /* eating takes a moment now: a few gentle chews + a happy little settle */
   .petwrap.eat {
-    animation: nom 0.42s ease 2;
+    animation: chew 0.34s ease-in-out 4;
   }
-  @keyframes nom {
-    0%, 100% { transform: translateY(0) scaleY(1); }
-    45% { transform: translateY(5px) scaleY(0.88) scaleX(1.05); }
+  @keyframes chew {
+    0%, 100% { transform: translateY(0) scaleY(1) scaleX(1); }
+    50%      { transform: translateY(3px) scaleY(0.92) scaleX(1.04); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .petwrap.eat { animation: none; }
   }
 
   /* ---- winter: snow drifting past ---- */

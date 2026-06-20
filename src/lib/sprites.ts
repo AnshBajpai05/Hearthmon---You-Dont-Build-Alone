@@ -44,6 +44,104 @@ export function thumbUrl(dexId: number): string {
 /** The trainer who throws the ball during switches (Showdown trainer sprite set). */
 export const TRAINER_URL = "https://play.pokemonshowdown.com/sprites/trainers/ash.png";
 
+// ── Special forms (Mega / Primal / Ash-Greninja) ──────────────────────────────────────────────
+// "Special ones only": a curated map of dex → form(s). A mon NOT here can't mega — the map IS the
+// gate. Sprites come from PokeAPI's Showdown set keyed by the form's OWN id (megas aren't keyed by
+// the base dexId) — served off githubusercontent so it's CORS-friendly, which lets the Alive decoder
+// fetch + animate them too (Showdown's play.* host can't be decoded cross-origin).
+// A reward unlocked by real time together (see +page), never a grind — soul: a gift, no penalty.
+export interface SpecialForm {
+  label: string; // "Mega Charizard X"
+  formId: number; // PokeAPI form id (e.g. Charizard-X = 10034); the showdown gif is keyed by this
+  type?: string; // element/habitat shift while in this form (omit = keep the base type)
+}
+export const MEGA_FORMS: Record<number, SpecialForm[]> = {
+  3: [{ label: "Mega Venusaur", formId: 10033 }],
+  6: [
+    { label: "Mega Charizard X", formId: 10034, type: "dragon" },
+    { label: "Mega Charizard Y", formId: 10035 }
+  ],
+  9: [{ label: "Mega Blastoise", formId: 10036 }],
+  15: [{ label: "Mega Beedrill", formId: 10090 }],
+  18: [{ label: "Mega Pidgeot", formId: 10073 }],
+  65: [{ label: "Mega Alakazam", formId: 10037 }],
+  80: [{ label: "Mega Slowbro", formId: 10071 }],
+  94: [{ label: "Mega Gengar", formId: 10038 }],
+  115: [{ label: "Mega Kangaskhan", formId: 10039 }],
+  127: [{ label: "Mega Pinsir", formId: 10040 }],
+  130: [{ label: "Mega Gyarados", formId: 10041, type: "dark" }],
+  142: [{ label: "Mega Aerodactyl", formId: 10042 }],
+  150: [
+    { label: "Mega Mewtwo X", formId: 10043, type: "fighting" },
+    { label: "Mega Mewtwo Y", formId: 10044 }
+  ],
+  181: [{ label: "Mega Ampharos", formId: 10045, type: "dragon" }],
+  208: [{ label: "Mega Steelix", formId: 10072 }],
+  212: [{ label: "Mega Scizor", formId: 10046 }],
+  214: [{ label: "Mega Heracross", formId: 10047 }],
+  229: [{ label: "Mega Houndoom", formId: 10048 }],
+  248: [{ label: "Mega Tyranitar", formId: 10049 }],
+  254: [{ label: "Mega Sceptile", formId: 10065, type: "dragon" }],
+  257: [{ label: "Mega Blaziken", formId: 10050 }],
+  260: [{ label: "Mega Swampert", formId: 10064 }],
+  282: [{ label: "Mega Gardevoir", formId: 10051 }],
+  302: [{ label: "Mega Sableye", formId: 10066 }],
+  303: [{ label: "Mega Mawile", formId: 10052 }],
+  306: [{ label: "Mega Aggron", formId: 10053 }],
+  308: [{ label: "Mega Medicham", formId: 10054 }],
+  310: [{ label: "Mega Manectric", formId: 10055 }],
+  319: [{ label: "Mega Sharpedo", formId: 10070 }],
+  323: [{ label: "Mega Camerupt", formId: 10087 }],
+  334: [{ label: "Mega Altaria", formId: 10067, type: "fairy" }],
+  354: [{ label: "Mega Banette", formId: 10056 }],
+  359: [{ label: "Mega Absol", formId: 10057 }],
+  362: [{ label: "Mega Glalie", formId: 10074 }],
+  373: [{ label: "Mega Salamence", formId: 10089 }],
+  376: [{ label: "Mega Metagross", formId: 10076 }],
+  380: [{ label: "Mega Latias", formId: 10062 }],
+  381: [{ label: "Mega Latios", formId: 10063 }],
+  382: [{ label: "Primal Kyogre", formId: 10077 }],
+  383: [{ label: "Primal Groudon", formId: 10078, type: "fire" }],
+  384: [{ label: "Mega Rayquaza", formId: 10079 }],
+  428: [{ label: "Mega Lopunny", formId: 10088, type: "fighting" }],
+  445: [{ label: "Mega Garchomp", formId: 10058 }],
+  448: [{ label: "Mega Lucario", formId: 10059 }],
+  460: [{ label: "Mega Abomasnow", formId: 10060 }],
+  475: [{ label: "Mega Gallade", formId: 10068 }],
+  531: [{ label: "Mega Audino", formId: 10069, type: "fairy" }],
+  658: [{ label: "Ash-Greninja", formId: 10117, type: "dark" }],
+  719: [{ label: "Mega Diancie", formId: 10075 }]
+};
+
+export function hasMega(dexId: number): boolean {
+  return !!MEGA_FORMS[dexId]?.length;
+}
+export function megaForms(dexId: number): SpecialForm[] {
+  return MEGA_FORMS[dexId] ?? [];
+}
+/** Animated sprite for a special form — PokeAPI Showdown set keyed by the form's own id (megas
+ *  aren't keyed by the base dexId). githubusercontent = CORS-friendly, so the Alive decoder can
+ *  fetch + animate it; Showdown's play.* host can't be decoded cross-origin. */
+export function formSpriteUrl(formId: number, shiny = false): string {
+  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/${shiny ? "shiny/" : ""}${formId}.gif`;
+}
+
+/** Static fallback for a special form (offline / gif failed) — its OWN png, keyed by formId, so a
+ *  failed mega never silently drops to the base form. (Verified present in the pokemon/ png set.) */
+export function formFallbackUrl(formId: number, shiny = false): string {
+  return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${shiny ? "shiny/" : ""}${formId}.png`;
+}
+
+/** A special form's signature flame colour, keyed by its (possibly overridden) element. Richer +
+ *  more saturated than the biome's pale `light` tint so it reads as real fire. ONE source for the
+ *  aura, the room atmosphere AND the attack/irritate FX — so a form's whole presence shares a colour
+ *  (Mega Charizard X = blue fire → blue flames AND blue attacks). Elements not listed keep their
+ *  normal type colour / biome light. */
+export const FORM_FLAME: Record<string, string> = {
+  fire: "#ff7a2a", // hearth orange
+  dragon: "#2e7bff" // Charizard X cobalt-blue signature
+};
+
 /** "mr-mime" → "Mr Mime" */
 export function displayName(raw: string): string {
   return raw

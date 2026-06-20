@@ -203,6 +203,10 @@
   trust ("I set that and it never told me").
 - **Suggested fix:** surface ALL matches this tick (queue them, or concatenate into one bubble),
   not just the first; only mark/drop the ones actually fired.
+- **✅ FIXED 2026-06-18** — `reminderTick` now collects `fired[]` + `keep[]`, surfaces every match
+  this tick (`fired.map(r => r.text).join(" • ")`), and only marks/drops the ones that actually
+  fired. Two reminders at the same `HH:MM` both reach you; same-minute double-ticks can't re-fire
+  (once → dropped from `keep`; daily → `lastFired === today`). *(Confirmed green: svelte-check.)*
 
 ### 8.2 Reminders: no missed-fire catch-up; ignore Focus / Just-There; fire while hidden
 - **Location:** `reminderTick()` / `surfaceReminder()`
@@ -216,6 +220,14 @@
 - **Impact:** mostly **intended** (a reminder you set should reach you, even from the tray), but
   (a) is a real limitation and (b) is a soul-tension worth a deliberate call — should a user-set
   reminder override Focus, or queue until Focus ends? Low.
+- **✅ FIXED (a) / 🎯 DECIDED (b) 2026-06-18** — (a) `reminderTick` now fires any reminder whose
+  scheduled minute falls in the window `(reminder_last_check, now]` instead of an exact-minute
+  match, so a minute missed while the app was closed/asleep still reaches you on the next tick;
+  an explicit `reminderTick()` runs ~5s after launch for prompt catch-up. First run anchors the
+  window at "now" (no retro-fire); a multi-day absence catches up only TODAY's daily, not N days.
+  (b) **Deliberate:** reminders are user-SCHEDULED, so they fire even in Focus / Just-There and from
+  the tray — a promise the app made, not proactive chatter. Breaking it is worse than a brief,
+  dismissible nudge. Documented in code; revisit only if a "queue until Focus ends" toggle is wanted.
 
 ### 8.3 Card mirror force-pushes EVERY listed repo — hazardous on an active branch
 - **Location:** `src/routes/+page.svelte` → `autoPushCard()` loop over `allCardTargets()` + Rust `push_card`
@@ -231,6 +243,15 @@
 - **Suggested fix:** document "mirror only dedicated card repos"; optionally have `push_card` push
   the card on its **own** committed file set without force-pushing unrelated history, or refuse if
   the working tree has unrelated staged changes.
+- **✅ FIXED 2026-06-18** — `push_card` now reads `git status --porcelain` up front and **bails**
+  (returns a clear "skipped — uncommitted changes you're working on" error) if the working tree has
+  any change to a file OTHER than its own two (`assets/hearthmon-status.svg`, `README.md`). So it
+  never `rebase --autostash`es your WIP or force-pushes a branch you're coding on; a dev clone on
+  `v2` is left untouched. The mirror remains for dedicated profile/showcase repos. *(cargo check green.)*
+  - **Refined 2026-06-18** — UNTRACKED files (`?? path`) are ignored: the card flow only `git add`s
+    its own files + autostashes TRACKED changes, so untracked files are never added/stashed/pushed.
+    A showcase repo with stray untracked files (e.g. `check.js`, `test.js`) now still pushes; only
+    TRACKED non-card modifications (real WIP, like the v2 dev clone) block. *(cargo check green.)*
 
 ### 8.4 Alive globe sprite count — battery / weak-GPU cost
 - **Location:** `src/lib/components/PixiStage.svelte` → `buildGroundRings()` (~1500 sprites) + `drawGalaxy()` (3500)
@@ -242,12 +263,159 @@
   visible-and-idle it runs full tilt.
 - **Impact:** battery drain / fan on weaker machines. Low–Medium. **Suggested:** cap DPR, throttle
   the ring/galaxy update to ~30fps, or thin the sprite count when unfocused (not just hidden).
+- **✅ FIXED 2026-06-18 (throttle)** — the two heavy per-sprite loops (galaxy ~3500 + ring stars
+  ~1500) now update at ~30fps via a `heavyAcc`/`HEAVY_STEP` gate, carrying the accumulated dt so
+  orbital/twinkle speed is unchanged — roughly halving the dominant per-frame work while idle. The
+  motion is imperceptibly different at 30fps. **DPR/resolution deliberately NOT capped:** doing so
+  resizes the transparent WebGL backing store and risks re-triggering the WebView2 "washed globe"
+  recomposite issue (a hard-won fix); the throttle delivers the win without that risk. Per-sprite
+  thinning-when-unfocused remains available as a further knob if real-world battery still warrants.
 
 ### 8.5 Feb-29 birthday only celebrates on leap years
 - **Location:** `+page.svelte` daily-check → user-birthday block (`b.getMonth()===… && b.getDate()===…`)
 - **Exact fault:** a Feb-29 birthday matches month+day only in leap years, so it's skipped 3 years
   out of 4. **Impact:** trivial; note only. (Fix: treat Feb-29 as Feb-28/Mar-1 in non-leap years.)
+- **✅ FIXED 2026-06-18** — new `sameAnnualDay(target, when)` helper: matches month+day normally,
+  and for a Feb-29 target in a non-leap year falls back to Feb-28 (still the birth month). Applied
+  to BOTH the user-birthday and the day-we-met (`first_met`) checks (same twin bug). The
+  `last_*_birthday`/`last_anniversary` year guards keep it once-a-year.
 
-> **Status:** none shipped-blocking. **8.1** (reminder same-minute loss) is the one worth fixing —
-> small, concrete, and it quietly breaks a feature the user explicitly invoked. 8.3 is an
-> operational caveat to document for the mirror feature.
+### 8.6 Mega/special form re-paints the globe → washed-sphere (WebView2 recomposite)
+- **Location:** `+page.svelte` → `megaForm` swap; `PixiStage` mega sprite override + room atmosphere
+- **Mechanism:** entering/leaving a mega swaps the sprite AND repaints the whole globe (form fire
+  aura + the form's room atmosphere). On WebView2's transparent backing store an in-place repaint can
+  leave the sphere "washed" — the same recomposite quirk the boot / dex-switch / resize round-trip
+  already cures (`primeAliveRenderer`).
+- **✅ FIXED 2026-06-20** — a sibling `$effect` watching `megaForm` runs `primeAliveRenderer()` (the
+  alive→classic→alive round-trip) on every form change: mega up, manual revert, AND switch-companion
+  reset. Guarded `renderMode==='alive'`; an `undefined` sentinel skips the initial run so boot priming
+  isn't doubled; the classic↔alive flips it performs can't re-trigger it (no loop). The washed-globe
+  fix now covers special forms too, not just boot/dex/resize. *(svelte-check green.)*
+
+> **Status (2026-06-17):** none shipped-blocking. **8.1** (reminder same-minute loss) is the one
+> worth fixing — small, concrete, and it quietly breaks a feature the user explicitly invoked. 8.3
+> is an operational caveat to document for the mirror feature.
+>
+> **Status (2026-06-18): ALL §8 CLOSED.** 8.1 ✅ (already refactored to surface all matches),
+> 8.2 ✅ (a) window catch-up / 🎯 (b) reminders deliberately override Focus, 8.3 ✅ (dirty-tree
+> guard on `push_card`), 8.4 ✅ (30fps throttle on galaxy + ring loops; DPR left alone on purpose —
+> washed-globe risk), 8.5 ✅ (`sameAnnualDay` leap-day fallback, both birthday checks). Both builds
+> green (svelte-check 0/0 + cargo check). Auto-update audit is §9.
+
+---
+
+## 9. Pass-3 — auto-update (V2's first ONLINE feature, official Tauri 2 updater) — 2026-06-18
+
+> New surface: in-app auto-update against GitHub Releases. Friend distribution moves portable
+> `.exe` → signed NSIS installer; `check()` on launch, `downloadAndInstall` + `relaunch`, a
+> once-per-day card, a one-time post-update line. Code: `src/lib/update.ts`, `+page.svelte`
+> (`updateAwareness`/`detectPostUpdate`/`doUpdateNow`), `lib.rs` plugin registration,
+> `tools/make_release.ps1`, `built_friends.bat`/`built_me.bat`. This is the FIRST feature that
+> touches the network — the audit lens shifts from "host OS faults" to "network + release-pipeline
+> + soul" faults. Both builds green (cargo check + svelte-check) at audit time.
+
+### 9.1 Failed install blocks same-day retry (once-per-day guard) (SILENT DEAD-END)
+- **Location:** `+page.svelte` → `updateAwareness()` + `doUpdateNow()`
+- **Mechanism:** `updateAwareness` sets `update_card_day = today` the moment a card is shown, so a
+  later launch the same day short-circuits before re-checking. `doUpdateNow` on failure returned
+  the card to `idle` with an error but left the guard set.
+- **Exact fault:** if "Update now" fails (network drop mid-download, AV lock on the installer) and
+  the user closes + relaunches the same day, the guard suppresses the card — no retry until the
+  next calendar day. (In-session retry already worked: the card stays open with the error.)
+- **Impact:** a user who wants the update can't get it back that day after a transient failure. Low,
+  but it quietly strands a user-initiated action.
+- **✅ FIXED 2026-06-18** — `doUpdateNow`'s catch now clears `update_card_day` (`setMeta(…, "")`),
+  so a relaunch re-offers the card. Recovering from a failed install is not "nagging"; it only
+  re-pops after an actual error, never on success or a plain "Later".
+
+### 9.2 `check()` is an unauthenticated network call on first launch each day; no explicit timeout
+- **Location:** `src/lib/update.ts` → `checkForUpdate()`, called by `updateAwareness(7000)`
+- **Mechanism:** the first launch of each calendar day fetches `…/releases/latest/download/latest.json`.
+  It runs `void`-style, 7s after boot, off the critical path; a throw (offline / no endpoint / dev)
+  is swallowed and the app stays silent.
+- **Exact fault:** no app-level timeout is set, so a stalled connection leaves the check pending for
+  the plugin's default window; the card simply doesn't appear that launch. Unauthenticated GitHub
+  has a 60-req/hr/IP limit (irrelevant at one check/day).
+- **DOCUMENTED 2026-06-18 (accepted)** — off the boot path, fails silent, at most one check/day
+  (the guard returns *before* the network call on subsequent same-day launches). No nag, no boot
+  block. A bad/forgotten `latest.json` (404) or a pre-release-marked latest also just fails silent —
+  fail-safe by design. Revisit only if a hung check is ever observed in practice.
+
+### 9.3 Windows NSIS relaunch is installer-driven; the explicit `relaunch()` may not run on Windows
+- **Location:** `src/lib/update.ts` → `installAndRelaunch()` (`installMode: "passive"`)
+- **Mechanism:** on Windows the NSIS updater downloads + runs the setup; the running app must exit so
+  files can be replaced, and the installer handles the restart. The JS `await relaunch()` after
+  `downloadAndInstall` is reached on platforms where the process isn't already replaced.
+- **Exact fault:** none functional — but it's an undocumented assumption that the post-install
+  restart on Windows is installer-driven, and the trailing `relaunch()` is a cross-platform safety
+  net that may simply not execute on Windows NSIS. If a future change assumed code *after*
+  `installAndRelaunch` always runs, it would be wrong.
+- **DOCUMENTED 2026-06-18 (accepted)** — intended Tauri flow; `passive` shows a small progress UI
+  then relaunches. `%APPDATA%` (hearthmon.db / memories) + HKCU chapter store survive an *update*
+  (only an uninstall removes them), so the "memories preserved" promise holds. Assumption noted in
+  `installAndRelaunch`.
+
+### 9.4 Update card + post-update line ignore Focus Mode / Just-There (SOUL-TENSION)
+- **Location:** `+page.svelte` → `updateAwareness()` / post-update `say(postUpdateLine)`
+- **Mechanism:** the card surfaces and the one-time line speaks regardless of `focusMode` or
+  `companionMode === "just_there"` (the silent-presence contract = zero proactive lines/UI).
+- **Exact fault:** in Focus / Just-There — modes meant to silence everything — a launch can still
+  pop the update card and say the post-update line. Mirrors §8.2 (reminders override Focus).
+- **DOCUMENTED 2026-06-18 (deliberate call, NOT changed)** — an update is rare (≤ once/day),
+  actionable, and dismissible, not idle chatter; suppressing it under a perpetual Just-There would
+  mean such a user never updates. Left visible on purpose. Open to gating behind Just-There later if
+  Ansh decides the silent-presence contract should win — same unresolved question as §8.2.
+
+### 9.5 `isNewer()` (post-update detection) is not full semver
+- **Location:** `src/lib/update.ts` → `isNewer()`
+- **Mechanism:** splits on `[.\-+]` and `parseInt`s each part; a non-numeric part (`beta`) becomes 0.
+- **Exact fault:** `0.2.0-beta` compares **equal** to `0.2.0`; build metadata / pre-release ordering
+  isn't honored. So the one-time "It feels better with this update." line could fail to fire across a
+  pre-release boundary.
+- **DOCUMENTED 2026-06-18 (accepted)** — only gates the cosmetic post-update *line*; actual update
+  **detection** uses Tauri's `check()` (semver-correct). Releases use plain `x.y.z`. Worst case: a
+  rare missed greeting line, never a missed/incorrect update. Fine until pre-release tags are used.
+
+### 9.6 `createUpdaterArtifacts` couples BOTH build editions to the signing key; pubkey is a placeholder
+- **Location:** `tauri.conf.json` (`bundle.createUpdaterArtifacts`, `plugins.updater.pubkey`) +
+  `built_friends.bat` / `built_me.bat`
+- **Mechanism:** artifact signing is global, so `tauri build` now requires `TAURI_SIGNING_PRIVATE_KEY`
+  for **both** the friend AND founder editions. `pubkey` currently holds the literal placeholder
+  `REPLACE_WITH_UPDATER_PUBKEY_FROM_tauri_signer_generate`.
+- **Exact fault:** until the one-time keypair is generated, **every** build fails; and a build with
+  the placeholder pubkey would ship an app whose `check()` can't verify any signature (throws →
+  swallowed → silently never updates).
+- **DOCUMENTED 2026-06-18 (intentional gate, by Ansh's call)** — keys are deferred until the next
+  ship. Both scripts **fail loud** with the exact generate command + a pointer to `UPDATER_SETUP.md`
+  rather than failing mysteriously. The `.gitignore` defends the key/password files. Nothing
+  outward-facing is done until Ansh runs the gated steps. Related: [[hearthmon-auto-update]].
+
+### 9.7 `make_release.ps1` picks the newest `*-setup.exe`; a stale bundle can mis-pair name vs version
+- **Location:** `tools/make_release.ps1`
+- **Mechanism:** `Get-ChildItem *-setup.exe | Sort LastWriteTime | Select -Last 1` chooses the
+  installer; `latest.json.version` is read from `tauri.conf.json` and the download URL is built from
+  that version, while the asset **filename** carries whatever version the bundler stamped.
+- **Exact fault:** if the NSIS output dir holds a stale newer-timestamped setup from a different
+  version (no clean between builds), the chosen filename and the conf-derived URL/version can
+  disagree → the uploaded asset name won't match the `latest.json` URL → updater 404s (fail-safe,
+  but no update served).
+- **DOCUMENTED 2026-06-18 (operational)** — bump the version in tauri.conf **and** Cargo.toml, build
+  clean, and `make_release` prints the exact filename + URL to verify before upload. Checklist in
+  `UPDATER_SETUP.md`. Could harden later by asserting the picked filename contains the conf version.
+
+### 9.8 Founder build can show the card if run against a newer public release
+- **Location:** `+page.svelte` → `updateAwareness()` (no founder gate)
+- **Exact fault:** the card isn't gated on the founder edition; if Ansh runs a *stale* local founder
+  build (e.g. `0.1.0`) while a newer release (`0.2.0`) is public, the card appears for him too.
+  There's no clean JS founder signal to gate on (`chapterHasEnd=false` also covers forever/trusted
+  friends, who *should* get updates).
+- **DOCUMENTED 2026-06-18 (accepted)** — self-inflicted + harmless: Ansh always builds latest before
+  shipping, so in practice his version ≥ published and the card never shows. Not worth a `founder_mark()`
+  round-trip to gate.
+
+> **Note on intent (Pass-3):** the network surface is small and fail-safe — `check()` swallows all
+> errors, downloads are minisign-verified before install (a tampered/MITM'd installer is rejected),
+> and being offline / on-the-latest is silent. What's-new notes render as Svelte-escaped **text**
+> (not `{@html}`, not markdown) → no injection from a release body. No remote-exploitable surface;
+> the only real bug (9.1) is fixed. The rest are documented assumptions or one deliberate soul-call
+> (9.4). Outward-facing/irreversible steps (keypair, pubkey, first release) remain GATED — see 9.6.

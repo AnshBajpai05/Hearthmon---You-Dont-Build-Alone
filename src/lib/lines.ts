@@ -173,6 +173,21 @@ export const breakthroughLines = [
   "You stayed with it till it broke open. Proud of that."
 ];
 
+// Level 2 — Pattern Awareness: the CURRENT effortful stretch resembles a kept hard one. This is
+// MEMORY, never PREDICTION — "this feels familiar / we've been here before", NEVER "you'll break
+// through" (a wrong prediction drops trust; a true memory never does). Rare + Trusted-bond-gated
+// in +page; `when` is the month of the recalled arc (e.g. "March").
+export function familiarStruggleLine(when: string): string {
+  const bank = [
+    "This part feels familiar.",
+    "We've wrestled with things like this before.",
+    "You've sat in a knot like this before. I remember.",
+    `Feels like those ${when} nights — we stayed with it then too.`,
+    `We've been in waters like this before. Back around ${when}.`
+  ];
+  return bank[Math.floor(Math.random() * bank.length)];
+}
+
 // ---- Chapter Memory: a day worth remembering (effort density) ----
 // said when a chapter is quietly kept — companion warmth, never "productivity".
 export const chapterMomentLines = [
@@ -669,4 +684,31 @@ export function graceLine(i: number): string {
 
 export function chapterIntroLine(): string {
   return pick(chapterIntroLines);
+}
+
+// ── Auto-update (V2's first online touch) ──────────────────────────
+// Same soul rules: gentle, never nag, never guilt, no changelog dump on the line.
+// The card surfaces at most once per calendar day (see +page updateAwareness).
+// An update is an invitation, not an alarm — "if you'd like it," never "you must."
+export const updateFoundLines = [
+  "There's a newer chapter waiting, if you'd like it.",
+  "I found a little update. No rush — only when you want.",
+  "A fresh build's ready whenever you are."
+];
+// Card body: the promise that nothing is lost. Said plainly, once, on the card itself.
+export const updatePreservedLine =
+  "Your memories, settings, and companion stay exactly as they are. Only I get a little better.";
+// While the update downloads + installs — calm, not a progress-bar circus.
+export const updateInstallingLines = [
+  "Settling into the new chapter…",
+  "Just a moment — making myself at home again."
+];
+// One time only, on the first launch AFTER an update lands. Tiny. Then silence.
+export const postUpdateLine = "It feels better with this update.";
+
+export function updateFoundLine(): string {
+  return pick(updateFoundLines);
+}
+export function updateInstallingLine(): string {
+  return pick(updateInstallingLines);
 }

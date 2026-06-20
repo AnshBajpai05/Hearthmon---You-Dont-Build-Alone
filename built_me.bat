@@ -17,6 +17,23 @@ if not defined HEARTHMON_PASS_SECRET (
   exit /b 1
 )
 
+REM --- Updater signing key (REQUIRED: createUpdaterArtifacts is on for both editions) ---
+REM Founder builds the portable exe below, but `tauri build` still signs update artifacts, so
+REM the key must be present. Same key as built_friends. See UPDATER_SETUP.md to generate it once.
+set "UPDATER_KEY=%~dp0..\hearthmon_updater.key"
+if not exist "%UPDATER_KEY%" (
+  echo [built_me] ERROR: updater signing key not found at "%UPDATER_KEY%".
+  echo   Generate it once:  npm run tauri signer generate -- -w ..\hearthmon_updater.key
+  echo   Then paste the printed PUBLIC key into src-tauri\tauri.conf.json (plugins.updater.pubkey).
+  echo   Full checklist: UPDATER_SETUP.md
+  exit /b 1
+)
+set "TAURI_SIGNING_PRIVATE_KEY=%UPDATER_KEY%"
+set "TAURI_SIGNING_PRIVATE_KEY_PASSWORD="
+if exist "%~dp0..\updater_key_password.txt" (
+  for /f "usebackq delims=" %%P in ("%~dp0..\updater_key_password.txt") do if not defined TAURI_SIGNING_PRIVATE_KEY_PASSWORD set "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%%P"
+)
+
 REM Founder flag ON  ->  gate disabled in the binary.
 set "HEARTHMON_FOUNDER=1"
 
