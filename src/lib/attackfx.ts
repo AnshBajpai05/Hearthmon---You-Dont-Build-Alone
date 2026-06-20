@@ -72,6 +72,11 @@ export function signatureMove(dexId: number): Move {
   return toMove(damaging?.length ? damaging[0] : (set?.[0] ?? FALLBACK));
 }
 
+/** Every move in this Pokémon's learnset as ready Move objects (for the battle AI to score). */
+export function movesFor(dexId: number): Move[] {
+  return (MOVESETS[dexId] ?? []).map(toMove);
+}
+
 export interface Particle {
   id: number;
   emoji: string;

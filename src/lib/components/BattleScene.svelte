@@ -13,7 +13,8 @@
     displayName,
     type DexEntry
   } from "../sprites";
-  import { maxHpFor, firstSide, pickBattleMove, calcTurn, effText } from "../battle";
+  import { maxHpFor, firstSide, calcTurn, effText } from "../battle";
+  import { chooseMove } from "../combat/ai";
   import { playCry, voiceCry, playVoiceClip, thump } from "../sound";
   import {
     animKind,
@@ -193,8 +194,8 @@
     const def = side === "L" ? selR : selL;
     if (!atk || !def) return;
     const defSide: Side = side === "L" ? "R" : "L";
-    const mv = pickBattleMove(atk.id);
-    const res = calcTurn(mv, atk.id, def.id, atk.type, def.type);
+    const mv = chooseMove(atk.id, def.type, side === "L" ? hpL / maxL : hpR / maxR); // identity/temperament AI
+    const res = calcTurn(mv, atk.id, def.id, atk.type, def.type); // sim: stats → damage (separate from the choice)
     const kind = FAMILY[animKind(mv, atk.id)]; // battle reads the 8 render families (melee/burst/breath/…)
     const A = anchor(side);
     const D = anchor(defSide);
