@@ -46,7 +46,7 @@
       "endpoints": [
         "https://github.com/AnshBajpai05/Hearthmon-Trial_Beta/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_UPDATER_PUBKEY_FROM_tauri_signer_generate",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERFMDRGMjA1QkMzRDUxNTgKUldSWVVUMjhCZklFM25RVkVxUW5yS0NZUEdmdXJoaldlL0d0RzdRTnRTam8wNFlqREtYaEtjeFoK",
       "windows": {
         "installMode": "passive"
       }
