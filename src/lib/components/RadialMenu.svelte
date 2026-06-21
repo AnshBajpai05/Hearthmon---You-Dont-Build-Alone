@@ -55,8 +55,6 @@
     onMenuOpen, onDirHint,
   }: Props = $props();
 
-  const DEV = import.meta.env.DEV; // gate the dev-only audio-vote toggle button
-
   // ─── geometry ────────────────────────────────────────────
   // Rings scale with the pet so the category buttons always bloom just OUTSIDE
   // the sprite, never on top of it — works for a tiny Pichu or a huge Gyarados.
@@ -317,11 +315,11 @@
   <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>+</button>
   <button class="quick-pill" title="Smaller" aria-label="Smaller" onclick={() => onNudgeScale(-0.15)}>－</button>
   <button class="quick-pill" title="Random companion" aria-label="Random companion" onclick={onSwitchRandom}>🎲</button>
-  {#if DEV && onToggleAudioVote}
+  {#if onToggleAudioVote}
     <button
       class="quick-pill"
       class:off={!audioVoteOn}
-      title={audioVoteOn ? "Hide audio vote (mus/spch)" : "Show audio vote (mus/spch)"}
+      title={audioVoteOn ? "Hide music/speech score" : "Show music/speech score"}
       aria-label="Toggle audio vote readout"
       onclick={onToggleAudioVote}
     >🎶</button>

@@ -1690,8 +1690,7 @@
   let audioBeat = $state(0); // increments on each detected beat (PixiStage reacts)
   let audioStrength = $state(0); // 0..1 strength of the latest beat (drops ≈ 1)
   let audioMusical = $state(0); // 0..1 confidence the audio is MUSIC (regular onsets + bass), not speech
-  const DEV = import.meta.env.DEV; // dev-only audio HUD (compiled out of production builds)
-  let showAudioVote = $state(true); // quickbar 🧠 toggles the mus/spch readout (persisted)
+  let showAudioVote = $state(true); // quickbar 🎶 toggles the mus/spch readout (persisted)
   async function setShowAudioVote(v: boolean) {
     showAudioVote = v;
     await setMeta("show_audio_vote", v ? "1" : "0");
@@ -3971,7 +3970,7 @@
 
 <!-- hidden while hovering the widget: that's exactly when the quick tray, transparency slider and
      radial menu bloom into the same bottom-center spot, so the readout would overlap them -->
-{#if audioAware && DEV && showAudioVote && !hovering}
+{#if audioAware && showAudioVote && !hovering}
   <div class="audiohud">
     🎶/🗣️ mus {audioMusicProb.toFixed(2)}/spch {audioSpeechProb.toFixed(2)}
   </div>
@@ -4710,7 +4709,7 @@
       onPushCard={pushCard}
       onQuit={quit}
       audioVoteOn={showAudioVote}
-      onToggleAudioVote={() => void setShowAudioVote(!showAudioVote)}
+      onToggleAudioVote={audioAware ? () => void setShowAudioVote(!showAudioVote) : undefined}
       onMenuOpen={() => { petState = 'happy'; setTimeout(() => (petState = 'idle'), 800); }}
       onDirHint={onRadialDirHint}
     />
