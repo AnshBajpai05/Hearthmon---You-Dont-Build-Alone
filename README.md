@@ -5,10 +5,10 @@
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
 <p align="center">
-  <img src="./assets/hearthmon-status.svg?v=1781978056" width="750"/>
+  <img src="./assets/hearthmon-status.svg?v=1782466549" width="750"/>
 </p>
 
-**Current Companion:** Kyogre<br/>
+**Current Companion:** Reshiram<br/>
 **Mood:** Quietly Building<br/>
 **Status:** *"chipping at it"*<br/>
 
