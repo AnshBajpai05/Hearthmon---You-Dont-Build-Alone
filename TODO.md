@@ -70,7 +70,7 @@
 - [x] **v4 per-species overrides** — `combat_overrides.ts` (`MOVE_OVERRIDES[dex][move]→kind`), merged into `animKind(move, dexId?)` FIRST; ~14 iconic seeded (Charizard blast-burn→nova, Blastoise hydro-cannon→thick-beam, …) + generic punch/kick→heavy-slam.
 - [x] **Mega/special forms → PokeAPI form-IDs** — sprites switched Showdown-name → **form-IDs** on githubusercontent (CORS → animated in Alive, not just static); verified all **51 forms** (gif + shiny + png) 200 vs `pokemon.csv`. `formFallbackUrl(formId)` = form-aware static fallback (never silently drops to the base form).
 - [x] **Mega FX deepened** — flat ellipse aura → **fire** (rising tongues + hot core + embers, additive); **`FORM_FLAME`** single colour source (fire orange · dragon = Charizard X blue) drives aura + room atmosphere + **attacks + irritate beats** (blue-X throws blue fire); mega **dictates the room** like a hearth mon (PixiStage mega ambient branch) + **hover stokes it** (`hoverE`); flamethrower breath = 4-layer gradient.
-- [ ] **v5 — battle** (sim reads stats, presentation reads identity — NEVER entangled). Next.
+- [x] **v5 — battle** ✅ 2026-06-20 — sim reads stats, presentation reads identity (never entangled). **Encounter framing** (`wild · trainer · boss · legendary`), a **per-side control toggle** (Auto / You — hand-play a turn or let it fight itself), and **identity + temperament-driven AI** move choice (not RNG). Battle-balance pass alongside. All 3 consumers green (+page Classic, PixiStage Alive, `BattleScene`).
 
 ### Audio Awareness → YAMNet speech/music vote ✅ 2026-06-20
 > The companion reacts to music *at the right moments*. Heuristics provably can't separate speech from music (blind A/B: `voiceish ~0.32` for both), so this adds the real classifier — as a VOTE in the Moment Engine, not a rewrite.
@@ -295,11 +295,11 @@ Everything below is **live** in the current build:
 - [ ] **Notification-free "peek"** — bond level visible in a corner icon; tap to expand
 
 ### Technical / Infrastructure
-- [ ] **Auto-updater** — Tauri updater plugin hooked to GitHub Releases
+- [x] **Auto-updater** ✅ 2026-06-27 (V2's first online feature) — Tauri 2 updater plugin wired to GitHub Releases (`AnshBajpai05/Hearthmon-Trial_Beta`). Checks on launch only, surfaces an update card ≤1×/calendar day, one-click **passive** install; memories/settings/companion all preserved (only program files swap). minisign-signed artifacts (`createUpdaterArtifacts` + `latest.json` via `tools/make_release.ps1`), pubkey in `tauri.conf.json`. First install manual, every update after is in-app. Shipped in **v0.1.0**. Full checklist: `UPDATER_SETUP.md`.
 - [ ] **Crash reporting** — local-only crash log; user can optionally share
 - [ ] **`.venv-voice` setup script** — one-command XTTS install (`tools/setup_voice.ps1`)
 - [ ] **Voice clone batch validation** — play each cloned clip, approve/reject before saving
-- [ ] **Signed Windows installer** — self-signed cert + NSIS so Windows Defender doesn't scream
+- [~] **Signed Windows installer** — NSIS installer ships, **minisign-signed** for the updater (satisfies auto-update). ⏳ still **not Authenticode-signed**, so SmartScreen warns on first install ("More info → Run anyway"); needs a real OV/EV code-signing cert (paid) or earned reputation.
 - [ ] **macOS / Linux port** — Tauri already supports it; needs a CI matrix build
 
 ---
@@ -414,4 +414,4 @@ Everything below is **live** in the current build:
 
 ---
 
-*Last updated: 2026-06-20 — V2 on branch `v2`. Latest (2026-06-20): (1) Combat Identity v2→v4 + Mega Evolution — 26 attack archetypes, per-species overrides, PokeAPI form-IDs, real mega fire that dictates the room; (2) Audio Awareness → YAMNet speech/music vote — freeze bug fixed (watchdog + silence gate), and the SOTA classifier shipped (YAMNet core in pure-Rust `tract`, log-mel in Rust, validated to 1.2e-5 vs TensorFlow, vote wired into `momentScore`, dev HUD + 🎶 toggle). See `fixed_issues.md` for the full per-issue log. Next: v5 battle; layer the other biomes + Moonlit Shore polish, then the Writing & Interaction passes from `15_jun.md`.*
+*Last updated: 2026-06-27 — V2 on branch `v2`. **🚀 v0.1.0 SHIPPED** — first public release on `AnshBajpai05/Hearthmon-Trial_Beta`, auto-update live (install once, every update after arrives in-app). This cut: (1) **v5 battle** — wild/trainer/boss/legendary encounters + per-side Auto/You control toggle + identity/temperament-driven AI; (2) **Auto-updater** — Tauri 2 updater + signed `latest.json` (see `UPDATER_SETUP.md`); (3) **trial extended 5 → 28 days** (28 + 2 grace ≈ a month before the soft pause); README/feature docs refreshed across both repos; issue #3 (music reacting to nothing) closed. Earlier this week: Combat Identity v2→v4 + Mega Evolution, and Audio → YAMNet speech/music vote. Next: dry-run a v0.1.0→v0.2.0 update to prove the loop; biome art-direction + Moonlit Shore polish; the Writing & Interaction passes from `15_jun.md`. 💡 Direction explored: the mesh-warp is sprite-agnostic → a "**real pet photo**" companion (Tier 1 = bg-cutout → existing mesh, stays local; Tier 2 = part/keypoint articulation; Tier 3 = full puppet, breaks the 10MB-local soul).*
