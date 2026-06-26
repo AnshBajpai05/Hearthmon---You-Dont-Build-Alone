@@ -653,11 +653,11 @@ export function shortDate(dateStr: string): string {
 
 // One-time, first-run heads-up so the trial is never a surprise. Warm, not scary, not modal.
 export const chapterIntroLines = [
-  "We've got a little trial chapter together first — about a week. No rush. We'll see how it feels.",
-  "Little heads up — this first chapter lasts about a week. Just enough time to see if we like building together."
+  "We've got a little trial chapter together first — about a month. No rush. We'll see how it feels.",
+  "Little heads up — this first chapter lasts about a month. Just enough time to see if we like building together."
 ];
 
-// Quiet grace-day soft-lines (days 6–7), once/day max. The emotional tail before the pause.
+// Quiet grace-day soft-lines (days 29–30), once/day max. The emotional tail before the pause.
 // Indexed by grace day (Rust grace_index): 0 = first grace day, 1 = last. No ask yet.
 export const graceLines = [
   "Been a nice first stretch, this.",

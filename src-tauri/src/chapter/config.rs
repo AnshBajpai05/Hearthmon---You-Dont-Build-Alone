@@ -1,9 +1,9 @@
 //! EDIT THESE. Rebuild. The core does not move.
 //! (secure_Hearthmon.md §1 — this is the only file you touch to tune behaviour.)
 
-/// Full, uninterrupted first chapter. (Trusted beta: 5+2 — a "short season", enough time to
+/// Full, uninterrupted first chapter. (28+2 — a generous month-long season, enough time to
 /// bond before the soft pause, so feedback measures presence, not just first impression.)
-pub const CORE_DAYS: i64 = 5;
+pub const CORE_DAYS: i64 = 28;
 /// After the core: still fully working, with a quiet soft-line, NO dim yet.
 pub const GRACE_DAYS: i64 = 2;
 /// Invisible pad added to every *pass* expiry so it feels like "he waited for me".
@@ -18,10 +18,10 @@ pub const FORGIVENESS_DAYS: i64 = 1;
 /// and expires normally; only an implausible (year+) leap trips it. Erring toward "never
 /// lock out a real user" is the soul-aligned choice.
 pub const CLOCK_JUMP_TOLERANCE_DAYS: i64 = 366;
-// Trial timeline: full days 1..5 → quiet grace days 6..7 → pause on the first launch from day 8.
+// Trial timeline: full days 1..28 → quiet grace days 29..30 → pause on the first launch from day 31.
 // (FORGIVENESS_DAYS pads PASS expiries only, not the trial.) Bump these when you scale up.
 
-/// Soft-line keys shown during grace (days 8..10). Wire matching copy in `src/lib/lines.ts`.
+/// Soft-line keys shown during grace (days 29..30). Wire matching copy in `src/lib/lines.ts`.
 /// One per grace day; the last one repeats if grace is longer than this list.
 pub const GRACE_LINE_KEYS: &[&str] = &["grace_a", "grace_b", "grace_c"];
 

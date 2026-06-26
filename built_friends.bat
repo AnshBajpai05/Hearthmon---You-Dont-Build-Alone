@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 REM =====================================================================
 REM  built_friends.bat  -  FRIEND edition (signed, auto-updating)
-REM  Trial gate active: 5-day chapter + 2 grace days, then soft pause;
+REM  Trial gate active: 28-day chapter + 2 grace days, then soft pause;
 REM  unlock with a builder pass you generate (tools\generate_pass.ps1).
 REM  Produces a SIGNED NSIS installer + latest.json in dist\release\ for
 REM  GitHub Releases. Friends install once; future updates arrive in-app.
