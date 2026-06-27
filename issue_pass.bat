@@ -6,7 +6,7 @@ REM =====================================================================
 REM  issue_pass.bat  -  generate a builder pass for a friend's request code
 REM
 REM  Usage:
-REM    issue_pass.bat "HM-3F8A1C7E"                 -> 14-day pass (default)
+REM    issue_pass.bat "HM-3F8A1C7E"                 -> 30-day pass (default)
 REM    issue_pass.bat "HM-3F8A1C7E" 30              -> 30-day pass
 REM    issue_pass.bat "HM-3F8A1C7E" forever         -> permanent pass
 REM    issue_pass.bat "HM-3F8A1C7E" 30 friendhandle -> + log them in builders.json
@@ -32,9 +32,9 @@ if not defined HEARTHMON_PASS_SECRET (
   exit /b 1
 )
 
-REM Duration: number of days, or "forever". Default 14.
+REM Duration: number of days, or "forever". Default 30.
 set "DUR=%~2"
-if "%DUR%"=="" set "DUR=14"
+if "%DUR%"=="" set "DUR=30"
 
 REM Optional GitHub handle -> recorded in builders.json (your CRM / README count).
 set "GHARG="
