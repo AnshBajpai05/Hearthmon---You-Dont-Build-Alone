@@ -5,12 +5,12 @@
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
 <p align="center">
-  <img src="./assets/hearthmon-status.svg?v=1782652936" width="750"/>
+  <img src="./assets/hearthmon-status.svg?v=1782815478" width="750"/>
 </p>
 
-**Current Companion:** Cinderace<br/>
-**Mood:** Quietly Building<br/>
-**Status:** *"chipping at it"*<br/>
+**Current Companion:** Kingler<br/>
+**Mood:** In Focus<br/>
+**Status:** *"deep in it"*<br/>
 
 *↑ This card is **alive** — Hearthmon writes it back into your repo as you build, so your profile breathes.*
 
