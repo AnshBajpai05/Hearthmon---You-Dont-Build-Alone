@@ -492,6 +492,13 @@
       rimGlow.filters = [new BlurFilter({ strength: 8, quality: 3 })];
       rimGlow.blendMode = "add";
       rimGlow.visible = false;
+      // Smooth soft ground glow for bgStyle="ground" — the Classic disc design ported to
+      // Alive. A blurred additive ellipse (NOT stacked hard ellipses) → reads as one soft
+      // glow, no concentric "ring" bands.
+      const groundGlowG = new Graphics();
+      groundGlowG.filters = [new BlurFilter({ strength: 12, quality: 4 })];
+      groundGlowG.blendMode = "add";
+      groundGlowG.visible = false;
       const petSep = new Graphics(); // soft dark halo behind the pet → silhouette reads first
       petSep.filters = [new BlurFilter({ strength: 20, quality: 3 })];
       petSep.visible = false;
@@ -891,7 +898,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        groundRings, groundArcs, scene, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, megaAura, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
+        groundRings, groundArcs, scene, groundGlowG, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, megaAura, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
       );
 
 
@@ -905,12 +912,10 @@
           platform.roundRect(-br, -br, br * 2, br * 2, 22).fill({ color: lightCol, alpha: 0.1 });
           platform.roundRect(-br * 0.72, -br * 0.72, br * 1.44, br * 1.44, 16).fill({ color: lightCol, alpha: 0.07 });
         } else if (bgStyle === "ground") {
-          // ONE flat ground disc at the feet (Classic typebg-ground parity): type-tinted
-          // rim + a soft dark contact center so the pet reads as standing ON it — no
-          // separate shadow ellipse (that doubling read as "two grounds")
-          platform.ellipse(0, 0, br * 1.2, br * 0.34).fill({ color: lightCol, alpha: 0.16 });
-          platform.ellipse(0, 0, br * 0.85, br * 0.24).fill({ color: lightCol, alpha: 0.1 });
-          platform.ellipse(0, 0, br * 0.5, br * 0.13).fill({ color: 0x000000, alpha: 0.22 });
+          // Just the bright lit core + a white specular highlight — the soft wide glow is
+          // drawn smoothly by the blurred groundGlowG, so NO hard concentric ellipse bands.
+          platform.ellipse(0, 0, br * 0.62, br * 0.17).fill({ color: lerpCol(lightCol, 0xffffff, 0.4), alpha: 0.5 });
+          platform.ellipse(0, -br * 0.05, br * 0.3, br * 0.08).fill({ color: 0xffffff, alpha: 0.62 });
         }
       }
 
@@ -944,6 +949,12 @@
       };
       // a burst of energy motes for an attack (radial for status, directional otherwise)
       const sparkList: { g: Graphics; vx: number; vy: number; life: number }[] = [];
+      // rising type-tinted droplets for the "ground" backdrop — the lively part swapped
+      // over from Classic's .mote spans. Seeded once; phase loops on tick time.
+      const groundDrops = Array.from({ length: 7 }, () => ({
+        x: (Math.random() - 0.5) * 1.4, r: 0.8 + Math.random() * 1.4,
+        spd: 0.18 + Math.random() * 0.22, seed: Math.random()
+      }));
       function spawnSparks(color: string, kind: string, dir: number) {
         const col = hexNum(color);
         const radial = kind === "status" || kind === "burst";
@@ -1338,6 +1349,7 @@
             }
           }
         }
+        groundGlowG.visible = false; // only shown for the bgStyle="ground" backdrop (below)
         if (shelf) {
           // Tuck the ground into the sphere's BASE so it stays LOW — the layout that read well
           // when enlarged. It sits 0.15·gR inside the bottom edge; because gcy is bottom-anchored
@@ -1358,10 +1370,28 @@
         } else if (bgStyle === "ground") {
           const br = petPx * 0.6;
           drawPlatform(br);
-          platform.x = posX.value;
           // keep the whole disc inside the window: its lower rim is br*0.34 below centre,
           // so never let the centre drop past (window bottom − that rim − a small margin).
-          platform.y = Math.min(groundY() + 4, H() - 6 - br * 0.34);
+          const gy = Math.min(groundY() + 4, H() - 6 - br * 0.34);
+          // smooth wide soft glow (blurred → no bands), the Classic disc look on Alive
+          groundGlowG.visible = true;
+          groundGlowG.clear();
+          // flat + wide to echo the ground disc's shape (blur rounds a thin ellipse, so the
+          // base is flatter to compensate)
+          groundGlowG.ellipse(0, 0, br * 1.3, br * 0.26).fill({ color: lightCol, alpha: 0.6 });
+          groundGlowG.ellipse(0, 0, br * 0.78, br * 0.15).fill({ color: lerpCol(lightCol, 0xffffff, 0.4), alpha: 0.45 });
+          groundGlowG.x = posX.value;
+          groundGlowG.y = gy;
+          // lively rising droplets (swapped over from Classic's ground motes): type-tinted
+          // drops rise from the disc and fade — fire embers, water drops, etc., by colour.
+          for (const d of groundDrops) {
+            const ph = (t * d.spd + d.seed) % 1;
+            const dx = d.x * br + Math.sin(ph * 6 + d.seed * 6.28) * br * 0.06;
+            const dy = -ph * br * 1.05;
+            platform.ellipse(dx, dy, d.r * 1.7, d.r * 2.6).fill({ color: lerpCol(lightCol, 0xffffff, 0.5), alpha: Math.sin(ph * Math.PI) * 0.9 });
+          }
+          platform.x = posX.value;
+          platform.y = gy;
         } else {
           // orb/square centered on the VISIBLE content box → equal top/bottom gap
           drawPlatform(0.5 * Math.hypot(contentW, contentH) * curScale * 1.08);
