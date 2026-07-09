@@ -195,7 +195,7 @@
   import { animKind, attackIntensity, FAMILY, VARIANT, type AnimKind } from "$lib/fx";
   import { speciesIdentity, attackFlavor } from "$lib/combat/identity";
   import { reactionFor, rilesToAttack, rileThreshold, type ReactionKind } from "$lib/combat/reactions";
-  import { backgroundFor } from "$lib/backgrounds";
+  import { backgroundFor, groundDiscFor } from "$lib/backgrounds";
 
   type Panel =
     | "none"
@@ -398,6 +398,16 @@
   let evoFlash = $state(false); // the bright reveal flash
   let evoTarget = $state<DexEntry | null>(null);
   let evoCount = $state(0); // evolutions for the current companion lineage
+  // ── ceremony CONDUCTOR: the brain owns the emotional arc; both skins read the score.
+  // gather (world stirs, no flame) → build (fire + flicker) → surge (losing control,
+  // compression) → SILENCE (the breath before) → flash → hush → settle (the exhale). ──
+  type EvoPhase = "" | "gather" | "build" | "surge" | "silence" | "hush" | "settle";
+  let evoPhase = $state<EvoPhase>("");
+  // transformation POSTURE by weight class (family altitude — no per-species rigs):
+  // light rises, mid crouches, heavy barely moves while the world does the work
+  let evoWeight = $state<"light" | "mid" | "heavy">("mid");
+  // the room REMEMBERS: lantern stays warmer for ~a minute after a reveal, then fades
+  let evoAfterglow = $state(0);
   let muted = $state(false);
   let focusMode = $state(false);
   let nightAuto = $state(false); // true 00–05h
@@ -414,6 +424,14 @@
   async function cycleBg() {
     bgStyle = bgStyle === "orb" ? "square" : bgStyle === "square" ? "ground" : bgStyle === "ground" ? "off" : "orb";
     await setMeta("bg_style", bgStyle);
+  }
+  // ambient micro-clock in the quick tray — a tiny record-disc face in the pet's ground
+  // colours. Passive info only (no seconds, no motion); opt-in via the atmos menu.
+  let clockOn = $state(false);
+  async function toggleClock() {
+    clockOn = !clockOn;
+    await setMeta("clock_on", clockOn ? "1" : "0");
+    say(clockOn ? "I'll hold the time. 🕐" : "Clock away.", 2500);
   }
 
   // overall widget transparency (pet + orb), user-adjustable
@@ -1146,6 +1164,9 @@
     evoShowNew,
     evoFlash,
     evoTarget,
+    evoPhase,
+    evoWeight,
+    evoAfterglow,
     visitorId: visitor?.entry.id ?? null,
     visitorShiny: visitor?.shiny ?? false,
     visitorX: visitor?.x ?? 0,
@@ -1348,7 +1369,8 @@
   // the habitat is chosen by the pet's primary type — a Tiny Living Sanctuary
   const currentBiome = $derived(biomeForType(curType));
   // the lantern (identity prop) glows warmer the deeper the bond
-  const lanternGlow = $derived(Math.min(1, 0.4 + bondTierNow * 0.12));
+  // + evoAfterglow: the room stays warmer for ~a minute after an evolution (it remembers)
+  const lanternGlow = $derived(Math.min(1, 0.4 + bondTierNow * 0.12 + evoAfterglow * 0.35));
   // ambient particle slots — fixed positions/timings so they don't re-seed on
   // every render. The KIND (firefly/ember/snow/star/…) comes from the biome.
   const PARTICLES = [
@@ -2762,6 +2784,7 @@
       }
       nightForced = (await getMeta("night_forced")) === "1";
       bgStyle = (await getMeta("bg_style") as ("orb" | "square" | "ground" | "off") | null) ?? "orb";
+      clockOn = (await getMeta("clock_on")) === "1";
       widgetOpacity = Number((await getMeta("widget_opacity")) ?? 1) || 1;
       showAudioVote = (await getMeta("show_audio_vote")) !== "0"; // default on
       evoCount = Number((await getMeta("evo_count")) ?? 0) || 0;
@@ -3686,39 +3709,60 @@
     if (evoActive) return;
     evoTarget = target;
     evoActive = true;
+    // posture class from identity: legendary / final stages carry WEIGHT; first stages float
+    const idn = speciesIdentity(dexId);
+    evoWeight = idn.legendary || idn.stage >= 3 ? "heavy" : idn.stage <= 1 ? "light" : "mid";
     poke();
-    let t = 0;
+    // ── conductor timeline. The climax is the moment BEFORE the flash: a beat of
+    // total stillness. Compression > expansion; the flash is the release, not the peak.
+    evoPhase = "gather";                            // 0–600ms: the world stirs, no flame yet
+    setTimeout(() => (evoPhase = "build"), 600);    // 600–2600: fire + flicker, rising
+    setTimeout(() => (evoPhase = "surge"), 2600);   // 2600–3300: losing control, compression
+    setTimeout(() => (evoPhase = "silence"), 3300); // 3300–3550: everything stops
+    // silhouette flicker: only during build/surge, accelerating with the arc; the
+    // silence beat holds one form perfectly still so the flash lands enormous.
     let gap = 300;
     const flick = () => {
-      evoShowNew = !evoShowNew;
-      gap = Math.max(70, gap - 22);
-      t += gap;
-      if (t < 2400) {
-        setTimeout(flick, gap);
-      } else {
-        // bright reveal flash → the new form, in color
-        evoFlash = true;
-        evoShowNew = true;
-        playVoiceClip("whoa-you-evolved", 0.9);
-        setTimeout(async () => {
-          dexId = target.id;
-          await setMeta("dex_id", String(target.id));
-          evoCount += 1;
-          await setMeta("evo_count", String(evoCount));
-          await resetStageClock(); // a new stage begins — its clock (and the Mega countdown) restarts
-          await addMemory("note", { text: `evolved into ${displayName(target.name)}` });
-          playCry(target.id, 1);
-        }, 220);
-        setTimeout(() => {
-          evoFlash = false;
-          evoActive = false;
-          evoShowNew = false;
-          evoTarget = null;
-          say(pick(evolveDoneLines), 10000);
-        }, 900);
+      if (evoPhase === "silence" || evoPhase === "hush" || evoPhase === "settle" || !evoActive) return;
+      if (evoPhase === "build" || evoPhase === "surge") {
+        evoShowNew = !evoShowNew;
+        gap = Math.max(70, gap - 20);
       }
+      setTimeout(flick, gap);
     };
     flick();
+    setTimeout(() => {
+      // FLASH — the release after the stillness
+      evoPhase = "hush";
+      evoFlash = true;
+      evoShowNew = true;
+      playVoiceClip("whoa-you-evolved", 0.9);
+      setTimeout(async () => {
+        dexId = target.id;
+        await setMeta("dex_id", String(target.id));
+        evoCount += 1;
+        await setMeta("evo_count", String(evoCount));
+        await resetStageClock(); // a new stage begins — its clock (and the Mega countdown) restarts
+        await addMemory("note", { text: `evolved into ${displayName(target.name)}` });
+        playCry(target.id, 1);
+      }, 220);
+      setTimeout(() => {
+        evoFlash = false;
+        evoActive = false;
+        evoShowNew = false;
+        evoTarget = null;
+        // aftermath: the world exhales (settle), and the room REMEMBERS — afterglow
+        // keeps the lantern warmer for ~a minute, fading gently.
+        evoPhase = "settle";
+        evoAfterglow = 1;
+        const glowIv = setInterval(() => {
+          evoAfterglow = Math.max(0, evoAfterglow - 0.022);
+          if (evoAfterglow <= 0) clearInterval(glowIv);
+        }, 1300);
+        setTimeout(() => { if (evoPhase === "settle") evoPhase = ""; }, 2400);
+        say(pick(evolveDoneLines), 10000);
+      }, 900);
+    }, 3550);
   }
 
   async function onMeetingDone(
@@ -4250,7 +4294,7 @@
         <!-- Flat ground platform at the pet's feet -->
         <div
           class="typebg typebg-ground"
-          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; --psize: {imgSize}px; background: repeating-radial-gradient(ellipse at 50% 50%, color-mix(in srgb, var(--tc) 58%, transparent) 0 2.5px, transparent 2.5px 8px); width: {imgSize + 110}px; opacity: calc(0.92 * {widgetOpacity})"
+          style="--tc: {TYPE_FX[curType]?.color ?? '#888'}; --psize: {imgSize}px; background: {groundDiscFor(curType, dexId)}; width: {imgSize + 110}px; opacity: calc(0.85 * {widgetOpacity})"
           aria-hidden="true"
         ></div>
       {:else if bgStyle === "square"}
@@ -4295,6 +4339,7 @@
         <div
           class="roombg"
           class:sphere={habitatShape === "sphere"}
+          class:evocharged={evoActive}
           style="opacity: {0.96 * widgetOpacity}; border-radius: {habitatShape === 'sphere'
             ? '50%'
             : habitatShape === 'square'
@@ -4404,10 +4449,46 @@
             <span class="dreambubble" aria-hidden="true">💭{dreaming}</span>
           {/if}
           {#if evoActive}
-            <!-- classic evolution: a white silhouette flickering between the two forms -->
+            <!-- classic evolution: a type-coloured SOUL-FLAME wraps a white silhouette
+                 flickering between the two forms (parity with Alive's wisp flame) -->
+            <!-- the room holds its breath: soft veil with a hole around the pet; lifts on the reveal -->
+            <div class="evodim" class:climax={evoFlash} aria-hidden="true"></div>
+            <div
+              class="evoflame"
+              class:climax={evoFlash}
+              class:ph-gather={evoPhase === "gather"}
+              class:ph-surge={evoPhase === "surge"}
+              class:ph-silence={evoPhase === "silence"}
+              style="--tc: {TYPE_FX[curType]?.color ?? '#9b7fe0'}; --fs: {petRenderSize}px"
+              aria-hidden="true"
+            >
+              <span class="fl pillar"></span>
+              <span class="fl ring r1"></span>
+              <span class="fl ring r2"></span>
+              <span class="fl ring r3"></span>
+              <span class="fl aura"></span>
+              <span class="fl body"></span>
+              <span class="fl tongue"></span>
+              <span class="fl core"></span>
+              <span class="fl spark s1"></span>
+              <span class="fl spark s2"></span>
+              <span class="fl spark s3"></span>
+              <span class="fl cvg" style="--sx: 140%; --sy: -60%"></span>
+              <span class="fl cvg" style="--sx: -150%; --sy: -30%; animation-delay: 0.35s"></span>
+              <span class="fl cvg" style="--sx: 60%; --sy: 120%; animation-delay: 0.7s"></span>
+            </div>
+            {#if evoFlash}
+              <!-- climax shockwave — detonates as the flame collapses -->
+              <div class="evoshock" style="--tc: {TYPE_FX[curType]?.color ?? '#9b7fe0'}; --fs: {petRenderSize}px" aria-hidden="true"></div>
+            {/if}
             <img
               class="evosil"
               class:revealed={evoFlash}
+              class:ph-surge={evoPhase === "surge"}
+              class:ph-silence={evoPhase === "silence"}
+              class:w-light={evoWeight === "light"}
+              class:w-mid={evoWeight === "mid"}
+              class:w-heavy={evoWeight === "heavy"}
               use:spriteSrc={spriteUrl(evoShowNew && evoTarget ? evoTarget.id : dexId, isShiny)}
               alt="evolving"
               style="width: {petRenderSize}px; height: {petRenderSize}px"
@@ -4703,6 +4784,10 @@
       onNudgeScale={nudgeScale}
       onToggleSoundPanel={() => (soundPanel = !soundPanel)}
       onPushCard={pushCard}
+      {clockOn}
+      onToggleClock={toggleClock}
+      clockBg={groundDiscFor(curType, dexId)}
+      clockTc={TYPE_FX[curType]?.color ?? "#888"}
       onQuit={quit}
       audioVoteOn={showAudioVote}
       onToggleAudioVote={audioAware ? () => void setShowAudioVote(!showAudioVote) : undefined}
@@ -7030,14 +7115,23 @@
        disc's half-height (psize*0.14) lands its midline on the feet. */
     top: calc(50% + 9px + var(--psize, 110px) * 0.36);
     transform: translateX(-50%);
-    /* flat faint disc — the old Alive ground, swapped onto Classic: a faint type-tinted
-       pad with a soft dark contact center, no glossy glow or specular highlight. */
+    /* multicolour species record (groundDiscFor): few THICK feathered bands — thin
+       repeating rings moiréd ("itched the eyes"). Depth kept subtle: a soft inset
+       top-light / bottom-shade + a faint gloss, no loud outer glow. */
     height: calc(var(--psize, 110px) * 0.28);
     border-radius: 50%;
-    box-shadow: none;
+    box-shadow:
+      inset 0 4px 10px rgba(255, 255, 255, 0.12),
+      inset 0 -5px 12px rgba(0, 0, 0, 0.32),
+      0 3px 10px rgba(0, 0, 0, 0.25);
   }
   .typebg-ground::before {
-    content: none;
+    content: "";
+    position: absolute;
+    top: 6%; left: 20%; width: 60%; height: 40%;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 25%, rgba(255, 255, 255, 0.16), transparent 70%);
+    filter: blur(2px);
   }
 
   .mote {
@@ -7161,6 +7255,203 @@
       transform: scale(1.04);
       opacity: 1;
     }
+  }
+
+  /* evolution soul-flame (Classic) — a living will-o'-wisp in the type colour wrapping
+     the silhouette: soft aura, flame body, curling tongue, white-hot core, rising sparks.
+     Sized off --fs (the pet render size); coloured off --tc (the type accent). */
+  .evoflame {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .evoflame .fl { position: absolute; border-radius: 50%; }
+  .evoflame .aura {
+    width: calc(var(--fs) * 1.5);
+    height: calc(var(--fs) * 1.5);
+    background: radial-gradient(circle, color-mix(in srgb, var(--tc) 55%, transparent), transparent 68%);
+    animation: eflBreathe 1.3s ease-in-out infinite alternate;
+  }
+  .evoflame .body {
+    width: calc(var(--fs) * 0.95);
+    height: calc(var(--fs) * 1);
+    background: radial-gradient(circle at 50% 62%, color-mix(in srgb, var(--tc) 60%, #fff), var(--tc) 55%, transparent 74%);
+    filter: blur(4px);
+    opacity: 0.8;
+    animation: eflBreathe 0.9s ease-in-out infinite alternate;
+  }
+  .evoflame .tongue {
+    width: calc(var(--fs) * 0.34);
+    height: calc(var(--fs) * 0.85);
+    bottom: 56%;
+    border-radius: 50% 50% 46% 54% / 78% 78% 22% 22%;
+    background: linear-gradient(to top, color-mix(in srgb, var(--tc) 70%, #fff), var(--tc) 55%, transparent 92%);
+    filter: blur(3px);
+    transform-origin: 50% 100%;
+    animation: eflTongue 0.7s ease-in-out infinite alternate;
+  }
+  .evoflame .core {
+    width: calc(var(--fs) * 0.52);
+    height: calc(var(--fs) * 0.56);
+    background: radial-gradient(circle, #fff 20%, rgba(255, 255, 255, 0) 70%);
+    animation: eflBreathe 0.5s ease-in-out infinite alternate;
+  }
+  .evoflame .spark {
+    width: 5px;
+    height: 5px;
+    bottom: 55%;
+    background: color-mix(in srgb, var(--tc) 40%, #fff);
+    box-shadow: 0 0 6px var(--tc);
+    animation: eflSpark 1.3s linear infinite;
+  }
+  .evoflame .s1 { left: 44%; }
+  .evoflame .s2 { left: 54%; animation-delay: 0.45s; animation-duration: 1.6s; }
+  .evoflame .s3 { left: 49%; animation-delay: 0.9s; animation-duration: 1.1s; }
+  @keyframes eflBreathe {
+    from { transform: scale(0.94); opacity: 0.75; }
+    to   { transform: scale(1.07); opacity: 1; }
+  }
+  @keyframes eflTongue {
+    from { transform: rotate(-9deg) scaleY(0.9) translateX(-4%); }
+    to   { transform: rotate(10deg) scaleY(1.12) translateX(4%); }
+  }
+  @keyframes eflSpark {
+    0%   { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
+    12%  { opacity: 0.9; }
+    100% { transform: translateY(calc(var(--fs) * -0.85)) translateX(8px) scale(0.4); opacity: 0; }
+  }
+
+  /* ── ceremony build + climax (parity with Alive) ── */
+  .evoflame { animation: eflStage 2.4s ease-in forwards; }
+  .evoflame.climax { animation: eflClimax 0.32s ease-in forwards; } /* collapse into the body */
+  @keyframes eflStage {
+    from { transform: scale(0.8); opacity: 0.4; }
+    to   { transform: scale(1.04); opacity: 1; }
+  }
+  @keyframes eflClimax {
+    to { transform: scale(0.16); opacity: 0; }
+  }
+  /* the room holds its breath — dark veil with a hole around the pet; lifts at the reveal */
+  .evodim {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle at 50% 55%, rgba(0, 0, 0, 0) 16%, rgba(0, 0, 0, 0.38) 68%);
+    animation: edimIn 0.6s ease-out forwards;
+  }
+  .evodim.climax { animation: edimOut 0.3s ease-out forwards; }
+  @keyframes edimIn  { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes edimOut { to { opacity: 0; } }
+  /* pillar of light behind the silhouette */
+  .evoflame .pillar {
+    width: calc(var(--fs) * 0.22);
+    height: calc(var(--fs) * 2.4);
+    bottom: -10%;
+    border-radius: 50%;
+    background: linear-gradient(to top, transparent 4%, color-mix(in srgb, var(--tc) 45%, #fff), transparent 96%);
+    filter: blur(4px);
+    opacity: 0.55;
+    animation: eflBreathe 1.1s ease-in-out infinite alternate;
+  }
+  /* ascension rings rising through the creature */
+  .evoflame .ring {
+    width: calc(var(--fs) * 1.15);
+    height: calc(var(--fs) * 0.32);
+    bottom: 4%;
+    border: 1.5px solid color-mix(in srgb, var(--tc) 65%, #fff);
+    border-radius: 50%;
+    opacity: 0;
+    animation: eflRing 1.7s linear infinite;
+  }
+  .evoflame .r2 { animation-delay: 0.57s; }
+  .evoflame .r3 { animation-delay: 1.14s; }
+  @keyframes eflRing {
+    0%   { transform: translateY(0) scaleX(1); opacity: 0; }
+    15%  { opacity: 0.55; }
+    100% { transform: translateY(calc(var(--fs) * -1.9)) scaleX(0.66); opacity: 0; }
+  }
+  /* energy converges: sparks spiral INWARD from the room into the body */
+  .evoflame .cvg {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 6px var(--tc);
+    opacity: 0;
+    animation: eflCvg 1.05s linear infinite;
+  }
+  @keyframes eflCvg {
+    0%   { transform: translate(calc(var(--fs) * var(--sx) / 100), calc(var(--fs) * var(--sy) / 100)) scale(0.6); opacity: 0; }
+    18%  { opacity: 0.95; }
+    100% { transform: translate(0, 0) scale(1.1); opacity: 0; }
+  }
+  /* climax shockwave ring */
+  .evoshock {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .evoshock::before {
+    content: "";
+    width: calc(var(--fs) * 0.5);
+    height: calc(var(--fs) * 0.28);
+    border: 3px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 14px var(--tc), inset 0 0 10px var(--tc);
+    animation: eshockOut 0.45s ease-out forwards;
+  }
+  @keyframes eshockOut {
+    to { transform: scale(4.6); opacity: 0; }
+  }
+
+  /* ── ceremony phases (the conductor's score, Classic side) ── */
+  /* gather: the world stirs BEFORE the magic — only converging sparks + rings, no fire yet */
+  .evoflame.ph-gather > :not(.cvg):not(.ring) { visibility: hidden; }
+  /* surge: losing control — the whole flame compresses and quickens */
+  .evoflame.ph-surge { animation: eflSurge 0.7s ease-in forwards; }
+  .evoflame.ph-surge .fl { animation-duration: 0.45s; }
+  @keyframes eflSurge {
+    to { transform: scale(0.82); }
+  }
+  /* silence: the breath before the flash — everything freezes and dims */
+  .evoflame.ph-silence { animation: none; opacity: 0.14; transform: scale(0.7); }
+  .evoflame.ph-silence .fl { animation-play-state: paused; }
+  /* the habitat witnesses: room breathes brighter while the ceremony runs */
+  :global(.roombg.evocharged) { animation: roomCharge 1.5s ease-in-out infinite alternate; }
+  @keyframes roomCharge {
+    from { filter: brightness(1) saturate(1); }
+    to   { filter: brightness(1.22) saturate(1.12); }
+  }
+
+  /* ── transformation POSTURE by weight class (family altitude, not per-species rigs) ── */
+  /* light: lifts off the ground, drawn upward */
+  .evosil.ph-surge.w-light { animation: evoRise 0.7s ease-in forwards; }
+  @keyframes evoRise {
+    to { transform: translateY(-9%) scale(0.97); }
+  }
+  /* mid: crouches into itself — compression made visible */
+  .evosil.ph-surge.w-mid { animation: evoCrouch 0.7s ease-in forwards; }
+  @keyframes evoCrouch {
+    to { transform: scaleY(0.86) scaleX(1.05) translateY(4%); }
+  }
+  /* heavy: barely moves — it TREMBLES, and the world does the work */
+  .evosil.ph-surge.w-heavy { animation: evoTremble 0.12s linear infinite; }
+  @keyframes evoTremble {
+    0%   { transform: translateX(-1.6px) scaleY(0.975); }
+    50%  { transform: translateX(1.6px)  scaleY(0.965); }
+    100% { transform: translateX(-1.6px) scaleY(0.975); }
+  }
+  /* silence: held mid-compression, glowing from within — about to burst */
+  .evosil.ph-silence {
+    animation: none;
+    transform: scale(0.92);
+    filter: brightness(2.1) drop-shadow(0 0 14px #fff);
   }
   .evoflash {
     position: absolute;

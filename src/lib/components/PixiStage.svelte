@@ -57,6 +57,9 @@
     dir: 1 | -1;
     evoActive: boolean;
     evoFlash: boolean;
+    evoPhase: string;  // conductor score: gather|build|surge|silence|hush|settle
+    evoWeight: string; // transformation posture: light|mid|heavy
+    evoAfterglow: number; // 0..1 — the room remembers after a reveal
     visitorId: number | null;
     visitorShiny: boolean;
     visitorX: number;
@@ -70,7 +73,7 @@
   }
   const NO_FX: AliveFx = {
     switchFx: "none", attacking: false, atkKind: null, atkColor: "#ffffff", atkEmoji: "✨",
-    atkName: "", atkCls: 2, atkIntensity: 0.5, atkFlavor: "#ffffff", dir: -1, evoActive: false, evoFlash: false, visitorId: null,
+    atkName: "", atkCls: 2, atkIntensity: 0.5, atkFlavor: "#ffffff", dir: -1, evoActive: false, evoFlash: false, evoPhase: "", evoWeight: "mid", evoAfterglow: 0, visitorId: null,
     visitorShiny: false, visitorX: 0, visitorFlip: false, eating: false, birthday: false, breakthrough: false,
     reactionKind: null, reactionN: 0, reactionColor: "#ffffff"
   };
@@ -197,6 +200,34 @@
         const g = Math.round(((c0 >> 8) & 255) + (((c1 >> 8) & 255) - ((c0 >> 8) & 255)) * t);
         const b = Math.round((c0 & 255) + ((c1 & 255) - (c0 & 255)) * t);
         return (r << 16) | (g << 8) | b;
+      };
+      // hue helpers — shared by the galaxy palette and the evolution soul-flame
+      // (both need "this type's colour, but SATURATED": biome light is a pale tint).
+      const toHsl = (c: number) => {
+        const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+        let h = 0;
+        if (d) {
+          if (mx === r) h = ((g - b) / d) % 6;
+          else if (mx === g) h = (b - r) / d + 2;
+          else h = (r - g) / d + 4;
+          h *= 60; if (h < 0) h += 360;
+        }
+        const l = (mx + mn) / 2;
+        const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+        return [h, s, l] as const;
+      };
+      const hsl = (h: number, s: number, l: number) => {
+        h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); l = Math.max(0, Math.min(1, l));
+        const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+        let r = 0, g = 0, b = 0;
+        if (h < 60)       { r = c; g = x; }
+        else if (h < 120) { r = x; g = c; }
+        else if (h < 180) { g = c; b = x; }
+        else if (h < 240) { g = x; b = c; }
+        else if (h < 300) { r = x; b = c; }
+        else              { r = c; b = x; }
+        return ((Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255));
       };
       // Rich, saturated flame colours for special forms (the biome `light` is a pale ambient tint
       // that washes out as fire). ONE source — FORM_FLAME (shared with the attack/irritate FX so a
@@ -554,8 +585,11 @@
       ball.visible = false;
       const burst = new Graphics(); // release flash + ring
       burst.visible = false;
-      const evoGlow = new Graphics(); // evolution white pulse around the pet
+      const evoGlow = new Graphics(); // evolution soul-flame around the pet (type-coloured)
+      evoGlow.blendMode = "add"; // additive → the white core burns, colours glow like fire
       evoGlow.visible = false;
+      const evoVeil = new Graphics(); // world-dim during the ceremony (normal blend — additive can't darken)
+      evoVeil.visible = false;
 
       const fxC = new Container(); // attack beams/orbs/slash/aura + sparks (pet-anchored)
       const beamG = new Graphics();
@@ -652,33 +686,6 @@
         // ── derive the WHOLE galaxy palette from the type's light colour ──
         // nebula, stars and core all share one hue family so the bowl reads as a single object
         // (a fire pet → warm reds/golds; a water pet → blues/teals; psychic → purples/pinks).
-        const toHsl = (c: number) => {
-          const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
-          const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
-          let h = 0;
-          if (d) {
-            if (mx === r) h = ((g - b) / d) % 6;
-            else if (mx === g) h = (b - r) / d + 2;
-            else h = (r - g) / d + 4;
-            h *= 60; if (h < 0) h += 360;
-          }
-          const l = (mx + mn) / 2;
-          const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
-          return [h, s, l] as const;
-        };
-        const hsl = (h: number, s: number, l: number) => {
-          h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); l = Math.max(0, Math.min(1, l));
-          const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
-          let r = 0, g = 0, b = 0;
-          if (h < 60)       { r = c; g = x; }
-          else if (h < 120) { r = x; g = c; }
-          else if (h < 180) { g = c; b = x; }
-          else if (h < 240) { g = x; b = c; }
-          else if (h < 300) { r = x; b = c; }
-          else              { r = c; b = x; }
-          return ((Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255));
-        };
-
         const [baseH, baseS] = toHsl(lightCol);
         const sat = Math.max(0.55, baseS); // floor so even muted types still read as colourful
         // core glow: the type hue pushed bright (replaces the old hand-mixed coreCol)
@@ -898,7 +905,7 @@
       }
       // order: scene → backdrop → vignette → visitor → shadow → pet → fx/hat → hearts/zzz → bubble
       a.stage.addChild(
-        groundRings, groundArcs, scene, groundGlowG, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, megaAura, mesh, evoGlow, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
+        groundRings, groundArcs, scene, groundGlowG, platform, galaxy, galaxyMask, vignetteG, rimGlow, visitorSprite, trainer, petShadow, petSep, megaAura, evoVeil, evoGlow, mesh, ball, fxC, hat, hearts, zzz, burst, glass, glassMask, bubbleC
       );
 
 
@@ -949,12 +956,212 @@
       };
       // a burst of energy motes for an attack (radial for status, directional otherwise)
       const sparkList: { g: Graphics; vx: number; vy: number; life: number }[] = [];
-      // rising type-tinted droplets for the "ground" backdrop — the lively part swapped
-      // over from Classic's .mote spans. Seeded once; phase loops on tick time.
+      // ── Ground "type-language" particles ─────────────────────────────────────
+      // Type → physical PHENOMENON (what the type emits), not an icon: shape falls
+      // out of the phenomenon, MOTION carries the identity, and per-type LIFETIME
+      // sets the rhythm. Four families keep the renderer small:
+      //   living   — drifts organically   (fire, water, grass, bug, fairy)
+      //   energy   — pulses, orbits, emits (electric, psychic, ghost, dragon)
+      //   material — heavy and ballistic  (rock, ground, steel, ice)
+      //   neutral  — motion over geometry (normal, dark, fighting, flying, poison)
+      // Species later inherit the family and tweak it (Charizard: hotter embers).
+      type DropFam = "living" | "energy" | "material" | "neutral";
+      const DROP_SPEC: Record<string, { fam: DropFam; life: number; n: number }> = {
+        fire:     { fam: "living",   life: 0.8,  n: 6 },
+        water:    { fam: "living",   life: 1.2,  n: 6 },
+        grass:    { fam: "living",   life: 1.6,  n: 6 },
+        bug:      { fam: "living",   life: 2.2,  n: 5 },
+        fairy:    { fam: "living",   life: 2.5,  n: 6 },
+        electric: { fam: "energy",   life: 0.15, n: 3 },
+        psychic:  { fam: "energy",   life: 1.8,  n: 4 },
+        ghost:    { fam: "energy",   life: 2.0,  n: 4 },
+        dragon:   { fam: "energy",   life: 1.7,  n: 5 },
+        rock:     { fam: "material", life: 0.9,  n: 5 },
+        ground:   { fam: "material", life: 1.5,  n: 4 },
+        steel:    { fam: "material", life: 0.4,  n: 5 },
+        ice:      { fam: "material", life: 1.4,  n: 6 },
+        normal:   { fam: "neutral",  life: 1.6,  n: 6 },
+        dark:     { fam: "neutral",  life: 2.0,  n: 5 },
+        fighting: { fam: "neutral",  life: 0.5,  n: 4 },
+        flying:   { fam: "neutral",  life: 1.8,  n: 5 },
+        poison:   { fam: "neutral",  life: 1.3,  n: 5 }
+      };
       const groundDrops = Array.from({ length: 7 }, () => ({
-        x: (Math.random() - 0.5) * 1.4, r: 0.8 + Math.random() * 1.4,
-        spd: 0.18 + Math.random() * 0.22, seed: Math.random()
+        seed: Math.random(), r: 0.8 + Math.random() * 1.2
       }));
+      // evolution soul-flame accents (from reference footage): water = wispy + speck-
+      // heavy, fire = fast with many pinch-offs, grass = raggedest, psychic = slow and
+      // blobby, ghost = wide slow curl. speed/spread scale the lobe oscillators.
+      const EVO_FLAME_ACCENT: Record<string, { specks: number; detach: number; speed: number; spread: number }> = {
+        default: { specks: 8,  detach: 5, speed: 1,    spread: 1 },
+        water:   { specks: 16, detach: 4, speed: 0.8,  spread: 1.1 },
+        fire:    { specks: 6,  detach: 7, speed: 1.35, spread: 1 },
+        grass:   { specks: 18, detach: 5, speed: 1.15, spread: 1.35 },
+        psychic: { specks: 3,  detach: 6, speed: 0.7,  spread: 0.85 },
+        ghost:   { specks: 8,  detach: 4, speed: 0.6,  spread: 1.25 },
+        fairy:   { specks: 14, detach: 4, speed: 0.9,  spread: 0.9 }
+      };
+      const fract = (v: number) => v - Math.floor(v);
+      // per-cycle pseudo-random: each respawn of a particle lands somewhere new
+      const cycRand = (cyc: number, i: number, salt = 0) =>
+        fract(Math.sin(cyc * 127.1 + i * 311.7 + salt * 74.7) * 43758.5453);
+      /** Draw the type's ground particles into `g` (platform-local coords: 0,0 = disc center). */
+      function drawTypeDrops(g: Graphics, br: number, t: number) {
+        const spec = DROP_SPEC[petType] ?? DROP_SPEC.normal;
+        br *= 1.3; // motion field scale: taller rise + slightly wider spread
+        const col = lightCol;
+        const hot = lerpCol(col, 0xffffff, 0.55);
+        for (let i = 0; i < spec.n; i++) {
+          const d = groundDrops[i];
+          const cyc = Math.floor(t / spec.life + d.seed);
+          const ph = fract(t / spec.life + d.seed); // 0→1 over one lifetime
+          const bx = (cycRand(cyc, i) - 0.5) * 1.5 * br; // fresh x each respawn
+          const env = Math.sin(ph * Math.PI); // default fade-in/out envelope
+          const s = d.r * 1.2; // marginally larger particles
+          switch (petType) {
+            // ── living: organic drift ──
+            case "fire": { // ember — glowing coal that rises, flickers, fades
+              const y = -ph * br * 0.9;
+              const x = bx + Math.sin(ph * 9 + cyc) * br * 0.05;
+              const flick = 0.75 + 0.25 * Math.sin(t * 30 + i * 7);
+              g.circle(x, y, s * 2.1).fill({ color: col, alpha: env * 0.25 * flick });
+              g.circle(x, y, s * 1.0).fill({ color: hot, alpha: env * 0.9 * flick });
+              break;
+            }
+            case "water": { // droplet — up, hesitate, fall, splash
+              const up = Math.sin(Math.min(ph, 0.55) / 0.55 * Math.PI / 2); // ease up
+              const down = ph > 0.55 ? ((ph - 0.55) / 0.45) ** 2 : 0;       // gravity back
+              const y = -(up - down) * br * 0.7;
+              g.ellipse(bx, y, s * 0.8, s * 1.3).fill({ color: hot, alpha: (1 - down) * 0.85 });
+              if (ph > 0.85) // splash ring where it lands
+                g.ellipse(bx, 0, s * 2.5 * (ph - 0.85) / 0.15 + s, s * 0.5)
+                 .stroke({ color: hot, width: 1, alpha: (1 - ph) / 0.15 * 0.6 });
+              break;
+            }
+            case "grass": { // seed fragment — flutters up slow, big side-sway
+              const y = -ph * br * 0.75;
+              const x = bx + Math.sin(ph * 5 + cyc * 2) * br * 0.14;
+              const tilt = 0.4 + 0.6 * Math.abs(Math.sin(ph * 7 + i)); // flutter reads as tilt
+              g.ellipse(x, y, s * 1.5, s * 0.5 * tilt).fill({ color: col, alpha: env * 0.8 });
+              break;
+            }
+            case "bug": { // glowing gnat — wanders in little loops
+              const x = bx + Math.sin(ph * Math.PI * 4 + i) * br * 0.1;
+              const y = -ph * br * 0.6 - Math.sin(ph * Math.PI * 6) * br * 0.06;
+              g.circle(x, y, s * 1.5).fill({ color: col, alpha: env * 0.22 });
+              g.circle(x, y, s * 0.6).fill({ color: hot, alpha: env * 0.95 });
+              break;
+            }
+            case "fairy": { // pixie dust — a small twinkling cluster floating up
+              const y = -ph * br * 0.8;
+              for (let k = 0; k < 3; k++) {
+                const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * 6 + k * 2.1 + i * 3));
+                g.circle(bx + (cycRand(cyc, i, k + 1) - 0.5) * s * 5, y + (k - 1) * s * 1.6, s * 0.55)
+                 .fill({ color: k === 1 ? 0xffffff : hot, alpha: env * tw });
+              }
+              break;
+            }
+            // ── energy: pulses, orbits, emits ──
+            case "electric": { // branching spark — appear, flash, gone
+              const x = bx;
+              const y = -cycRand(cyc, i, 2) * br * 0.5;
+              const j = (sd: number) => (cycRand(cyc, i, sd) - 0.5) * s * 4;
+              g.moveTo(x, y).lineTo(x + s * 2 + j(3), y - s * 3).lineTo(x + j(4), y - s * 6)
+               .stroke({ color: 0xffffff, width: 1.2, alpha: env });
+              g.moveTo(x + s * 2 + j(3), y - s * 3).lineTo(x + s * 4 + j(5), y - s * 4.5)
+               .stroke({ color: hot, width: 1, alpha: env * 0.8 }); // the fork
+              break;
+            }
+            case "psychic": { // ripple ring — expand, hover, disappear
+              const rr = s * 2 + ph * br * 0.3;
+              g.ellipse(bx, -br * 0.25, rr, rr * 0.45).stroke({ color: hot, width: 1.2, alpha: (1 - ph) * 0.7 });
+              break;
+            }
+            case "ghost": { // wisp — curl, stretch, fade
+              const y = -ph * br * 0.85;
+              const cx2 = bx + Math.sin(ph * 6 + cyc) * s * 4;
+              g.moveTo(bx, Math.min(0, y + s * 5))
+               .quadraticCurveTo(cx2, y + s * 2, bx + Math.sin(ph * 3) * s * 3, y)
+               .stroke({ color: col, width: s * (1.4 - ph), alpha: (1 - ph) * 0.55 });
+              break;
+            }
+            case "dragon": { // glowing scale — spirals up, ancient ember-like
+              const x = bx + Math.cos(ph * Math.PI * 4 + i * 2) * br * 0.1;
+              const y = -ph * br * 0.95;
+              g.poly([x, y - s * 1.4, x + s, y, x, y + s * 1.4, x - s, y]).fill({ color: hot, alpha: env * 0.85 });
+              g.circle(x, y, s * 2).fill({ color: col, alpha: env * 0.18 });
+              break;
+            }
+            // ── material: heavy, ballistic ──
+            case "rock": { // stone chip — hops up, falls back, tumbles
+              const y = -4 * ph * (1 - ph) * br * 0.45; // parabola
+              const x = bx + ph * (cycRand(cyc, i, 6) - 0.5) * br * 0.2;
+              const w = s * (0.8 + 0.5 * Math.abs(Math.sin(ph * 8))); // tumble
+              g.poly([x - w, y, x - w * 0.2, y - s * 1.1, x + w, y - s * 0.3, x + w * 0.3, y + s * 0.8])
+               .fill({ color: col, alpha: 0.8 });
+              break;
+            }
+            case "ground": { // dust puff — billows sideways, barely rises
+              const spread = ph * br * 0.28;
+              const y = -ph * br * 0.18;
+              for (let k = -1; k <= 1; k++)
+                g.circle(bx + k * spread, y + Math.abs(k) * s, s * (1.2 + ph * 2.2 - Math.abs(k) * 0.4))
+                 .fill({ color: col, alpha: (1 - ph) * 0.16 });
+              break;
+            }
+            case "steel": { // metal shaving — a glint more than a motion
+              const y = -cycRand(cyc, i, 7) * br * 0.4;
+              const glint = Math.max(0, Math.sin(ph * Math.PI)) ** 8;
+              g.rect(bx - s * 1.6, y - s * 0.3, s * 3.2, s * 0.6).fill({ color: hot, alpha: 0.25 + glint * 0.75 });
+              g.rect(bx - s * 0.4, y - s * 0.15, s * 0.8, s * 0.3).fill({ color: 0xffffff, alpha: glint });
+              break;
+            }
+            case "ice": { // crystal shard — slow drift, hard twinkle
+              const y = -ph * br * 0.7;
+              const tw = 0.5 + 0.5 * Math.sin(t * 4 + i * 2.4);
+              g.poly([bx, y - s * 1.7, bx + s * 0.8, y, bx, y + s * 1.7, bx - s * 0.8, y])
+               .fill({ color: 0xffffff, alpha: env * 0.5 + env * 0.4 * tw });
+              break;
+            }
+            // ── neutral: motion over geometry ──
+            case "dark": { // smoke ribbon — flows sideways and SINKS
+              const y = ph * br * 0.25 - br * 0.15;
+              const x = bx + ph * br * 0.3 * (i % 2 ? 1 : -1);
+              g.moveTo(x - s * 3, y).quadraticCurveTo(x, y - s * 2.5, x + s * 3, y + s)
+               .stroke({ color: col, width: s * 1.1, alpha: (1 - ph) * 0.3 });
+              break;
+            }
+            case "fighting": { // impact shock — compressed burst, quick
+              const rr = s * 1.5 + ph * br * 0.35;
+              g.arc(bx, -s * 2, rr, Math.PI * 1.15, Math.PI * 1.85)
+               .stroke({ color: hot, width: 2 * (1 - ph), alpha: (1 - ph) * 0.9 });
+              break;
+            }
+            case "flying": { // air streak — a drawn breath of wind, falling-leaf drift
+              const y = -ph * br * 0.8 + Math.sin(ph * Math.PI * 3) * br * 0.08;
+              const x = bx + Math.sin(ph * Math.PI * 2) * br * 0.16;
+              g.moveTo(x - s * 2.4, y).quadraticCurveTo(x, y - s * 1.4, x + s * 2.4, y)
+               .stroke({ color: 0xffffff, width: 1, alpha: env * 0.5 });
+              break;
+            }
+            case "poison": { // toxic droplet — uneven wobbling bubble that POPS
+              const y = -ph * br * 0.75;
+              const wob = 1 + 0.25 * Math.sin(t * 11 + i * 3);
+              if (ph < 0.9) {
+                g.ellipse(bx, y, s * 1.1 * wob, s * 1.1 / wob).fill({ color: col, alpha: 0.5 });
+                g.circle(bx - s * 0.4, y - s * 0.4, s * 0.3).fill({ color: 0xffffff, alpha: 0.6 });
+              } else // pop: a brief empty ring
+                g.circle(bx, y, s * (1.2 + (ph - 0.9) * 14)).stroke({ color: hot, width: 1, alpha: (1 - ph) * 10 * 0.7 });
+              break;
+            }
+            default: { // normal — the soft mote (gentle neutral rise)
+              const y = -ph * br * 0.8;
+              g.ellipse(bx + Math.sin(ph * 5 + i) * br * 0.05, y, s * 1.2, s * 1.8)
+               .fill({ color: hot, alpha: env * 0.7 });
+            }
+          }
+        }
+      }
       function spawnSparks(color: string, kind: string, dir: number) {
         const col = hexNum(color);
         const radial = kind === "status" || kind === "burst";
@@ -1001,6 +1208,9 @@
       let ceremonyT = 0; // seconds into the current ceremony phase
       let prevVisitorId: number | null = null;
       let evoT = 0; // evolution flicker clock
+      let evoFlashT = 0; // climax clock — runs while the reveal flash is up (collapse + shockwave)
+      let evoPhT = 0; // clock within the current ceremony phase (conductor-driven)
+      let prevEvoPhase = ""; // phase-change detector → resets evoPhT
       let prevEating = false;
       let face = -1; // pet facing: -1 default (sprite faces left), +1 flipped
       // ── ambient FX state ──
@@ -1373,23 +1583,22 @@
           // keep the whole disc inside the window: its lower rim is br*0.34 below centre,
           // so never let the centre drop past (window bottom − that rim − a small margin).
           const gy = Math.min(groundY() + 4, H() - 6 - br * 0.34);
-          // smooth wide soft glow (blurred → no bands), the Classic disc look on Alive
+          // smooth soft glow shaped as an INVERTED BOWL: a dome with a flat chord along
+          // the ground line and a curved crown above it — matches the disc instead of
+          // blurring into a round puff. (Quadratic through the apex: control at -2h → peak -h.)
           groundGlowG.visible = true;
           groundGlowG.clear();
-          // flat + wide to echo the ground disc's shape (blur rounds a thin ellipse, so the
-          // base is flatter to compensate)
-          groundGlowG.ellipse(0, 0, br * 1.3, br * 0.26).fill({ color: lightCol, alpha: 0.6 });
-          groundGlowG.ellipse(0, 0, br * 0.78, br * 0.15).fill({ color: lerpCol(lightCol, 0xffffff, 0.4), alpha: 0.45 });
+          const dome = (w: number, h: number, color: number, alpha: number) =>
+            groundGlowG.moveTo(-w, 0).quadraticCurveTo(0, -h * 2, w, 0).closePath().fill({ color, alpha });
+          dome(br * 1.35, br * 0.42, lightCol, 0.55);
+          dome(br * 0.85, br * 0.26, lerpCol(lightCol, 0xffffff, 0.4), 0.45);
+          // a thin bright seam where the bowl meets the disc — anchors the glow to the ground
+          groundGlowG.ellipse(0, 0, br * 1.05, br * 0.1).fill({ color: lightCol, alpha: 0.35 });
           groundGlowG.x = posX.value;
           groundGlowG.y = gy;
-          // lively rising droplets (swapped over from Classic's ground motes): type-tinted
-          // drops rise from the disc and fade — fire embers, water drops, etc., by colour.
-          for (const d of groundDrops) {
-            const ph = (t * d.spd + d.seed) % 1;
-            const dx = d.x * br + Math.sin(ph * 6 + d.seed * 6.28) * br * 0.06;
-            const dy = -ph * br * 1.05;
-            platform.ellipse(dx, dy, d.r * 1.7, d.r * 2.6).fill({ color: lerpCol(lightCol, 0xffffff, 0.5), alpha: Math.sin(ph * Math.PI) * 0.9 });
-          }
+          // type-language particles: the phenomenon this type EMITS (embers, droplets,
+          // sparks, wisps…) — shape from the phenomenon, identity from motion + lifetime.
+          drawTypeDrops(platform, br, t);
           platform.x = posX.value;
           platform.y = gy;
         } else {
@@ -2079,7 +2288,8 @@
         const sq = squash.value;
         const chomp = F.eating ? 0.07 * Math.abs(Math.sin(t * 18)) : 0; // mouth open/close
         // sleeping → slower, deeper breath
-        const breathe =
+        // the silence beat: even the breathing stops — total stillness before the flash
+        const breathe = F.evoPhase === "silence" ? 0 :
           (sleeping ? 0.032 * Math.sin(t * 1.0) : 0.022 * Math.sin(t * 1.7)) +
           (petFrames > 0 ? 0.02 * Math.sin(t * 26) : 0);
         const shear = lean.value * pw * 0.22;
@@ -2122,6 +2332,7 @@
         ball.visible = false;
         burst.visible = false;
         evoGlow.visible = false;
+        evoVeil.visible = false;
 
         const sw = F.switchFx;
         if (sw !== prevSwitch) { prevSwitch = sw; ceremonyT = 0; }
@@ -2183,19 +2394,189 @@
             burst.visible = true;
           }
         }
-        // evolution: a white silhouette pulse (the form itself swaps at the end via remount)
+        // evolution: a living SOUL-FLAME in the type's colour. Modeled on real flame
+        // reference: a RAGGED multi-lobed column (stacked wobbling lobes at different
+        // frequencies — never a smooth teardrop), blobs that PINCH OFF and rise, a
+        // white-hot core sitting LOW, and spark specks swirling around the body.
+        // Electric is its own phenomenon: a re-randomizing jagged bolt, not a flame.
         if (F.evoActive) {
           evoT += dt;
+          const phz = F.evoPhase;
+          if (phz !== prevEvoPhase) { prevEvoPhase = phz; evoPhT = 0; } else evoPhT += dt;
+          // ── the CONDUCTOR's score (brain-owned timeline, both skins read it):
+          // gather (world stirs, no fire) → build (rise) → surge (losing control,
+          // compression BEFORE the flash) → silence (the breath — total stillness)
+          // → flash (release: final collapse + shockwave) ──
+          const surgeP = phz === "surge" ? Math.min(1, evoPhT / 0.7)
+            : phz === "silence" || phz === "hush" ? 1 : 0;
+          const grow =
+            phz === "gather" ? 0.18 * Math.min(1, evoPhT / 0.6) :
+            phz === "build"  ? 0.2 + 0.8 * Math.min(1, evoPhT / 2) : 1;
+          const still = phz === "silence" ? 0.12 : 1; // silence: almost nothing moves or shines
           const fl = 0.5 + 0.5 * Math.sin(evoT * 22);
-          tint = lerpCol(0xc9beff, 0xffffff, fl);
-          petScaleMul *= 1 + 0.05 * Math.sin(evoT * 22);
+          // held white-hot through the still beat — glowing from within, about to burst
+          tint = phz === "silence" ? 0xffffff : lerpCol(0xc9beff, 0xffffff, fl);
+          if (phz === "build" || phz === "surge") petScaleMul *= 1 + 0.05 * Math.sin(evoT * 22);
+          // transformation POSTURE by weight class (family altitude, no per-species rigs):
+          // light draws inward-up · mid crouches into itself · heavy barely moves — it
+          // trembles and lets the world do the work (then holds dead-still in silence)
+          if (surgeP > 0) {
+            if (F.evoWeight === "heavy") { if (phz === "surge") jiggle = Math.min(14, jiggle + 30 * dt); }
+            else if (F.evoWeight === "mid") petScaleMul *= 1 - 0.1 * surgeP;
+            else petScaleMul *= 1 - 0.045 * surgeP;
+          }
+          const [eh, es] = toHsl(lightCol);
+          const satF = Math.max(0.75, es);
+          const deepC = hsl(eh, satF, 0.3);  // outer / cool edge
+          const bodyC = hsl(eh, satF, 0.52); // flame body
+          const hotC  = hsl(eh, satF * 0.65, 0.8); // near-core heat
+          const R = petPx * 0.5;
+          const st = EVO_FLAME_ACCENT[petType] ?? EVO_FLAME_ACCENT.default;
+          if (F.evoFlash) evoFlashT += dt; else evoFlashT = 0;
+          const clm = Math.min(1, evoFlashT / 0.35); // climax progress 0→1
+          const preC = 1 - 0.33 * surgeP;            // compression BEFORE the flash (surge)
+          const collapse = preC * (1 - 0.8 * clm);   // …then the final fall into the body
+          const spd = st.speed * (0.8 + grow * 1.1 + surgeP * 0.9); // tempo rides the arc
+          const cycJ = Math.floor(evoT * 3);         // slow chaos re-roll (anti-metronome)
+          // habitat participates: the environmental-coupling parameter surges with the
+          // ceremony, so the room (lantern flares, biome warmth) witnesses it
+          petEnergy = Math.max(petEnergy, 1 + grow * 0.9);
           evoGlow.clear();
-          evoGlow.circle(0, 0, petPx * 0.62).fill({ color: 0xffffff, alpha: 0.12 + 0.22 * fl });
+
+          // the room holds its breath — deepest during the silence, lifts on the reveal
+          evoVeil.clear();
+          evoVeil.rect(0, 0, W(), H()).fill({ color: 0x000000, alpha: (phz === "silence" ? 0.44 : 0.3 * grow) * (1 - clm) });
+          evoVeil.visible = true;
+
+          // ── shared surreal stage: pillar of light + ascension rings ──
+          evoGlow.ellipse(0, -R * 0.7, R * 0.26 * grow, R * 2.7).fill({ color: hotC, alpha: 0.16 * grow * still * (1 - clm) });
+          evoGlow.ellipse(0, -R * 0.7, R * 0.1 * grow, R * 2.9).fill({ color: 0xffffff, alpha: 0.12 * grow * still * (1 - clm) });
+          for (let k = 0; k < 3; k++) {
+            const rp = fract(evoT * 0.55 * (1 + grow * 0.8) + k / 3); // rings rise faster as it builds
+            const ry2 = R * 0.85 - rp * R * 3.1;
+            evoGlow.ellipse(0, ry2, R * (1.1 - 0.3 * rp), R * (0.3 - 0.08 * rp))
+              .stroke({ color: rp < 0.35 ? bodyC : hotC, width: 1.6, alpha: Math.sin(rp * Math.PI) * 0.5 * grow * still * (1 - clm) });
+          }
+          // energy CONVERGES: specks spiral INWARD, faster as the ceremony builds
+          for (let k = 0; k < st.specks; k++) {
+            const life2 = 0.8 + (k % 4) * 0.25;
+            const pace = evoT * (0.8 + grow * 0.7) / life2 + k * 0.31;
+            const cyc2 = Math.floor(pace);
+            const ph2 = fract(pace);
+            const a3 = cycRand(cyc2, k, 81) * Math.PI * 2 + ph2 * 1.4;
+            const d3 = R * (2.6 - ph2 * 2.25);
+            evoGlow.circle(Math.cos(a3) * d3, Math.sin(a3) * d3 * 0.55 - R * 0.2, 0.8 + ph2 * 1.6)
+              .fill({ color: k % 3 ? hotC : 0xffffff, alpha: ph2 * 0.9 * grow * still * (1 - clm) });
+          }
+          // comets: orbit tightens as energy gathers, then CRASH into the body at climax
+          for (let k = 0; k < 2; k++) {
+            const oa = evoT * (2 + grow * 2.6) + k * Math.PI;
+            const orbR = R * 0.98 * (1.12 - 0.35 * grow) * collapse;
+            for (let tr = 0; tr < 4; tr++) {
+              const a4 = oa - tr * 0.16;
+              evoGlow.circle(Math.cos(a4) * orbR, Math.sin(a4) * orbR * 0.35 - R * 0.15, 2.4 - tr * 0.5)
+                .fill({ color: tr ? hotC : 0xffffff, alpha: (1 - tr * 0.22) * 0.8 * grow * still });
+            }
+          }
+          // CLIMAX: shockwave ring detonates outward as everything else falls inward
+          if (clm > 0 && clm < 1) {
+            const sr = R * (0.5 + clm * 3.2);
+            evoGlow.ellipse(0, 0, sr, sr * 0.55).stroke({ color: 0xffffff, width: 3.5 * (1 - clm), alpha: 1 - clm });
+            evoGlow.ellipse(0, 0, sr * 0.78, sr * 0.43).stroke({ color: hotC, width: 5 * (1 - clm), alpha: (1 - clm) * 0.6 });
+          }
+
+          if (petType === "electric") {
+            // ── lightning: main bolt re-randomizes ~12×/s, forks, radial sparks ──
+            const cyc = Math.floor(evoT * 12);
+            const rnd = (k: number) => cycRand(cyc, k, 99) - 0.5;
+            const SEG = 6;
+            const pts: number[] = [rnd(0) * R * 0.8, -R * 2.3];
+            for (let k = 1; k <= SEG; k++)
+              pts.push(rnd(k) * R * (1 - k / SEG) * 1.5, -R * 2.3 + (k / SEG) * R * 2.3);
+            const bolt = () => {
+              evoGlow.moveTo(pts[0], pts[1]);
+              for (let k = 2; k < pts.length; k += 2) evoGlow.lineTo(pts[k], pts[k + 1]);
+            };
+            bolt(); evoGlow.stroke({ color: deepC, width: 6, alpha: 0.5 * grow * (1 - clm) });
+            bolt(); evoGlow.stroke({ color: hotC, width: 2.6, alpha: 0.9 * grow * (1 - clm) });
+            bolt(); evoGlow.stroke({ color: 0xffffff, width: 1.1, alpha: grow * (1 - clm) });
+            for (const j of [1, 3]) { // branch forks off two joints
+              const fx3 = pts[j * 2], fy3 = pts[j * 2 + 1];
+              evoGlow.moveTo(fx3, fy3)
+                .lineTo(fx3 + rnd(j + 20) * R * 1.6, fy3 + R * (0.2 + cycRand(cyc, j, 31) * 0.4))
+                .stroke({ color: hotC, width: 1.3, alpha: 0.8 * grow });
+            }
+            // charged aura behind the silhouette + radial sparks
+            evoGlow.circle(0, 0, R * (1.05 + 0.1 * fl)).fill({ color: bodyC, alpha: 0.22 * grow * still });
+            for (let k = 0; k < 10; k++) {
+              const a2 = cycRand(cyc, k, 55) * Math.PI * 2;
+              const d2 = R * (0.8 + cycRand(cyc, k, 56) * 0.9);
+              evoGlow.moveTo(Math.cos(a2) * d2, Math.sin(a2) * d2)
+                .lineTo(Math.cos(a2) * (d2 + R * 0.18), Math.sin(a2) * (d2 + R * 0.18))
+                .stroke({ color: 0xffffff, width: 1, alpha: 0.7 * grow * still });
+            }
+          } else {
+            // ── organic flame column BEHIND the silhouette — the pet IS the core.
+            // Taller than the pet, hugging its sides, tongues licking past the head.
+            // `spd` accelerates with the flicker; `collapse` sucks it inward at climax;
+            // per-cycle hash jitter breaks the sine metronome (real fire is chaotic). ──
+            evoGlow.ellipse(0, R * 0.85, R * 1.4 * collapse, R * 0.4).fill({ color: deepC, alpha: 0.4 * grow * still });
+            const LOBES = 8;
+            for (let k = 0; k < LOBES; k++) {
+              const f = k / (LOBES - 1); // 0 feet → 1 above the head
+              const jr = 0.86 + 0.28 * cycRand(cycJ, k, 7); // chaos: radius re-rolls 3×/s
+              const lr = R * (0.95 - 0.66 * f) * grow * collapse * jr *
+                (1 + 0.16 * Math.sin(evoT * (5 + k * 1.7) * spd + k * 2.1));
+              const ly = (R * 0.7 - f * R * 2.6) * collapse;
+              const lx = (Math.sin(evoT * (2.2 + f * 3.5) * spd + k * 1.9) * R * (0.1 + f * 0.5) +
+                (cycRand(cycJ, k, 8) - 0.5) * R * 0.12) * st.spread * collapse;
+              evoGlow.circle(lx, ly, lr)
+                .fill({ color: f < 0.4 ? bodyC : lerpCol(bodyC, deepC, (f - 0.4) * 1.5), alpha: 0.38 * still });
+            }
+            // hotter licks behind the torso (offset phases → the fire breathes)
+            for (let k = 0; k < 4; k++) {
+              const f = k / 3;
+              const jr = 0.88 + 0.24 * cycRand(cycJ, k, 9);
+              const lr = R * (0.55 - 0.3 * f) * grow * collapse * jr * (1 + 0.2 * Math.sin(evoT * (7 + k * 2.3) * spd + k));
+              const ly = (R * 0.55 - f * R * 1.3) * collapse;
+              const lx = Math.sin(evoT * (3.1 + f * 4) * spd + k * 2.6) * R * 0.16;
+              evoGlow.circle(lx, ly, lr).fill({ color: hotC, alpha: 0.45 * still });
+            }
+            // pinch-off blobs above the head: the flame sheds pieces skyward
+            for (let k = 0; k < st.detach; k++) {
+              const phF = (evoT * (0.55 + k * 0.11) * spd + k * 0.41) % 1;
+              const bx2 = Math.sin(phF * 5 + k * 2.3) * R * (0.3 + phF * 0.35) * st.spread;
+              const by2 = -R * (1.7 + phF * 1.4);
+              evoGlow.circle(bx2, by2, (R * 0.13 * (1 - phF) + 1.2) * grow * collapse)
+                .fill({ color: lerpCol(bodyC, deepC, phF), alpha: (1 - phF) * 0.7 * still * (1 - clm) });
+            }
+          }
+          evoGlow.x = posX.value;
+          evoGlow.y = bodyCY;
+          evoGlow.visible = true;
+        } else if (F.evoPhase === "settle") {
+          // aftermath — the exhale: embers settle downward and fade; the flash's energy
+          // drains back into the world over ~2s (the veil is already gone)
+          if (prevEvoPhase !== "settle") { prevEvoPhase = "settle"; evoPhT = 0; } else evoPhT += dt;
+          const sp2 = Math.min(1, evoPhT / 2.2);
+          const [eh2, es2] = toHsl(lightCol);
+          const emberC = hsl(eh2, Math.max(0.6, es2), 0.68);
+          evoGlow.clear();
+          for (let k = 0; k < 10; k++) {
+            const ph3 = fract(evoPhT * (0.5 + (k % 3) * 0.18) + k * 0.37);
+            const ex2 = (cycRand(k * 7, k, 61) - 0.5) * petPx * 1.2;
+            const ey2 = -petPx * 0.8 + ph3 * petPx * 1.1; // falling, not rising — the exhale
+            evoGlow.circle(ex2, ey2, 1.7 * (1 - sp2) + 0.4)
+              .fill({ color: emberC, alpha: (1 - ph3) * 0.5 * (1 - sp2) });
+          }
           evoGlow.x = posX.value;
           evoGlow.y = bodyCY;
           evoGlow.visible = true;
         } else {
           evoT = 0;
+          evoFlashT = 0;
+          evoPhT = 0;
+          prevEvoPhase = "";
         }
         if (isFire) tint = lerpCol(tint, 0xffcf8a, 0.25); // warm flicker tint
         if (petLight > 0.01) tint = lerpCol(tint, 0xe6f2ff, Math.min(0.85, petLight)); // lightning lights the body

@@ -38,6 +38,11 @@
     onToggleSoundPanel: () => void;
     onQuit:             () => void;
     onPushCard:         () => void;
+    // ambient micro-clock (quick tray): a record-disc face in the pet's ground colours
+    clockOn:            boolean;
+    onToggleClock:      () => void;
+    clockBg:            string;  // groundDiscFor(...) gradient — the clock face IS the ground
+    clockTc:            string;  // type accent for the digits
     // dev: show/hide the 🧠 audio-class (mus/spch) readout — button only renders in dev builds
     audioVoteOn?:       boolean;
     onToggleAudioVote?: () => void;
@@ -51,9 +56,26 @@
     onTogglePanel, onFeed, onPet, onOpenBattle, onSwitchRandom,
     onToggleMute, onToggleNight, onToggleFocus, onToggleRoam, onCycleMode, onCycleBg, onCycleRoom, onCycleWeather,
     onNudgeScale, onToggleSoundPanel, onQuit, onPushCard,
+    clockOn, onToggleClock, clockBg, clockTc,
     audioVoteOn, onToggleAudioVote,
     onMenuOpen, onDirHint,
   }: Props = $props();
+
+  // ─── micro-clock ─────────────────────────────────────────
+  // minute-resolution only (no seconds — a ticking hand pulls the eye, and this
+  // clock's whole job is to NOT ask for attention). Interval only runs while shown.
+  let now = $state(new Date());
+  $effect(() => {
+    if (!clockOn) return;
+    now = new Date();
+    const iv = setInterval(() => (now = new Date()), 15_000);
+    return () => clearInterval(iv);
+  });
+  const hhmm = $derived(
+    `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
+  );
+  const minDeg = $derived(now.getMinutes() * 6);
+  const hourDeg = $derived(((now.getHours() % 12) + now.getMinutes() / 60) * 30);
 
   // ─── geometry ────────────────────────────────────────────
   // Rings scale with the pet so the category buttons always bloom just OUTSIDE
@@ -149,7 +171,7 @@
     },
     {
       id: "atmos", icon: "🌙", name: "Atmosphere",
-      tagline: "Weather · Night · Backdrop · Habitat · Focus",
+      tagline: "Weather · Night · Backdrop · Habitat · Focus · Clock",
       angle: 210, labelSide: "left", dirHint: -1,
       items: [
         { id: "weather",  icon: "🌦️", label: "Weather" },
@@ -157,6 +179,7 @@
         { id: "backdrop", icon: "🌿", label: "Backdrop" },
         { id: "room",     icon: "🏞️", label: "Habitat" },
         { id: "focus",    icon: "🎯", label: "Focus" },
+        { id: "clock",    icon: "🕐", label: "Clock" },
       ],
     },
   ];
@@ -238,6 +261,7 @@
     if (catId === "atmos"  && itemId === "backdrop") return bgStyle !== "off";
     if (catId === "atmos"  && itemId === "focus")    return focusMode;
     if (catId === "atmos"  && itemId === "weather")  return weatherKind !== "none";
+    if (catId === "atmos"  && itemId === "clock")    return clockOn;
     return false;
   }
 
@@ -286,6 +310,7 @@
       case "atmos:backdrop": onCycleBg();              break;
       case "atmos:room":     onCycleRoom();            break;
       case "atmos:focus":    onToggleFocus();          break;
+      case "atmos:clock":    onToggleClock();          break;
     }
 
     if (closeAfter.has(key)) closeMenu();
@@ -310,6 +335,17 @@
 <!-- ─── Quick tray — common one-tap actions, left of the speaker ─── -->
 <!-- hover-revealed; the full set still lives in the radial menu -->
 <div class="quickbar" aria-label="Quick actions">
+  {#if clockOn}
+    <!-- micro record-clock: the face is the pet's ground disc; passive, not a button -->
+    <div class="quick-pill clockpill" title="the time, beside you" aria-label="Clock">
+      <span class="clockface" style="background: {clockBg}">
+        <span class="hand h" style="transform: rotate({hourDeg}deg)"></span>
+        <span class="hand m" style="transform: rotate({minDeg}deg)"></span>
+        <span class="pin"></span>
+      </span>
+      <span class="clocktime" style="color: {clockTc}">{hhmm}</span>
+    </div>
+  {/if}
   <button class="quick-pill" title="Push README card" aria-label="Push card" onclick={onPushCard}>🚀</button>
   <button class="quick-pill" title="Feed" aria-label="Feed" onclick={onFeed}>🍙</button>
   <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>+</button>
@@ -452,6 +488,54 @@
   }
   .quick-pill:active { transform: translateY(0) scale(0.92); }
   .quick-pill.off { opacity: 0.4; filter: grayscale(1); } /* audio-vote toggle: dim when hidden */
+
+  /* micro record-clock: passive (no hover lift, default cursor), face = ground disc */
+  .clockpill {
+    width: auto;
+    border-radius: 13px;
+    padding: 0 7px;
+    gap: 5px;
+    cursor: default;
+  }
+  .clockpill:hover { transform: none; border-color: rgba(120, 108, 160, 0.4); background: rgba(28, 22, 42, 0.88); }
+  .clockface {
+    position: relative;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex: none;
+    box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.55), inset 0 1px 2px rgba(255, 255, 255, 0.18);
+  }
+  .hand {
+    position: absolute;
+    left: 50%;
+    bottom: 50%;
+    transform-origin: 50% 100%;
+    border-radius: 1px;
+    background: #fff;
+    box-shadow: 0 0 1.5px rgba(0, 0, 0, 0.7); /* readable on any band colour */
+  }
+  .hand.h { width: 2px;   height: 4.5px; margin-left: -1px; }
+  .hand.m { width: 1.3px; height: 6.5px; margin-left: -0.65px; opacity: 0.9; }
+  .pin {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 3px;
+    height: 3px;
+    margin: -1.5px 0 0 -1.5px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+  }
+  .clocktime {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
 
   /* Mute pill — always shown (safety action) */
   .mute-pill {

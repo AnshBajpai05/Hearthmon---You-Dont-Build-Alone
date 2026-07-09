@@ -54,6 +54,34 @@ export function typeBackgrounds(type: string): string[] {
   return TEMPLATES.map((t) => t(p));
 }
 
+// ── Classic "ground" disc: a multicolour concentric record (vinyl-style) ──────
+// Few THICK, feathered bands (thin repeating rings moiré / "itch the eyes").
+// Colours come from the species' type palette; the band arrangement varies by
+// dexId, so different species of one type get a different record. The element
+// is a wide flat div (border-radius 50%), so `ellipse` fills it edge-to-edge.
+const DISC_VARIANTS = [
+  // 1 — classic target: pale core → body → pale ring → deep rim
+  (p: Palette, rimC: string) =>
+    `${p.accent} 0 7%, ${p.mid} 13% 30%, ${p.accent} 36% 44%, ${p.ground} 50% 68%, ${p.mid} 74% 82%, ${rimC} 90% 100%`,
+  // 2 — sunrise: hot core bleeding outward into the rim (like the example art)
+  (p: Palette, rimC: string) =>
+    `${p.ground} 0 6%, ${p.accent} 12% 22%, ${p.mid} 30% 52%, ${p.ground} 60% 76%, ${rimC} 86% 100%`,
+  // 3 — inverted: deep core, bright halo ring, calm body
+  (p: Palette, rimC: string) =>
+    `${rimC} 0 5%, ${p.accent} 11% 18%, ${p.ground} 26% 46%, ${p.mid} 54% 72%, ${p.accent} 78% 84%, ${rimC} 92% 100%`,
+  // 4 — broad two-tone with a thin bright separator
+  (p: Palette, rimC: string) =>
+    `${p.mid} 0 24%, ${p.accent} 30% 36%, ${p.ground} 44% 74%, ${rimC} 84% 100%`
+];
+
+/** Stable per-species multicolour ground disc (CSS background). */
+export function groundDiscFor(type: string, dexId: number): string {
+  const p = TYPE_PALETTE[type] ?? TYPE_PALETTE.normal;
+  const rimC = `color-mix(in srgb, ${p.ground} 52%, #171326)`; // deep edge, tinted not black
+  const stops = DISC_VARIANTS[dexId % DISC_VARIANTS.length](p, rimC);
+  return `radial-gradient(ellipse at 50% 50%, ${stops})`;
+}
+
 /** Stable per-species scene: same Pokémon → same backdrop, varied across the dex. */
 export function backgroundFor(type: string, dexId: number): string {
   const v = typeBackgrounds(type);
