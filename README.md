@@ -5,12 +5,12 @@
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
 <p align="center">
-  <img src="./assets/hearthmon-status.svg?v=1783579972" width="750"/>
+  <img src="./assets/hearthmon-status.svg?v=1783604925" width="750"/>
 </p>
 
-**Current Companion:** Donphan<br/>
+**Current Companion:** Charizard<br/>
 **Mood:** In Focus<br/>
-**Status:** *"in the zone"*<br/>
+**Status:** *"heads down"*<br/>
 
 *↑ This card is **alive** — Hearthmon writes it back into your repo as you build, so your profile breathes.*
 
