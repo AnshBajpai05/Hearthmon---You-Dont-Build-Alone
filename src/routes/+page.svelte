@@ -175,6 +175,9 @@
     megaForms,
     formSpriteUrl,
     formFallbackUrl,
+    localSrc,
+    prefetchSprites,
+    spriteSrc,
     FORM_FLAME,
     TRAINER_URL,
     type Creature,
@@ -2354,7 +2357,7 @@
   // embed the sprite as a base64 PNG so the card is self-contained (GitHub-safe)
   async function spriteDataUri(): Promise<string> {
     try {
-      const res = await fetch(megaForm ? formFallbackUrl(megaForm.formId, isShiny) : fallbackUrl(dexId, isShiny));
+      const res = await fetch(await localSrc(megaForm ? formFallbackUrl(megaForm.formId, isShiny) : fallbackUrl(dexId, isShiny)));
       if (!res.ok) return "";
       const bytes = new Uint8Array(await res.arrayBuffer());
       let bin = "";
@@ -2374,7 +2377,7 @@
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const IDC = (globalThis as any).ImageDecoder;
       if (!IDC) return null;
-      const res = await fetch(megaForm ? formSpriteUrl(megaForm.formId, isShiny) : spriteUrl(dexId, isShiny), { mode: "cors" });
+      const res = await fetch(await localSrc(megaForm ? formSpriteUrl(megaForm.formId, isShiny) : spriteUrl(dexId, isShiny)), { mode: "cors" });
       if (!res.ok) return null;
       const dec = new IDC({ data: await res.arrayBuffer(), type: "image/gif" });
       await dec.tracks.ready;
@@ -2787,6 +2790,11 @@
         setTimeout(() => { renderMode = "classic"; }, 500);
         setTimeout(() => { renderMode = "alive"; }, 900);
       }
+      // Warm the local sprite cache for the WHOLE dex + every mega, in the background (~25s
+      // after home so it never competes with the pet's own load). 429-proof: after this the
+      // app serves sprites from disk and never depends on GitHub. Idempotent + throttled;
+      // skips what's cached and bails on a rate-limit streak (resumes next launch).
+      setTimeout(() => { void prefetchSprites(); }, 25_000);
       // Post-update: Poki's one-time line leads (greeting was suppressed this launch). The
       // "What's new" chip is a brief, dismissible offer — gone after ~15s so it never lingers.
       if (justUpdated) {
@@ -4119,7 +4127,7 @@
     {#if startupAsk}
       <div class="startup-ask" role="dialog" aria-label="Start Hearthmon?">
         <div class="sa-card">
-          <img class="sa-pet" src={spriteUrl(dexId, isShiny)} alt="" onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(dexId))} />
+          <img class="sa-pet" use:spriteSrc={{ src: spriteUrl(dexId, isShiny), fallback: fallbackUrl(dexId) }} alt="" />
           <p class="sa-q">Morning — want me around today?</p>
           <div class="sa-btns">
             <button class="sa-yes" onclick={startupYes}>Yes, stay</button>
@@ -4132,7 +4140,7 @@
     {#if ghOnboardAsk && !startupAsk}
       <div class="startup-ask" role="dialog" aria-label="Add GitHub Token?">
         <div class="sa-card">
-          <img class="sa-pet" src={spriteUrl(dexId, isShiny)} alt="" onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(dexId))} />
+          <img class="sa-pet" use:spriteSrc={{ src: spriteUrl(dexId, isShiny), fallback: fallbackUrl(dexId) }} alt="" />
           <p class="sa-q">I can sync with your GitHub to track your tasks and code. Add a token?</p>
           <div class="sa-btns">
             <button class="sa-yes" onclick={ghOnboardYes}>Add Token</button>
@@ -4159,7 +4167,7 @@
     {#if audioOnboardAsk && !startupAsk && !ghOnboardAsk}
       <div class="startup-ask" role="dialog" aria-label="Enable music awareness?">
         <div class="sa-card">
-          <img class="sa-pet" src={spriteUrl(dexId, isShiny)} alt="" onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(dexId))} />
+          <img class="sa-pet" use:spriteSrc={{ src: spriteUrl(dexId, isShiny), fallback: fallbackUrl(dexId) }} alt="" />
           <p class="sa-q">Want me to vibe with your music? I'll gently react when you're listening — I only sense the sound, never record it.</p>
           <p class="sa-note">You can turn this on or off anytime in ⚙️ System → 🧑‍💻 Code → Music awareness.</p>
           <div class="sa-btns">
@@ -4348,12 +4356,11 @@
       {#if visitor}
         <div class="visitor" style="transform: translateX(calc(-50% + {visitor.x}px))">
           <img
-            src={spriteUrl(visitor.entry.id, visitor.shiny)}
+            use:spriteSrc={{ src: spriteUrl(visitor.entry.id, visitor.shiny), fallback: fallbackUrl(visitor.entry.id) }}
             alt={displayName(visitor.entry.name)}
             style="width: {Math.round(imgSize * 0.8)}px; height: {Math.round(
               imgSize * 0.8
             )}px; transform: scaleX({visitor.flip ? -1 : 1})"
-            onerror={(e) => ((e.target as HTMLImageElement).src = fallbackUrl(visitor!.entry.id))}
           />
         </div>
       {/if}
@@ -4401,7 +4408,7 @@
             <img
               class="evosil"
               class:revealed={evoFlash}
-              src={spriteUrl(evoShowNew && evoTarget ? evoTarget.id : dexId, isShiny)}
+              use:spriteSrc={spriteUrl(evoShowNew && evoTarget ? evoTarget.id : dexId, isShiny)}
               alt="evolving"
               style="width: {petRenderSize}px; height: {petRenderSize}px"
             />

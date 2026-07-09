@@ -6,7 +6,7 @@
   import { kindCounts, moodCounts, getMeta } from "../db";
   import { bondStage, daysTogether } from "../bond";
   import { derivePersona, type Persona } from "../personality";
-  import { spriteUrl, fallbackUrl, displayName, dexEntry } from "../sprites";
+  import { spriteUrl, fallbackUrl, spriteSrc, displayName, dexEntry } from "../sprites";
 
   interface Props {
     petName: string;
@@ -107,7 +107,7 @@
     </div>
 
     <div class="hero">
-      <img class="sprite" {src} alt={petName} onerror={() => (fallbackId = dexId)} />
+      <img class="sprite" use:spriteSrc={src} alt={petName} onerror={() => (fallbackId = dexId)} />
       <div class="who">
         <div class="name">{petName}</div>
         <div class="meta">the {species}</div>

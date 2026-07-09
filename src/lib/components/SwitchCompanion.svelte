@@ -5,6 +5,7 @@
     filterDex,
     randomEntry,
     thumbUrl,
+    spriteSrc,
     displayName,
     GENERATIONS,
     type DexEntry
@@ -132,7 +133,7 @@
         disabled={e.id === currentDexId}
         onclick={() => onPick(e, name.trim())}
       >
-        <img src={thumbUrl(e.id)} alt={displayName(e.name)} loading="lazy" />
+        <img use:spriteSrc={thumbUrl(e.id)} alt={displayName(e.name)} loading="lazy" />
         <span class="name">{displayName(e.name)}</span>
         <span class="vibe">{e.id === currentDexId ? "that's me" : e.type}</span>
       </button>

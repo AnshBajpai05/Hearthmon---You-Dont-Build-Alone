@@ -5,7 +5,7 @@
   import { onMount } from "svelte";
   import { kindCounts, moodCounts, getMeta, memoriesOfKind } from "../db";
   import { bondStage, daysTogether } from "../bond";
-  import { spriteUrl, fallbackUrl, displayName, dexEntry } from "../sprites";
+  import { spriteUrl, fallbackUrl, spriteSrc, displayName, dexEntry } from "../sprites";
 
   interface Props {
     petName: string;
@@ -147,7 +147,7 @@
         <div class="title">{s.title}</div>
         {#if s.sub}<div class="sub">{s.sub}</div>{/if}
       {:else if s.tone === "partner"}
-        <img class="sprite" {src} alt={petName} onerror={() => (fallbackId = dexId)} />
+        <img class="sprite" use:spriteSrc={src} alt={petName} onerror={() => (fallbackId = dexId)} />
         <div class="title big-name">{s.title}</div>
         {#if s.sub}<div class="sub">{s.sub}</div>{/if}
       {:else}

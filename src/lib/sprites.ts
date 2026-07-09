@@ -245,6 +245,134 @@ export const GENERATIONS: [number, number][] = [
   [906, 1025]
 ];
 
+// ── Local disk cache (429-proof sprite loading) ───────────────────────────────
+// raw.githubusercontent.com rate-limits (429) under active use → a blank pet. So we
+// resolve every sprite through a disk cache: read_sprite (Rust) returns cached bytes;
+// on a miss the webview fetches remote ONCE and hands the bytes to save_sprite; on a
+// cold miss + 429 we return the remote URL as a last resort. prefetchSprites() warms
+// the whole set so nothing depends on the API after the first successful run.
+import { invoke } from "@tauri-apps/api/core";
+
+/** Stable cache filename for a remote sprite URL (path after the host, flattened). */
+function spriteKey(url: string): string {
+  return url.replace(/^https?:\/\/[^/]+\//, "").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+function spriteMime(url: string): string {
+  return url.endsWith(".png") ? "image/png" : "image/gif";
+}
+function b64FromBuf(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+const _srcMemo = new Map<string, string>();
+
+/** Local-first sprite source: disk cache → fetch-once + cache → remote (last resort).
+ *  Returns a `data:` URL for cached/fetched bytes, else the remote URL. Never throws.
+ *  Works in both renderers and for the GIF decoder (`fetch(dataUrl)` + `<img src>`). */
+export async function localSrc(remoteUrl: string): Promise<string> {
+  const memo = _srcMemo.get(remoteUrl);
+  if (memo) return memo;
+  const key = spriteKey(remoteUrl);
+  const mime = spriteMime(remoteUrl);
+  try {
+    const b64 = await invoke<string | null>("read_sprite", { key });
+    if (b64) {
+      const u = `data:${mime};base64,${b64}`;
+      _srcMemo.set(remoteUrl, u);
+      return u;
+    }
+  } catch {
+    return remoteUrl; // not under Tauri (plain browser dev) → just use remote
+  }
+  try {
+    const resp = await fetch(remoteUrl, { mode: "cors" });
+    if (!resp.ok) throw new Error(String(resp.status)); // 429 etc.
+    const b64 = b64FromBuf(await resp.arrayBuffer());
+    void invoke("save_sprite", { key, b64 }).catch(() => {}); // fire-and-forget persist
+    const u = `data:${mime};base64,${b64}`;
+    _srcMemo.set(remoteUrl, u);
+    return u;
+  } catch {
+    return remoteUrl; // cold cache + rate-limited: nothing better to hand back
+  }
+}
+
+/** Svelte action: `<img use:spriteSrc={url}>` or `use:spriteSrc={{ src, fallback }}`.
+ *  Resolves the sprite through the local disk cache (localSrc) and sets node.src —
+ *  the browser never fires the remote request itself, so a 429 can't blank the image.
+ *  On error of the resolved source (corrupt file / cold miss + offline) it retries
+ *  with `fallback` through the same cache. Reactive: updates when the param changes. */
+export function spriteSrc(
+  node: HTMLImageElement,
+  param: string | { src: string; fallback?: string }
+) {
+  let opts = typeof param === "string" ? { src: param, fallback: undefined as string | undefined } : param;
+  let cur = ""; // the URL we most recently asked for (guards stale async resolves)
+  const onErr = () => {
+    const f = opts.fallback;
+    if (f && cur !== f) {
+      cur = f;
+      void localSrc(f).then((r) => { if (cur === f) node.src = r; });
+    }
+  };
+  node.addEventListener("error", onErr);
+  const apply = () => {
+    const want = opts.src;
+    cur = want;
+    void localSrc(want).then((r) => { if (cur === want) node.src = r; });
+  };
+  apply();
+  return {
+    update(p: typeof param) {
+      opts = typeof p === "string" ? { src: p, fallback: undefined } : p;
+      apply();
+    },
+    destroy() {
+      node.removeEventListener("error", onErr);
+    }
+  };
+}
+
+/** Warm the disk cache for the WHOLE dex + every mega/special form (animated + static
+ *  fallback), throttled so the prefetch can't trigger the 429 it prevents. Idempotent:
+ *  skips already-cached files; bails on a rate-limit streak (resumes on a later run). */
+export async function prefetchSprites(onProgress?: (done: number, total: number) => void): Promise<void> {
+  const urls = new Set<string>();
+  for (const e of POKEDEX) {
+    urls.add(spriteUrl(e.id));
+    urls.add(fallbackUrl(e.id));
+  }
+  for (const forms of Object.values(MEGA_FORMS)) {
+    for (const f of forms) {
+      urls.add(formSpriteUrl(f.formId));
+      urls.add(formFallbackUrl(f.formId));
+    }
+  }
+  const list = [...urls];
+  let done = 0;
+  let failStreak = 0;
+  for (const u of list) {
+    try {
+      if (!(await invoke<boolean>("sprite_cached", { key: spriteKey(u) }))) {
+        const resp = await fetch(u, { mode: "cors" });
+        if (resp.ok) {
+          await invoke("save_sprite", { key: spriteKey(u), b64: b64FromBuf(await resp.arrayBuffer()) }).catch(() => {});
+          failStreak = 0;
+        } else {
+          if (++failStreak >= 6) break; // rate-limited → stop; a later run resumes
+        }
+        await new Promise((r) => setTimeout(r, 130)); // throttle → don't self-429
+      }
+    } catch {
+      break; // not under Tauri / offline → nothing to prefetch
+    }
+    onProgress?.(++done, list.length);
+  }
+}
+
 /** Combined filter: type and/or generation and/or name query. */
 export function filterDex(
   opts: { query?: string; type?: string; gen?: number; limit?: number } = {}

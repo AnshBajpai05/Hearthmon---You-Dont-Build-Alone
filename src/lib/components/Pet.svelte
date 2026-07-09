@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { spriteUrl, fallbackUrl } from "../sprites";
+  import { spriteUrl, fallbackUrl, localSrc } from "../sprites";
   import type { PetState } from "../presence";
 
   interface Props {
@@ -50,6 +50,16 @@
           ? fallbackUrl(dexId, shiny)
           : spriteUrl(dexId, shiny)
   );
+
+  // Route the (remote) src through the local disk cache → a data: URL. Falls back to the
+  // remote URL until resolved (and if the cache+fetch both fail). 429-proof once cached.
+  let resolvedSrc = $state("");
+  $effect(() => {
+    const want = src;
+    let cancelled = false;
+    localSrc(want).then((r) => { if (!cancelled && src === want) resolvedSrc = r; });
+    return () => { cancelled = true; };
+  });
 
   // type-specific idle behaviour (leaf-sway, mane-flicker, neck-sway, …)
   const fx = $derived.by(() => {
@@ -207,7 +217,7 @@
   <div class="petlook" style="transform: rotate({lookTilt}deg) translate({lookX}px, {lookY - bob}px) scale({1 + pulse * 0.05})">
     <div class="petfx" class:fx-grass={fx === "grass"} class:fx-fire={fx === "fire"} class:fx-water={fx === "water"} class:fx-ice={fx === "ice"} class:fx-electric={fx === "electric"} class:fx-psychic={fx === "psychic"} class:fx-ghost={fx === "ghost"} class:fx-dragon={fx === "dragon"}>
       <img
-        {src}
+        src={resolvedSrc || src}
         alt={name}
         style="width: {drawSize}px; height: {drawSize}px"
         draggable="false"

@@ -2,7 +2,7 @@
   // The first five minutes. No setup wizard — a meeting.
   // One question at the end; the answer becomes our first shared memory.
   import { fade } from "svelte/transition";
-  import { STARTERS, spriteUrl, fallbackUrl, type Creature } from "../sprites";
+  import { STARTERS, spriteUrl, fallbackUrl, spriteSrc, type Creature } from "../sprites";
 
   interface Props {
     onDone: (creature: Creature, name: string, building: string, birthday: string, mode: "alive" | "classic") => void;
@@ -54,7 +54,7 @@
       <div class="grid">
         {#each STARTERS as c (c.id)}
           <button class="starter" onclick={() => choose(c)}>
-            <img src={srcFor(c.dexId)} alt={c.name} onerror={() => markFailed(c.dexId)} />
+            <img use:spriteSrc={srcFor(c.dexId)} alt={c.name} onerror={() => markFailed(c.dexId)} />
             <span class="name">{c.name}</span>
             <span class="vibe">{c.vibe}</span>
           </button>
@@ -63,14 +63,14 @@
     </div>
   {:else if step === 2 && chosen}
     <div in:fade={{ duration: 300 }} class="step center">
-      <img class="big" src={srcFor(chosen.dexId)} alt={chosen.name} onerror={() => chosen && markFailed(chosen.dexId)} />
+      <img class="big" use:spriteSrc={srcFor(chosen.dexId)} alt={chosen.name} onerror={() => chosen && markFailed(chosen.dexId)} />
       <p class="title">What should you call me?</p>
       <input type="text" bind:value={name} maxlength="20" />
       <button class="go" disabled={!name.trim()} onclick={() => (step = 3)}>that's you</button>
     </div>
   {:else if step === 3 && chosen}
     <div in:fade={{ duration: 300 }} class="step center">
-      <img class="big" src={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
+      <img class="big" use:spriteSrc={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
       <p class="title">When's your birthday?</p>
       <p class="sub">So I can remember. Totally optional.</p>
       <input type="date" bind:value={birthday} max={todayISO} />
@@ -81,7 +81,7 @@
     </div>
   {:else if step === 4 && chosen}
     <div in:fade={{ duration: 300 }} class="step center">
-      <img class="big" src={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
+      <img class="big" use:spriteSrc={srcFor(chosen.dexId)} alt={name} onerror={() => chosen && markFailed(chosen.dexId)} />
       <p class="title">So — what are you building right now?</p>
       <textarea bind:value={building} rows="3" placeholder="anything. a project, a skill, a life…"></textarea>
       <button class="go" disabled={!building.trim()} onclick={() => chosen && onDone(chosen, name.trim(), building, birthday, mode)}>

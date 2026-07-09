@@ -10,7 +10,7 @@
     Application, Container, Graphics, MeshPlane, Sprite, Text, Rectangle, Texture, BlurFilter
   } from "pixi.js";
   import { Spring } from "$lib/pixi/spring";
-  import { spriteUrl, fallbackUrl, dexEntry, TRAINER_URL, FORM_FLAME } from "$lib/sprites";
+  import { spriteUrl, fallbackUrl, localSrc, dexEntry, TRAINER_URL, FORM_FLAME } from "$lib/sprites";
   import { type AnimKind, FAMILY, VARIANT } from "$lib/fx";
   import { STATS } from "$lib/stats";
   import { founderMark } from "$lib/founder";
@@ -371,7 +371,7 @@
         // ── animated path: decode FRAME 0, show it immediately, stream the rest ──
         if (ImageDecoderCtor) {
           try {
-            const resp = await fetch(spriteOverride || spriteUrl(newDex, newShiny), { mode: "cors" });
+            const resp = await fetch(await localSrc(spriteOverride || spriteUrl(newDex, newShiny)), { mode: "cors" });
             if (!live()) return;
             if (resp.ok) {
               const buf = await resp.arrayBuffer();
@@ -404,7 +404,7 @@
         }
 
         // ── fallback: a single static image (no WebCodecs / decode failed) ──
-        const staticImg = (await loadImg(spriteOverride || spriteUrl(newDex, newShiny))) ?? (await loadImg((spriteOverride && spriteFallback) || fallbackUrl(newDex, newShiny)));
+        const staticImg = (await loadImg(await localSrc(spriteOverride || spriteUrl(newDex, newShiny)))) ?? (await loadImg(await localSrc((spriteOverride && spriteFallback) || fallbackUrl(newDex, newShiny))));
         if (!live()) return;
         if (!staticImg) { petReady = true; return; }
         natW = staticImg.naturalWidth || 96;
@@ -938,7 +938,7 @@
       }
       // lazily load a wild-visitor sprite when one appears (separate from the pet)
       const loadVisitor = async (id: number, sh: boolean) => {
-        const img = (await loadImg(spriteUrl(id, sh))) ?? (await loadImg(fallbackUrl(id, sh)));
+        const img = (await loadImg(await localSrc(spriteUrl(id, sh)))) ?? (await loadImg(await localSrc(fallbackUrl(id, sh))));
         if (!img || destroyed) return;
         try {
           const vt = Texture.from(img);

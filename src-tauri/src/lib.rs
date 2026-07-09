@@ -1187,6 +1187,63 @@ fn push_card(path: String, companion: String, mood: String, status: String) -> R
 }
 
 
+// ── Sprite disk cache ─────────────────────────────────────────────────────────
+// Pet/mega sprites are fetched live from raw.githubusercontent.com, which 429s
+// (rate-limits) under active use → a blank pet. The FRONTEND fetches (the webview
+// has CORS) and hands the bytes here to persist; on a later 429 it reads them back
+// from disk. So each sprite hits GitHub at most once, ever. Cache: <app_cache>/sprites/.
+fn sprite_cache_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let d = app.path().app_cache_dir().ok()?.join("sprites");
+    std::fs::create_dir_all(&d).ok()?;
+    Some(d)
+}
+// keys are opaque, frontend-sanitized filenames (e.g. "other_showdown_5.gif"); reject
+// any path-traversal so a bad key can't read/write outside the cache dir.
+fn safe_key(key: &str) -> bool {
+    !key.is_empty() && key.len() < 200 && !key.contains('/') && !key.contains('\\') && !key.contains("..")
+}
+
+#[tauri::command]
+fn read_sprite(app: tauri::AppHandle, key: String) -> Option<String> {
+    if !safe_key(&key) {
+        return None;
+    }
+    let bytes = std::fs::read(sprite_cache_dir(&app)?.join(&key)).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    use base64::Engine as _;
+    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+fn save_sprite(app: tauri::AppHandle, key: String, b64: String) -> Result<(), String> {
+    if !safe_key(&key) {
+        return Err("bad key".into());
+    }
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("empty sprite".into());
+    }
+    let dir = sprite_cache_dir(&app).ok_or("no cache dir")?;
+    // write a temp then rename → a crash mid-write can't leave a truncated file that
+    // later reads back as a "cached" but broken sprite.
+    let tmp = dir.join(format!("{key}.part"));
+    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join(&key)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sprite_cached(app: tauri::AppHandle, key: String) -> bool {
+    safe_key(&key)
+        && sprite_cache_dir(&app)
+            .map(|d| d.join(&key).metadata().map(|m| m.len() > 0).unwrap_or(false))
+            .unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1206,7 +1263,7 @@ pub fn run() {
         .manage(FlowAware(AtomicBool::new(true)))
         .manage(AudioAware(AtomicBool::new(false))) // music awareness OFF by default (privacy)
         .manage(Visible(AtomicBool::new(true))) // window starts shown; watchers pause when hidden
-        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, surface_window, is_dev_build, chapter::chapter_status, chapter::submit_builder_pass, chapter::founder_mark])
+        .invoke_handler(tauri::generate_handler![git_set_repo, git_clear_repo, write_card, push_card, gpu_stat, log_set_path, log_clear, set_flow_aware, set_audio_aware, is_autostart_launch, quit_app, surface_window, is_dev_build, read_sprite, save_sprite, sprite_cached, chapter::chapter_status, chapter::submit_builder_pass, chapter::founder_mark])
         .setup(|app| {
             // Coding Awareness: start the background reflog watcher.
             spawn_git_watcher(app.handle().clone());

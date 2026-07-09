@@ -10,6 +10,7 @@
     spriteUrl,
     spriteBackUrl,
     fallbackUrl,
+    spriteSrc,
     displayName,
     type DexEntry
   } from "../sprites";
@@ -485,7 +486,7 @@
             <div class="chosen">
               {#if col.side === "L" ? selL : selR}
                 {@const s = col.side === "L" ? selL! : selR!}
-                <img src={thumbUrl(s.id)} alt={disp(s)} />
+                <img use:spriteSrc={thumbUrl(s.id)} alt={disp(s)} />
                 <span>{disp(s)} <em>· {s.type}</em></span>
               {:else}
                 <span class="hint">pick a fighter</span>
@@ -521,7 +522,7 @@
                     else selR = e;
                   }}
                 >
-                  <img src={thumbUrl(e.id)} alt={disp(e)} loading="lazy" />
+                  <img use:spriteSrc={thumbUrl(e.id)} alt={disp(e)} loading="lazy" />
                   <span>{disp(e)}</span>
                 </button>
               {/each}
@@ -562,14 +563,14 @@
       {/if}
 
       {#if dashSide === "L"}
-        <img class="mon monL ghostimg g1 anim-attack" src={srcL} alt="" />
-        <img class="mon monL ghostimg g2 anim-attack" src={srcL} alt="" />
+        <img class="mon monL ghostimg g1 anim-attack" use:spriteSrc={srcL} alt="" />
+        <img class="mon monL ghostimg g2 anim-attack" use:spriteSrc={srcL} alt="" />
       {:else if dashSide === "R"}
-        <img class="mon monR ghostimg g1 anim-attack" src={srcR} alt="" />
-        <img class="mon monR ghostimg g2 anim-attack" src={srcR} alt="" />
+        <img class="mon monR ghostimg g1 anim-attack" use:spriteSrc={srcR} alt="" />
+        <img class="mon monR ghostimg g2 anim-attack" use:spriteSrc={srcR} alt="" />
       {/if}
-      <img class="mon monL anim-{animL}" src={srcL} onerror={failL} alt={disp(selL)} />
-      <img class="mon monR anim-{animR}" src={srcR} onerror={failR} alt={disp(selR)} />
+      <img class="mon monL anim-{animL}" use:spriteSrc={srcL} onerror={failL} alt={disp(selL)} />
+      <img class="mon monR anim-{animR}" use:spriteSrc={srcR} onerror={failR} alt={disp(selR)} />
 
       {#if fxBeam}
         <div
