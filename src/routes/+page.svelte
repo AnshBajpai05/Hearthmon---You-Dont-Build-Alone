@@ -3098,6 +3098,39 @@
     const murmurTimer = setInterval(murmurTick, 70_000); // rare ambient quirk lines
     const fidgetTimer = setInterval(fidgetTick, 2600); // ambient blinks / micro-fidgets
     const dreamTimer = setInterval(dreamTick, 22_000); // dream bubbles while sleeping
+    // presence watchdog — the companion must NEVER silently vanish. Covers both
+    // observed failure modes: (1) the WebGL context dies WITHOUT a contextlost event
+    // (GPU idle power-down / driver TDR) → transparent canvas = invisible pet after
+    // ~20-30 min; (2) the window ends up hidden with no user intent. Every 75s.
+    const presenceTimer = setInterval(async () => {
+      if (phase !== "home") return;
+      try {
+        const win = getCurrentWindow();
+        if (!expectHidden && !(await win.isVisible())) {
+          await win.show();
+          return; // window was the problem; the canvas check can wait a tick
+        }
+        // display sleep / driver resets can DROP the topmost flag → widget buried
+        // behind a maximized editor ("absent" while technically visible). Re-assert.
+        await win.setAlwaysOnTop(true);
+        // …and can shove the window off the desktop → clamp back into view
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
+        const mon = await currentMonitor();
+        if (mon) {
+          const { x: mx, y: my } = mon.position;
+          const { width: mw, height: mh } = mon.size;
+          const off =
+            pos.x + size.width < mx + 40 || pos.x > mx + mw - 40 ||
+            pos.y + size.height < my + 40 || pos.y > my + mh - 40;
+          if (off) await win.setPosition(new PhysicalPosition(mx + Math.round(mw * 0.62), my + Math.round(mh * 0.5)));
+        }
+      } catch { /* not under Tauri */ }
+      if (renderMode !== "alive") return; // Classic is DOM — it can't silently die
+      const cv = document.querySelector(".pixilayer canvas") as HTMLCanvasElement | null;
+      const gl = cv ? ((cv.getContext("webgl2") ?? cv.getContext("webgl")) as WebGLRenderingContext | null) : null;
+      if (!cv || (gl && gl.isContextLost())) onAliveContextLost(); // remount round-trip
+    }, 75_000);
     const autoTimer = setInterval(autoSwitchTick, 30_000);
     const reminderTimer = setInterval(() => void reminderTick(), 30_000); // quiet personal nudges
     const polishTimer = setInterval(polishTick, 5000); // pre-evolution shimmer + "almost mega" whisper
@@ -3166,7 +3199,10 @@
     // hush all audio/speech whenever the window is hidden to the tray (X / tray-hide / re-show),
     // so the companion never talks to an empty screen. Rust emits this on every hide/show.
     let unlistenVisible: (() => void) | undefined;
-    listen<boolean>("hm-visible", (e) => setSoundSuspended(!e.payload)).then((un) => (unlistenVisible = un));
+    listen<boolean>("hm-visible", (e) => {
+      setSoundSuspended(!e.payload);
+      expectHidden = !e.payload; // Rust-driven hides (tray, ✕) are intentional too
+    }).then((un) => (unlistenVisible = un));
     // safety net for MINIMIZE (neither hide path fires): WebView2 flips document.hidden.
     const onVisDoc = () => setSoundSuspended(document.hidden);
     document.addEventListener("visibilitychange", onVisDoc);
@@ -3192,6 +3228,7 @@
       clearInterval(murmurTimer);
       clearInterval(fidgetTimer);
       clearInterval(dreamTimer);
+      clearInterval(presenceTimer);
       clearInterval(autoTimer);
       clearInterval(reminderTimer);
       clearInterval(polishTimer);
@@ -3922,9 +3959,13 @@
     say(pick(bank), 8000);
   }
 
+  // set when a hide is INTENTIONAL (tuck-away, tray, ✕) — the presence watchdog
+  // only re-summons the window when it vanished with no user intent.
+  let expectHidden = false;
   // ✕ tucks the companion into the system tray — it never truly leaves.
-  // (Quit-for-real lives in the tray menu.) Soul: presence, "welcome back".
+  // (Quit-for-real lives in the tray menu + system ⏻.) Soul: presence, "welcome back".
   async function quit() {
+    expectHidden = true;
     const h = new Date().getHours();
     // end-of-night ritual: closing late, the pet says goodnight and settles to sleep
     // before tucking away — never just a cold exit. (Skips Focus / Just-There silence.)
@@ -3937,6 +3978,14 @@
       playVoiceClip("see-you-later", 0.85);
       setTimeout(() => { getCurrentWindow().hide(); setSoundSuspended(true); }, 900);
     }
+  }
+
+  // ⏻ the REAL exit: farewell, then kill the process completely (Rust app.exit(0) —
+  // no tray ghost, no lingering PID). For when tuck-to-tray isn't what you meant.
+  function fullQuit() {
+    expectHidden = true;
+    playVoiceClip("see-you-later", 0.85);
+    setTimeout(() => { void invoke("quit_app"); }, 700);
   }
 
   // ---- launch on startup ----
@@ -4784,6 +4833,7 @@
       onNudgeScale={nudgeScale}
       onToggleSoundPanel={() => (soundPanel = !soundPanel)}
       onPushCard={pushCard}
+      onShutdown={fullQuit}
       {clockOn}
       onToggleClock={toggleClock}
       clockBg={groundDiscFor(curType, dexId)}

@@ -36,7 +36,8 @@
     onCycleWeather:     () => void;
     onNudgeScale:       (d: number) => void;
     onToggleSoundPanel: () => void;
-    onQuit:             () => void;
+    onQuit:             () => void; // tuck to tray (the companion stays)
+    onShutdown:         () => void; // REAL exit — kills the process, no tray ghost
     onPushCard:         () => void;
     // ambient micro-clock (quick tray): a record-disc face in the pet's ground colours
     clockOn:            boolean;
@@ -55,24 +56,28 @@
     petSize, muted, focusMode, roaming, companionMode, nightForced, bgStyle, weatherKind, soundPanelOpen,
     onTogglePanel, onFeed, onPet, onOpenBattle, onSwitchRandom,
     onToggleMute, onToggleNight, onToggleFocus, onToggleRoam, onCycleMode, onCycleBg, onCycleRoom, onCycleWeather,
-    onNudgeScale, onToggleSoundPanel, onQuit, onPushCard,
+    onNudgeScale, onToggleSoundPanel, onQuit, onShutdown, onPushCard,
     clockOn, onToggleClock, clockBg, clockTc,
     audioVoteOn, onToggleAudioVote,
     onMenuOpen, onDirHint,
   }: Props = $props();
 
-  // ─── micro-clock ─────────────────────────────────────────
-  // minute-resolution only (no seconds — a ticking hand pulls the eye, and this
-  // clock's whole job is to NOT ask for attention). Interval only runs while shown.
+  // ─── ambient clock (panel below the quick tray) ──────────
+  // big HH:MM in the type accent, small seconds + am/pm, date line — plus the
+  // record-disc face. 1s tick only runs while the clock is enabled.
   let now = $state(new Date());
   $effect(() => {
     if (!clockOn) return;
     now = new Date();
-    const iv = setInterval(() => (now = new Date()), 15_000);
+    const iv = setInterval(() => (now = new Date()), 1000);
     return () => clearInterval(iv);
   });
-  const hhmm = $derived(
-    `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
+  const h12 = $derived(((now.getHours() + 11) % 12) + 1);
+  const ampm = $derived(now.getHours() < 12 ? "am" : "pm");
+  const mm = $derived(String(now.getMinutes()).padStart(2, "0"));
+  const ss = $derived(String(now.getSeconds()).padStart(2, "0"));
+  const dateStr = $derived(
+    `${now.toLocaleDateString(undefined, { weekday: "long" })}, ${now.getDate()} ${now.toLocaleDateString(undefined, { month: "long" })}`
   );
   const minDeg = $derived(now.getMinutes() * 6);
   const hourDeg = $derived(((now.getHours() % 12) + now.getMinutes() / 60) * 30);
@@ -166,7 +171,8 @@
         { id: "roam",    icon: "🚶", label: "Roam" },
         { id: "bigger",  icon: "＋", label: "Bigger" },
         { id: "smaller", icon: "－", label: "Smaller" },
-        { id: "quit",    icon: "✕",  label: "Quit" },
+        { id: "quit",     icon: "✕", label: "Tuck away" },
+        { id: "shutdown", icon: "⏻", label: "Quit fully" },
       ],
     },
     {
@@ -271,7 +277,7 @@
       "memory:mood", "memory:today", "memory:jar", "memory:journey", "memory:recap", "memory:movie", "memory:future", "memory:note",
       "care:feed", "care:pet", "care:evolve", "care:reminders", "care:vault",
       "play:battle", "play:switch", "play:random",
-      "system:code", "system:quit",
+      "system:code", "system:quit", "system:shutdown",
     ]);
 
     const key = `${catId}:${itemId}`;
@@ -303,7 +309,8 @@
       case "system:roam":    onToggleRoam();           break;
       case "system:bigger":  onNudgeScale(0.15);       break;
       case "system:smaller": onNudgeScale(-0.15);      break;
-      case "system:quit":    onQuit();                 break;
+      case "system:quit":     onQuit();                break;
+      case "system:shutdown": onShutdown();            break;
       // Atmosphere
       case "atmos:weather":  onCycleWeather();         break;
       case "atmos:night":    onToggleNight();          break;
@@ -335,17 +342,7 @@
 <!-- ─── Quick tray — common one-tap actions, left of the speaker ─── -->
 <!-- hover-revealed; the full set still lives in the radial menu -->
 <div class="quickbar" aria-label="Quick actions">
-  {#if clockOn}
-    <!-- micro record-clock: the face is the pet's ground disc; passive, not a button -->
-    <div class="quick-pill clockpill" title="the time, beside you" aria-label="Clock">
-      <span class="clockface" style="background: {clockBg}">
-        <span class="hand h" style="transform: rotate({hourDeg}deg)"></span>
-        <span class="hand m" style="transform: rotate({minDeg}deg)"></span>
-        <span class="pin"></span>
-      </span>
-      <span class="clocktime" style="color: {clockTc}">{hhmm}</span>
-    </div>
-  {/if}
+  <button class="quick-pill" class:off={!clockOn} title={clockOn ? "Hide clock" : "Show clock"} aria-label="Toggle clock" onclick={onToggleClock}>🕐</button>
   <button class="quick-pill" title="Push README card" aria-label="Push card" onclick={onPushCard}>🚀</button>
   <button class="quick-pill" title="Feed" aria-label="Feed" onclick={onFeed}>🍙</button>
   <button class="quick-pill" title="Bigger" aria-label="Bigger" onclick={() => onNudgeScale(0.15)}>+</button>
@@ -361,6 +358,22 @@
     >🎶</button>
   {/if}
 </div>
+
+{#if clockOn}
+  <!-- ambient clock panel — always visible while on (a clock you must hover for is no
+       clock). Record-disc face + big time in the type accent + date, like a bedside clock. -->
+  <div class="clockpanel" style="--tc: {clockTc}" aria-label="Clock">
+    <span class="clockface" style="background: {clockBg}">
+      <span class="hand h" style="transform: rotate({hourDeg}deg)"></span>
+      <span class="hand m" style="transform: rotate({minDeg}deg)"></span>
+      <span class="pin"></span>
+    </span>
+    <div class="cp-main">
+      <div class="cp-time">{h12}:{mm}<span class="cp-sec">:{ss} {ampm}</span></div>
+      <div class="cp-date">{dateStr}</div>
+    </div>
+  </div>
+{/if}
 
 <!-- ─── Mute safety pill — always visible ─────────────────── -->
 <button
@@ -489,15 +502,44 @@
   .quick-pill:active { transform: translateY(0) scale(0.92); }
   .quick-pill.off { opacity: 0.4; filter: grayscale(1); } /* audio-vote toggle: dim when hidden */
 
-  /* micro record-clock: passive (no hover lift, default cursor), face = ground disc */
-  .clockpill {
-    width: auto;
-    border-radius: 13px;
-    padding: 0 7px;
-    gap: 5px;
-    cursor: default;
+  /* ambient clock panel — sits below the quick tray, top-right; passive, always
+     visible while enabled. Digits ride the type accent (--tc, the ground colour). */
+  .clockpanel {
+    position: absolute;
+    top: 40px;
+    right: 8px;
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 11px 6px 9px;
+    border-radius: 12px;
+    background: rgba(18, 14, 30, 0.8);
+    border: 1px solid color-mix(in srgb, var(--tc) 40%, transparent);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+    pointer-events: none; /* pure display — clicks pass through to the widget */
   }
-  .clockpill:hover { transform: none; border-color: rgba(120, 108, 160, 0.4); background: rgba(28, 22, 42, 0.88); }
+  .cp-main { display: flex; flex-direction: column; line-height: 1.15; }
+  .cp-time {
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: var(--tc);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  }
+  .cp-sec {
+    font-size: 10px;
+    font-weight: 600;
+    opacity: 0.75;
+    letter-spacing: 0.05em;
+  }
+  .cp-date {
+    font-size: 9.5px;
+    font-weight: 600;
+    color: #a99cc9;
+    letter-spacing: 0.04em;
+  }
   .clockface {
     position: relative;
     width: 16px;
@@ -528,13 +570,6 @@
     border-radius: 50%;
     background: #fff;
     box-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
-  }
-  .clocktime {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    font-variant-numeric: tabular-nums;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   }
 
   /* Mute pill — always shown (safety action) */

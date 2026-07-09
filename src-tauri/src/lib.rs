@@ -1247,6 +1247,12 @@ fn sprite_cached(app: tauri::AppHandle, key: String) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // MUST register first: a second launch (double-click, autostart race, stale
+        // shortcut) summons the existing companion instead of spawning a duplicate —
+        // duplicates previously accumulated as invisible 16×16 tray-ghost processes.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app);
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--autostarted"]), // tag boot-launches so we can ASK before showing
