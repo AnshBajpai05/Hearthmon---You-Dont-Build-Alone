@@ -5,7 +5,9 @@
 > *A Pokémon-inspired desktop companion that quietly grows beside you while you build. It notices **how** you build, remembers the seasons you lived through, and never once asks for your attention.*
 
 <p align="center">
-  <img src="./assets/hearthmon-status.svg?v=1783604925" width="750"/>
+  <a href="https://github.com/AnshBajpai05/Hearthmon-Trial_Beta/releases/latest">
+    <img src="./assets/hearthmon-status.svg?v=1783604925" width="750"/>
+  </a>
 </p>
 
 **Current Companion:** Charizard<br/>

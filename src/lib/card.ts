@@ -7,9 +7,10 @@ import { biomeForType } from "./biomes";
 export interface CardState {
   thought: string; // Layer 1 — a live COMPANION thought ("still here with this one")
   tagline: string; // Layer 2 — the money line / identity, under the title (wraps)
+  sub?: string; // Layer 2.5 — ONE concrete line: what Hearthmon actually is
   chips: { icon: string; label: string }[]; // Layer 3 — narrative aliveness
-  cta: string; // Layer 4 — a soft call ("see what it noticed →")
-  footer: string; // emotional counterweight ("still growing")
+  cta: string; // Layer 4 — a soft call with a direction ("come sit by the hearth →")
+  stats?: string; // Layer 4 — factual proof of life ("day 27 together · 3-day streak")
   partner: string; // the companion's name, labelled under the sprite
   night: boolean;
   sprite?: string; // base64 data-URI of the companion (a static PNG, OR a frame STRIP)
@@ -116,25 +117,38 @@ export function buildCard(s: CardState): string {
   const H = 188;
   const title = s.title ?? "Hearthmon";
   const field = petFieldFx(s.type ?? "normal", W, H); // one type-based ambient effect
-  const groundTint = biomeForType(s.type ?? "normal").light; // type's light colour → the ground/globe hue
 
-  // Night mode shifts palette toward cooler purples; day is warmer indigo
-  const bg1       = s.night ? "#0d0b18" : "#1a1530";
-  const bg2       = s.night ? "#1e1738" : "#251e40";
-  const bg3       = s.night ? "#12102a" : "#201c38";
-  const aurora1   = s.night ? "#6a4fcf" : "#7b5ea7";
-  const aurora2   = s.night ? "#3d6bcf" : "#5468c4";
-  const accent    = s.night ? "#c4a0f0" : "#f0b66a";
-  const accentDim = s.night ? "#7a55c0" : "#b07840";
-  const textMain  = "#f6f1ff";
-  const textDim   = "#8d82ab";
-  const bubbleBg  = "#160f24";
+  // ── Per-type template ──────────────────────────────────────────────────────
+  // The whole card palette derives from the pet's biome (biomes.ts): a water pet
+  // gets the Moonlit Shore card, a fire pet the Campfire card, … Night keeps the
+  // biome's identity but sinks the walls toward black.
+  const biome = biomeForType(s.type ?? "normal");
+  const mix = (a: string, b: string, t: number) => {
+    const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+    const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+    return "#" + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, "0")).join("");
+  };
+  const shade = (c: string, f: number) => mix(c, "#000000", f);
+  const tint = (c: string, f: number) => mix(c, "#ffffff", f);
+
+  const [wallTop, wallBot] = biome.wall;
+  const nf = s.night ? 0.45 : 0; // night sink
+  const bg1 = shade(wallTop, nf);
+  const bg3 = shade(mix(wallTop, wallBot, 0.5), nf);
+  const bg2 = shade(wallBot, nf);
+  const accent  = biome.light;
+  const aurora1 = accent;
+  const aurora2 = tint(wallTop, 0.4);
+  const textMain = "#f6f1ff";
+  const textDim = tint(wallBot, 0.62); // dim yet readable on the dark walls
+  const bubbleBg = shade(wallBot, 0.35);
+  const groundTint = biome.light; // type's light colour → the ground/globe hue
 
   // money line wraps to two lines if long — chips sit under it
   const [tagA, tagB] = wrap2(s.tagline, 34);
 
   // ── Narrative aliveness chips — width-aware single row ───────────────────────
-  const CHIP_Y = tagB ? 126 : 114;
+  const CHIP_Y = tagB ? 131 : 118;
   let chipX = 168;
   const chipSvg = s.chips
     .map((c, i) => {
@@ -269,6 +283,13 @@ export function buildCard(s: CardState): string {
     ${clipDef}
 
     <style>
+      /* deliberate typography — never the browser's default serif */
+      text { font-family: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif; }
+
+      /* the card is decoration-dense; respect viewers who opt out of motion
+         (initially-invisible bits like the heart and particles simply stay hidden) */
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
       /*
        * ── SPRITE MOVEMENT SYSTEM ───────────────────────────────────────────
        */
@@ -312,19 +333,21 @@ export function buildCard(s: CardState): string {
         66%     { transform: translateX(3px)  scale(0.78); opacity: 0.2; }
         74%     { transform: translateX(0)    scale(1);    opacity: 0.32; }
       }
-      /* a heart drifts up every ~12s — CSS-only so it animates on GitHub (README
-         cards render as images, which have no hover/pointer events) */
+      /* a heart drifts up every ~9s and stays on screen ~2.5s — long enough to
+         actually be seen. CSS-only so it animates on GitHub (README cards render
+         as images, which have no hover/pointer events) */
       .heart {
         opacity: 0;
         transform-box: fill-box;
         transform-origin: center;
-        animation: heartFloat 12s ease-out infinite;
+        animation: heartFloat 9s ease-out infinite;
       }
       @keyframes heartFloat {
-        0%   { opacity: 0; transform: translateY(0) scale(0.4); }
-        3%   { opacity: 1; transform: translateY(-8px) scale(1.1); }
-        10%  { opacity: 0; transform: translateY(-34px) scale(0.8); }
-        100% { opacity: 0; transform: translateY(-34px) scale(0.8); }
+        0%   { opacity: 0;    transform: translateY(0)     scale(0.4);  }
+        5%   { opacity: 1;    transform: translateY(-6px)  scale(1.05); }
+        18%  { opacity: 0.85; transform: translateY(-20px) scale(0.95); }
+        28%  { opacity: 0;    transform: translateY(-34px) scale(0.8);  }
+        100% { opacity: 0;    transform: translateY(-34px) scale(0.8);  }
       }
 
       .sprGlow {
@@ -341,7 +364,6 @@ export function buildCard(s: CardState): string {
       .aur2 { animation: aurDrift2 14s ease-in-out infinite alternate; }
       .chip     { animation: chipPulse 6s ease-in-out infinite; }
       .chipshine{ animation: chipSweep 6s ease-in-out infinite; }
-      .label  { animation: labelTwinkle 8s ease-in-out infinite; }
       .footer { animation: footerPulse  7s ease-in-out infinite; }
       .borderShimmer { animation: borderPulse 4s ease-in-out infinite; }
       .nameShimmer { animation: namePulse 6s ease-in-out infinite; }
@@ -384,13 +406,6 @@ export function buildCard(s: CardState): string {
       @keyframes chipSweep {
         0%,100% { fill-opacity: 0;    }
         50%     { fill-opacity: 0.55; }
-      }
-      @keyframes labelTwinkle {
-        0%,100% { opacity: 1;    }
-        48%     { opacity: 1;    }
-        50%     { opacity: 0.5;  }
-        52%     { opacity: 1;    }
-        75%     { opacity: 0.85; }
       }
       @keyframes footerPulse {
         0%,100% { opacity: 0.6; }
@@ -442,8 +457,8 @@ export function buildCard(s: CardState): string {
     </g>
   </g>
 
-  <!-- Affection heart — drifts up every ~12s (visible on GitHub) -->
-  <text class="heart" x="78" y="88" font-size="20" text-anchor="middle" fill="#ff7aa8">❤</text>
+  <!-- Affection heart — a real path (emoji glyphs vary per platform), drifts up every ~9s -->
+  <g transform="translate(78,72)"><path class="heart" d="M0,2.2 C-2.8,-2.2 -8.8,-0.6 -8.8,3.9 C-8.8,8.3 -3.3,9.9 0,14.3 C3.3,9.9 8.8,8.3 8.8,3.9 C8.8,-0.6 2.8,-2.2 0,2.2 Z" fill="#ff7aa8"/></g>
 
   <!-- Current partner, labelled right under the companion -->
   <text x="78" y="170" font-size="10.5" text-anchor="middle" fill="${textDim}">currently beside you · <tspan fill="${accent}" font-weight="700">${esc(s.partner)}</tspan></text>
@@ -458,19 +473,18 @@ export function buildCard(s: CardState): string {
     <text x="130" y="33" font-size="12" fill="#e9e2fb">${esc(s.thought)}</text>
   </g>
 
-  <!-- Layer 2: title (the product) + the money line as its identity -->
-  <text class="nameShimmer" x="168" y="68" font-size="23" font-weight="800">${s.night ? "🌙" : "✦"} ${esc(title)}</text>
-  <text x="168" y="${tagB ? 92 : 94}" font-size="14.5" fill="${accent}" font-weight="600">${esc(tagA)}</text>
-  ${tagB ? `<text x="168" y="111" font-size="14.5" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
+  <!-- Layer 2: title (the product) + the money line + ONE concrete line (what this IS) -->
+  <text class="nameShimmer" x="168" y="66" font-size="23" font-weight="800">${s.night ? "🌙" : "✦"} ${esc(title)}</text>
+  <text x="168" y="${tagB ? 90 : 92}" font-size="14.5" fill="${accent}" font-weight="600">${esc(tagA)}</text>
+  ${tagB ? `<text x="168" y="107" font-size="14.5" fill="${accent}" font-weight="600">${esc(tagB)}</text>` : ""}
+  ${s.sub ? `<text x="168" y="${tagB ? 122 : 108}" font-size="10.5" fill="${textDim}">${esc(s.sub)}</text>` : ""}
 
   <!-- Layer 3: narrative aliveness chips -->
   ${chipSvg}
 
-  <!-- Layer 4: a soft call + factual counterweight, clustered together on the right -->
-  <text class="footer" x="${W - 18}" y="${H - 11}" text-anchor="end">
-    <tspan font-size="11" fill="${accent}" fill-opacity="0.9">${esc(s.cta)}</tspan>
-    <tspan font-size="10" fill="${textDim}"> · ${esc(s.footer)}</tspan>
-  </text>
+  <!-- Layer 4: factual proof of life under the chips, a soft directional call bottom-right -->
+  ${s.stats ? `<text x="168" y="164" font-size="10.5" fill="${textDim}">${esc(s.stats)}</text>` : ""}
+  <text class="footer" x="${W - 18}" y="${H - 11}" text-anchor="end" font-size="11" fill="${accent}" fill-opacity="0.9">${esc(s.cta)}</text>
 
 </svg>`;
 }

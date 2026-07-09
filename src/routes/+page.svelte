@@ -2448,8 +2448,10 @@
     "it quietly notices how hard you're trying",
     "a companion for people building difficult things"
   ];
-  // Layer 4 — a soft call, never a button
-  const CARD_CTAS = ["still here", "keeping watch", "staying nearby", "still noticing"];
+  // Layer 2.5 — ONE concrete line so a stranger knows what this actually is
+  const CARD_SUB = "a desktop pet app — it drew this card itself";
+  // Layer 4 — a soft call with a direction, never a button
+  const CARD_CTAS = ["come sit by the hearth →", "see it move →", "watch it grow →", "meet yours →"];
 
   async function generateCard(silent = false) {
     const fm = await getMeta("first_met");
@@ -2477,18 +2479,19 @@
             : pick(["quietly staying nearby", "here, like always", "just keeping you company"]);
 
     // Layer 3 — two chips that tell DIFFERENT stories: present state + the journey
+    // (icons stick to widely-supported emoji + VS16 so they render in color everywhere)
     const state = friction
-      ? { icon: "🌧", label: "friction" }
+      ? { icon: "🌧️", label: "friction" }
       : effPts >= 60
         ? { icon: "⚡", label: "quietly locked in" }
         : isNight
           ? { icon: "🌙", label: "quiet night" }
-          : { icon: "🫖", label: "slow and steady" };
+          : { icon: "☕", label: "slow and steady" };
     const arc =
       streak >= 3
         ? { icon: "🔥", label: `${streak}-day streak` }
         : projDays >= 3
-          ? { icon: "🛠", label: "still shaping" }
+          ? { icon: "🛠️", label: "still shaping" }
           : nightS > dayS
             ? { icon: "🌙", label: "one of those seasons" }
             : days <= 7
@@ -2500,22 +2503,29 @@
     // reflect the active special form on the card (Mega Venusaur, not Venusaur).
     const partner = megaForm ? megaForm.label : displayName(dexEntry(dexId)?.name ?? petName);
 
-    // an emotional footer, never a metric
-    const footer =
-      days <= 7
-        ? pick(["chapter one", "quietly becoming real", "still growing"])
-        : isNight
-          ? pick(["another late one", "learning how to stay", "still growing"])
-          : pick(["still growing", "learning how to stay", "quietly becoming real"]);
+    // factual proof of life — real numbers, the counterweight to all the poetry:
+    // day count · bond depth · evolution stage (streak/project-days as fallback)
+    const ix = Number((await getMeta("interactions")) ?? 0) || 0;
+    const bond = BOND_STAGES[bondStageIndex(days, ix)]?.label.toLowerCase() ?? "";
+    const stage = evoStage(dexId);
+    const chain = evoStage(finalEvolution(dexId));
+    const evoBit = megaForm ? "mega form" : chain <= 1 ? "" : stage >= chain ? "final form" : `stage ${stage} of ${chain}`;
+    const statBits = [`day ${Math.max(1, days)} together`];
+    if (bond) statBits.push(bond);
+    if (evoBit) statBits.push(evoBit);
+    else if (streak >= 2) statBits.push(`${streak}-day streak`);
+    else if (projDays >= 2) statBits.push(`${projDays} days on this one`);
+    const stats = statBits.join(" · ");
 
     // prefer a moving figure (animated frame strip); fall back to a static sprite
     const sheet = await spriteSheetDataUri();
     const svg = buildCard({
       thought,
       tagline: pick(CARD_TAGLINES),
+      sub: CARD_SUB,
       chips,
       cta: pick(CARD_CTAS),
-      footer,
+      stats,
       partner,
       night: isNight,
       sprite: sheet ? sheet.uri : await spriteDataUri(),

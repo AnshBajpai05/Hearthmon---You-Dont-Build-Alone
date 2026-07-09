@@ -6,6 +6,7 @@
   // ╚══════════════════════════════════════════════════════╝
   import type { WeatherKind } from "./WeatherFx.svelte";
   import type { CompanionMode } from "$lib/lines";
+  import { solveRadial, sideFor, dirHintFor, type Layout, type Rect } from "$lib/radialLayout";
 
   type Panel = "none" | "mood" | "log" | "remind" | "nudge" | "switch" | "journey" | "jar" | "note" | "vault" | "code" | "wrapped" | "future" | "today" | "movie";
 
@@ -82,30 +83,63 @@
   const minDeg = $derived(now.getMinutes() * 6);
   const hourDeg = $derived(((now.getHours() % 12) + now.getMinutes() / 60) * 30);
 
-  // ─── geometry ────────────────────────────────────────────
-  // Rings scale with the pet so the category buttons always bloom just OUTSIDE
-  // the sprite, never on top of it — works for a tiny Pichu or a huge Gyarados.
-  const R_CAT = $derived(Math.max(86, Math.round(petSize / 2 + 18))); // category ring
-  const R_SUB = $derived(R_CAT + 46);                                  // sub-item ring
-  const SUB_STEP_DEG = 22; // angular gap between adjacent sub-items
-  // 22° at this radius → comfortably clear of the 44px buttons, so a ring
-  // stays un-crowded no matter how many items it holds.
+  // ─── geometry — solved, not assumed ──────────────────────
+  // The solver (radialLayout.ts) owns ALL positions: it caps radii by the
+  // window (not just the pet), derives per-radius angular steps from chord
+  // math, carves fans around reserved chrome, and degrades LOCALLY per the
+  // ladder Arc → DualRing → Popover (whole menu: Ring → Sheet).
+  let W = $state(0); // widget rect, measured by the invisible probe div below
+  let H = $state(0);
 
-  function pos(angleDeg: number, r: number) {
-    const rad = (angleDeg * Math.PI) / 180;
-    return { x: Math.round(r * Math.cos(rad)), y: Math.round(r * Math.sin(rad)) };
+  let layout = $state<Layout | null>(null);
+  let lastSolve = { w: 0, h: 0, pet: 0 };
+  $effect(() => {
+    if (!W || !H) return;
+    // hysteresis: re-solve only when the space MEANINGFULLY changed (±16px) —
+    // sticky angles + a stable ring beat a perfectly-optimal jittery one
+    const moved =
+      Math.abs(W - lastSolve.w) > 16 || Math.abs(H - lastSolve.h) > 16 || petSize !== lastSolve.pet;
+    if (layout && !moved) return;
+    const prev = layout?.mode === "ring" ? new Map(layout.cats.map((c) => [c.id, c.angle])) : null;
+    // reserved chrome: only what stays interactive while the menu is open.
+    // (quickbar / clock / mute duck out of the way — see .ducked below.)
+    const chrome: Rect[] = [
+      { x: 6, y: H / 2 - 14, w: 28, h: 28 }, // ✦ trigger (doubles as the close button)
+      { x: W / 2 - 80, y: H - 33, w: 160, h: 26 }, // opacity bar, bottom-centre
+    ];
+    lastSolve = { w: W, h: H, pet: petSize };
+    layout = solveRadial({
+      W, H, petSize, chrome,
+      cats: CATS.map((c) => ({ id: c.id, n: c.items.length, baseAngle: c.baseAngle, prevAngle: prev?.get(c.id) })),
+    });
+  });
+
+  const ringCats = $derived.by(() => {
+    const l = layout;
+    if (!l || l.mode !== "ring") return [];
+    return CATS.map((cat, i) => ({ cat, i, lay: l.cats.find((c) => c.id === cat.id)! }));
+  });
+
+  /** Popover panel position: centred — at drill level the category owns the space. */
+  function popStyle(n: number): string {
+    const pw = Math.min(W - 16, 192);
+    const ph = Math.ceil(n / 3) * 48 + 12; // estimate for clamping only — height is auto
+    const left = (W - pw) / 2;
+    const top = Math.min(Math.max((H - ph) / 2, 8), Math.max(8, H - 8 - ph));
+    return `left:${left}px; top:${top}px; width:${pw}px;`;
   }
 
-  /** Sub-items fan out evenly, centred on their category's angle. */
-  function subAnglesFor(cat: CatDef): number[] {
-    const n = cat.items.length;
-    const spread = (n - 1) * SUB_STEP_DEG;
-    return cat.items.map((_, i) => cat.angle - spread / 2 + i * SUB_STEP_DEG);
+  /** One step back up the drill: level 2 → level 1 (never straight to closed). */
+  function backToCats() {
+    activeCatId = null;
+    onDirHint(0);
   }
 
   // ─── category / sub-item data ────────────────────────────
-  // Angles measured from positive x-axis (right = 0°, counter-clockwise with y↑).
-  // In CSS, y increases downward, so sin(angle) → y means angle 270° = top.
+  // baseAngle is the canonical HOME (0° = right, y down ⇒ 270° = top) — the
+  // solver keeps a category there when it fits and slides it to the nearest
+  // clear angle when it doesn't. Label side + pet look-direction derive from
+  // the SOLVED angle, so they stay correct when a category moves.
   //
   //   🧠 Memory  270°  (top)
   //   ❤️ Care   330°  (upper-right)
@@ -116,9 +150,7 @@
   type CatId = "memory" | "care" | "play" | "system" | "atmos";
   interface SubDef { id: string; icon: string; label: string }
   interface CatDef {
-    id: CatId; icon: string; name: string; tagline: string; angle: number;
-    labelSide: "top" | "right" | "left" | "bottom";
-    dirHint: 1 | -1 | 0;
+    id: CatId; icon: string; name: string; tagline: string; baseAngle: number;
     items: SubDef[];
   }
 
@@ -126,7 +158,7 @@
     {
       id: "memory", icon: "🧠", name: "Memory",
       tagline: "Mood · Today · Jar · Journey · Recap · Movie · Future · Note",
-      angle: 270, labelSide: "bottom", dirHint: 0,
+      baseAngle: 270,
       items: [
         { id: "mood",    icon: "🙂", label: "Mood" },
         { id: "today",   icon: "☁️", label: "Today" },
@@ -141,7 +173,7 @@
     {
       id: "care", icon: "❤️", name: "Care",
       tagline: "Feed · Pet · Evolve · Reminders · Vault",
-      angle: 330, labelSide: "right", dirHint: 1,
+      baseAngle: 330,
       items: [
         { id: "feed",      icon: "🍙", label: "Feed" },
         { id: "pet",       icon: "🫳", label: "Pet" },
@@ -153,7 +185,7 @@
     {
       id: "play", icon: "⚔️", name: "Play",
       tagline: "Battle · Switch · Random",
-      angle: 30, labelSide: "right", dirHint: 1,
+      baseAngle: 30,
       items: [
         { id: "battle", icon: "⚔️",  label: "Battle" },
         { id: "switch", icon: "🎯",  label: "Switch" },
@@ -163,7 +195,7 @@
     {
       id: "system", icon: "⚙️", name: "System",
       tagline: "Sound · Mode · Code · Roam · Size · Quit",
-      angle: 150, labelSide: "left", dirHint: -1,
+      baseAngle: 150,
       items: [
         { id: "sound",   icon: "🔊", label: "Sound" },
         { id: "mode",    icon: "🔔", label: "Mode" },
@@ -178,7 +210,7 @@
     {
       id: "atmos", icon: "🌙", name: "Atmosphere",
       tagline: "Weather · Night · Backdrop · Habitat · Focus · Clock",
-      angle: 210, labelSide: "left", dirHint: -1,
+      baseAngle: 210,
       items: [
         { id: "weather",  icon: "🌦️", label: "Weather" },
         { id: "night",    icon: "🌙", label: "Night" },
@@ -242,7 +274,8 @@
 
   function hoverCat(cat: CatDef | null) {
     hoveredCatId = cat?.id ?? null;
-    onDirHint(cat?.dirHint ?? 0);
+    const lay = cat && layout?.mode === "ring" ? layout.cats.find((c) => c.id === cat.id) : null;
+    onDirHint(lay ? dirHintFor(lay.angle) : 0);
   }
 
   // ─── dynamic icons/labels (reflect current state) ────────
@@ -323,9 +356,11 @@
     if (closeAfter.has(key)) closeMenu();
   }
 
-  // Escape to close
+  // Escape backs up one level: drill → categories → closed
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && menuOpen) closeMenu();
+    if (e.key !== "Escape" || !menuOpen) return;
+    if (activeCatId !== null) backToCats();
+    else closeMenu();
   }
 
   const activeCat = $derived(CATS.find(c => c.id === activeCatId) ?? null);
@@ -333,15 +368,24 @@
 
 <svelte:window onkeydown={onKeydown} />
 
+<!-- invisible probe: measures the widget rect for the layout solver -->
+<div class="measure" bind:clientWidth={W} bind:clientHeight={H} aria-hidden="true"></div>
+
 <!-- ======================================================= -->
-<!-- Click-away backdrop when menu is open                   -->
+<!-- Click-away backdrop: at drill level a miss-click goes BACK to the five
+     categories (never accidentally closes everything); at level 1 it closes -->
 {#if menuOpen}
-  <div class="menu-backdrop" onclick={closeMenu} aria-hidden="true"></div>
+  <div
+    class="menu-backdrop"
+    onclick={() => (activeCatId !== null ? backToCats() : closeMenu())}
+    aria-hidden="true"
+  ></div>
 {/if}
 
 <!-- ─── Quick tray — common one-tap actions, left of the speaker ─── -->
-<!-- hover-revealed; the full set still lives in the radial menu -->
-<div class="quickbar" aria-label="Quick actions">
+<!-- hover-revealed; the full set still lives in the radial menu.
+     Ducks while the menu is open: transient UI outranks passive chrome. -->
+<div class="quickbar" class:ducked={menuOpen} aria-label="Quick actions">
   <button class="quick-pill" class:off={!clockOn} title={clockOn ? "Hide clock" : "Show clock"} aria-label="Toggle clock" onclick={onToggleClock}>🕐</button>
   <button class="quick-pill" title="Push README card" aria-label="Push card" onclick={onPushCard}>🚀</button>
   <button class="quick-pill" title="Feed" aria-label="Feed" onclick={onFeed}>🍙</button>
@@ -362,7 +406,7 @@
 {#if clockOn}
   <!-- ambient clock panel — always visible while on (a clock you must hover for is no
        clock). Record-disc face + big time in the type accent + date, like a bedside clock. -->
-  <div class="clockpanel" style="--tc: {clockTc}" aria-label="Clock">
+  <div class="clockpanel" class:ducked={menuOpen} style="--tc: {clockTc}" aria-label="Clock">
     <span class="clockface" style="background: {clockBg}">
       <span class="hand h" style="transform: rotate({hourDeg}deg)"></span>
       <span class="hand m" style="transform: rotate({minDeg}deg)"></span>
@@ -378,6 +422,7 @@
 <!-- ─── Mute safety pill — always visible ─────────────────── -->
 <button
   class="mute-pill"
+  class:ducked={menuOpen}
   class:active={!muted}
   title={muted ? "Unmute" : "Mute"}
   onclick={onToggleMute}
@@ -397,61 +442,105 @@
   ✦
 </button>
 
-<!-- ─── Category ring + sub-fans ──────────────────────────── -->
-{#each CATS as cat, i (cat.id)}
-  {@const p     = pos(cat.angle, R_CAT)}
-  {@const isAct = activeCatId === cat.id}
-  {@const isDim = activeCatId !== null && !isAct}
-  {@const isHov = hoveredCatId === cat.id}
+<!-- ─── Category ring + sub-fans (positions come from the solver) ── -->
+{#if layout?.mode === "ring"}
+  {#each ringCats as { cat, i, lay } (cat.id)}
+    {@const isAct = activeCatId === cat.id}
+    {@const isHov = hoveredCatId === cat.id}
 
-  <!-- Category button -->
-  {#if menuOpen}
-    <button
-      class="cat-btn"
-      class:active={isAct}
-      class:dimmed={isDim}
-      class:hovered={isHov}
-      class:revealed={i < revealed}
-      class:closing={closing}
-      style="--tx:{p.x}px; --ty:{p.y}px; --i:{i}"
-      onclick={() => tapCat(cat.id)}
-      onpointerenter={() => hoverCat(cat)}
-      onpointerleave={() => hoverCat(null)}
-      aria-label={cat.name}
-    >
-      <span class="cat-icon">{cat.icon}</span>
-
-      <!-- Hover whisper: a PREVIEW before opening. Hidden once active, because the sub-item fan
-           blooms on the same side and the labeled pills already say everything (no overlap). -->
-      {#if isHov && !isAct}
-        <span class="whisper whisper-{cat.labelSide}">
-          <strong>{cat.name}</strong>
-          <em>{cat.tagline}</em>
-        </span>
-      {/if}
-    </button>
-  {/if}
-
-  <!-- Sub-item fan (only when this category is active) -->
-  {#if menuOpen && isAct}
-    {@const angs = subAnglesFor(cat)}
-    {#each cat.items as sub, j (sub.id)}
-      {@const sp = pos(angs[j], R_SUB)}
+    <!-- Category button. Drill-down: tapping it hands the category the WHOLE
+         space — the other four collapse away, this one flies to the centre and
+         becomes the Back button while its items orbit it in a full circle. -->
+    {#if menuOpen}
       <button
-        class="sub-btn"
-        class:sub-active={subActive(cat.id, sub.id)}
+        class="cat-btn"
+        class:active={isAct}
+        class:centered={isAct}
+        class:away={activeCatId !== null && !isAct}
+        class:hovered={isHov}
+        class:revealed={i < revealed}
         class:closing={closing}
-        style="--tx:{sp.x}px; --ty:{sp.y}px; --j:{j}"
-        onclick={() => doSub(cat.id, sub.id)}
-        title={sub.label}
-        aria-label={sub.label}
+        style="--tx:{lay.x}px; --ty:{lay.y}px; --i:{i}"
+        onclick={() => tapCat(cat.id)}
+        onpointerenter={() => hoverCat(cat)}
+        onpointerleave={() => hoverCat(null)}
+        aria-label={isAct ? `${cat.name} — back` : cat.name}
       >
-        <span class="sub-icon">{subIcon(cat.id, sub.id)}</span>
-        <span class="sub-label">{sub.label}</span>
+        <span class="cat-icon">{cat.icon}</span>
+        {#if isAct}<span class="back-label">back</span>{/if}
+
+        <!-- Hover whisper: a PREVIEW before opening (level 1 only). -->
+        {#if isHov && !isAct && activeCatId === null}
+          <span class="whisper whisper-{sideFor(lay.angle)}">
+            <strong>{cat.name}</strong>
+            <em>{cat.tagline}</em>
+          </span>
+        {/if}
       </button>
+    {/if}
+
+    <!-- Level 2: items orbit the centred category in a full circle;
+         popover panel only when even a full circle can't hold them -->
+    {#if menuOpen && isAct}
+      {#if lay.mode === "orbit"}
+        {#each cat.items as sub, j (sub.id)}
+          {@const sp = lay.items[j]}
+          <button
+            class="sub-btn"
+            class:sub-active={subActive(cat.id, sub.id)}
+            class:closing={closing}
+            style="--tx:{sp.x}px; --ty:{sp.y}px; --j:{j}"
+            onclick={() => doSub(cat.id, sub.id)}
+            title={sub.label}
+            aria-label={sub.label}
+          >
+            <span class="sub-icon">{subIcon(cat.id, sub.id)}</span>
+            <span class="sub-label">{sub.label}</span>
+          </button>
+        {/each}
+      {:else}
+        <div class="popover" class:closing={closing} style={popStyle(cat.items.length)}>
+          {#each cat.items as sub (sub.id)}
+            <button
+              class="flow-btn"
+              class:sub-active={subActive(cat.id, sub.id)}
+              onclick={() => doSub(cat.id, sub.id)}
+              title={sub.label}
+              aria-label={sub.label}
+            >
+              <span class="sub-icon">{subIcon(cat.id, sub.id)}</span>
+              <span class="sub-label">{sub.label}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  {/each}
+{:else if layout?.mode === "sheet" && menuOpen}
+  <!-- Whole-menu fallback: the window is too small for any honest ring.
+       Same actions, same dispatch — only the presentation degrades. -->
+  <div class="sheet" class:closing={closing} aria-label="Menu">
+    {#each CATS as cat (cat.id)}
+      <div class="sheet-cat">
+        <div class="sheet-head"><span>{cat.icon}</span>{cat.name}</div>
+        <div class="sheet-items">
+          {#each cat.items as sub (sub.id)}
+            <button
+              class="flow-btn"
+              class:sub-active={subActive(cat.id, sub.id)}
+              onclick={() => doSub(cat.id, sub.id)}
+              title={sub.label}
+              aria-label={sub.label}
+            >
+              <span class="sub-icon">{subIcon(cat.id, sub.id)}</span>
+              <span class="sub-label">{sub.label}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
     {/each}
-  {/if}
-{/each}
+  </div>
+{/if}
 
 <style>
   /* ── Shared: all radial elements are absolutely centered ── */
@@ -701,10 +790,6 @@
     opacity: 1;
     transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(1);
   }
-  .cat-btn.dimmed {
-    opacity: 0.28;
-    filter: saturate(0.3);
-  }
   .cat-btn.active {
     border-color: #f0b66a;
     background: rgba(55, 42, 78, 0.97);
@@ -730,6 +815,45 @@
   @keyframes catCollapse {
     from { opacity: 1; transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(1); }
     to   { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  }
+
+  /* ── drill-down states (AFTER .active/.closing so they win the cascade) ── */
+  /* active category flies to the CENTRE and becomes the Back button */
+  .cat-btn.centered {
+    animation: none;
+    transform: translate(-50%, -50%);
+    scale: 1.12;
+    transition:
+      transform 0.3s cubic-bezier(0.34, 1.3, 0.64, 1),
+      scale 0.3s cubic-bezier(0.34, 1.3, 0.64, 1),
+      border-color 0.2s, background 0.2s, box-shadow 0.2s;
+    z-index: 13;
+    flex-direction: column;
+    gap: 0;
+  }
+  /* the other four collapse toward the centre and get out of the way */
+  .cat-btn.away {
+    animation: none;
+    transform: translate(-50%, -50%) scale(0.3);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.24s cubic-bezier(0.4, 0, 0.7, 0.4), opacity 0.2s;
+  }
+  /* closing the whole menu from drill level: the centred button just fades
+     (catCollapse would first teleport it back to its ring spot) */
+  .cat-btn.centered.closing,
+  .cat-btn.away.closing {
+    animation: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .back-label {
+    font-size: 7px;
+    font-weight: 700;
+    color: #f0b66a;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    pointer-events: none;
   }
 
   .cat-icon { font-size: 16px; line-height: 1; pointer-events: none; }
@@ -842,13 +966,137 @@
     to   { opacity: 0; transform: translate(calc(-50% + var(--tx) * 0.3), calc(-50% + var(--ty) * 0.3)) scale(0.5); }
   }
 
+  /* ── layout-solver support ─────────────────────────────── */
+  /* invisible probe that reports the widget rect to the solver */
+  .measure {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  /* passive chrome PARTICIPATES while the menu is open: slides up, shrinks,
+     and gets out of the fans' way — then comes back. (Not a mere fade.) */
+  .clockpanel { transition: opacity 0.28s ease, transform 0.28s ease; }
+  :global(.widget:hover) .quickbar.ducked,
+  .quickbar.ducked,
+  :global(.widget:hover) .mute-pill.ducked,
+  .mute-pill.ducked,
+  .clockpanel.ducked {
+    opacity: 0.12;
+    transform: translateY(-8px) scale(0.92);
+    pointer-events: none;
+  }
+  .quickbar { transition: opacity 0.22s, transform 0.28s ease; }
+  .mute-pill { transition: opacity 0.22s, transform 0.28s ease, border-color 0.18s, background 0.18s; }
+
+  /* popover — a category's fan when no spatial fan honestly fits */
+  .popover {
+    position: absolute;
+    z-index: 12;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 14px;
+    border: 1px solid rgba(120, 100, 180, 0.4);
+    background: rgba(24, 19, 38, 0.96);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+    animation: flowIn 0.2s cubic-bezier(0.34, 1.25, 0.64, 1) both;
+  }
+
+  /* whole-menu sheet — only when even a category ring can't exist */
+  .sheet {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 13;
+    max-height: 60%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(120, 100, 180, 0.4);
+    background: rgba(22, 17, 36, 0.97);
+    box-shadow: 0 8px 26px rgba(0, 0, 0, 0.55);
+    animation: sheetIn 0.22s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+  }
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #f0b66a;
+    letter-spacing: 0.03em;
+    margin-bottom: 5px;
+  }
+  .sheet-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* flow pill — the sub-btn look, but in normal flow (popover + sheet) */
+  .flow-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 6px 5px 5px;
+    border-radius: 12px;
+    border: 1px solid rgba(120, 100, 180, 0.35);
+    background: rgba(30, 24, 46, 0.94);
+    cursor: pointer;
+    min-width: 50px;
+    transition: border-color 0.18s, background 0.18s, transform 0.12s;
+  }
+  .flow-btn:hover {
+    border-color: rgba(240, 182, 106, 0.55);
+    background: rgba(50, 40, 72, 0.97);
+    transform: translateY(-1px);
+  }
+  .flow-btn:active { transform: translateY(0) scale(0.95); }
+  .flow-btn.sub-active {
+    border-color: rgba(240, 182, 106, 0.5);
+    background: rgba(55, 44, 76, 0.95);
+  }
+  .flow-btn:hover .sub-label,
+  .flow-btn.sub-active .sub-label { color: #f0b66a; }
+
+  @keyframes flowIn {
+    from { opacity: 0; transform: scale(0.86); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes sheetIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .popover.closing,
+  .sheet.closing {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease;
+  }
+
   /* respect reduced-motion: appear/disappear instantly, no bloom/collapse */
   @media (prefers-reduced-motion: reduce) {
     .cat-btn.revealed,
     .cat-btn.closing,
+    .cat-btn.centered,
+    .cat-btn.away,
     .sub-btn,
     .sub-btn.closing,
     .whisper,
+    .popover,
+    .sheet,
+    .clockpanel,
+    .quickbar,
+    .mute-pill,
     .trigger { animation: none !important; transition: none !important; }
   }
 </style>
