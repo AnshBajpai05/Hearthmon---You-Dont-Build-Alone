@@ -6,11 +6,11 @@
 
 <p align="center">
   <a href="https://github.com/AnshBajpai05/Hearthmon-Trial_Beta/releases/latest">
-    <img src="./assets/hearthmon-status.svg?v=1783604925" width="750"/>
+    <img src="./assets/hearthmon-status.svg?v=1783661078" width="750"/>
   </a>
 </p>
 
-**Current Companion:** Charizard<br/>
+**Current Companion:** Raichu<br/>
 **Mood:** In Focus<br/>
 **Status:** *"heads down"*<br/>
 
