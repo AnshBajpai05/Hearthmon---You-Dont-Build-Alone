@@ -135,8 +135,12 @@
   /** One step back up the drill: level 2 → level 1 (never straight to closed). */
   function backToCats() {
     activeCatId = null;
+    miniCaption = "";
     onDirHint(0);
   }
+
+  // icon-only orbits have no room for labels — the hovered one captions the centre
+  let miniCaption = $state("");
 
   // ─── category / sub-item data ────────────────────────────
   // baseAngle is the canonical HOME (0° = right, y down ⇒ 270° = top) — the
@@ -490,10 +494,13 @@
           {@const sp = lay.items[j]}
           <button
             class="sub-btn"
+            class:mini={lay.mini}
             class:sub-active={subActive(cat.id, sub.id)}
             class:closing={closing}
             style="--tx:{sp.x}px; --ty:{sp.y}px; --j:{j}"
             onclick={() => doSub(cat.id, sub.id)}
+            onpointerenter={() => lay.mini && (miniCaption = sub.label)}
+            onpointerleave={() => lay.mini && (miniCaption = "")}
             title={sub.label}
             aria-label={sub.label}
           >
@@ -501,6 +508,10 @@
             <span class="sub-label">{sub.label}</span>
           </button>
         {/each}
+        <!-- icon-only orbit: the hovered item's name appears under the Back button -->
+        {#if lay.mini && miniCaption}
+          <div class="orbit-caption">{miniCaption}</div>
+        {/if}
       {:else}
         <div class="popover" class:closing={closing} style={popStyle(cat.items.length)}>
           {#each cat.items as sub (sub.id)}
@@ -958,6 +969,34 @@
   }
   .sub-btn:hover .sub-label { color: #f0b66a; }
   .sub-btn.sub-active .sub-label { color: #f0b66a; }
+
+  /* icon-only orbit pill (tight windows): a 36px circle, label via hover caption */
+  .sub-btn.mini {
+    min-width: 36px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    justify-content: center;
+  }
+  .sub-btn.mini .sub-label { display: none; }
+  .orbit-caption {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, 32px);
+    z-index: 13;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #f0b66a;
+    background: rgba(22, 17, 36, 0.92);
+    border: 1px solid rgba(120, 100, 180, 0.35);
+    border-radius: 7px;
+    padding: 2px 8px;
+    pointer-events: none;
+    white-space: nowrap;
+  }
 
   /* sub-items collapse back toward the category on close */
   .sub-btn.closing {
