@@ -120,12 +120,15 @@
     return CATS.map((cat, i) => ({ cat, i, lay: l.cats.find((c) => c.id === cat.id)! }));
   });
 
-  /** Popover panel position: centred — at drill level the category owns the space. */
+  /** Popover panel position: horizontally centred, anchored BELOW the centred
+   *  Back button (above it if the bottom lacks room) — never underneath it.
+   *  (v0.2.0 centred both: the Back button sat on top of the panel and hid a pill.) */
   function popStyle(n: number): string {
     const pw = Math.min(W - 16, 192);
     const ph = Math.ceil(n / 3) * 48 + 12; // estimate for clamping only — height is auto
     const left = (W - pw) / 2;
-    const top = Math.min(Math.max((H - ph) / 2, 8), Math.max(8, H - 8 - ph));
+    const below = H / 2 + 34; // clear of the 40px Back button at centre
+    const top = below + ph <= H - 8 ? below : Math.max(8, H / 2 - 34 - ph);
     return `left:${left}px; top:${top}px; width:${pw}px;`;
   }
 

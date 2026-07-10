@@ -59,7 +59,6 @@ const CAT_FLOOR = 64; // below this category radius, a ring is dishonest → she
 const CAT_MIN_SEP = 44;  // min angular separation between category buttons
 
 const rad = (d: number) => (d * Math.PI) / 180;
-const deg = (r: number) => (r * 180) / Math.PI;
 
 function pos(angle: number, r: number) {
   return { x: r * Math.cos(rad(angle)), y: r * Math.sin(rad(angle)) };
@@ -70,10 +69,8 @@ function angDist(a: number, b: number): number {
   return d;
 }
 
-/** Would a button (half-size hw×hh) centred at (angle, r) leave the window or hit chrome? */
-function blocked(input: SolveInput, angle: number, r: number, hw: number, hh: number): boolean {
-  const cx = input.W / 2 + r * Math.cos(rad(angle));
-  const cy = input.H / 2 + r * Math.sin(rad(angle));
+/** Would a button (half-size hw×hh) centred at (cx, cy) leave the window or hit chrome? */
+function blockedXY(input: SolveInput, cx: number, cy: number, hw: number, hh: number): boolean {
   if (cx - hw < MARGIN || cx + hw > input.W - MARGIN) return true;
   if (cy - hh < MARGIN || cy + hh > input.H - MARGIN) return true;
   for (const c of input.chrome) {
@@ -82,33 +79,52 @@ function blocked(input: SolveInput, angle: number, r: number, hw: number, hh: nu
   return false;
 }
 
-/** Drill-down ladder for one category: full-circle Orbit → Popover.
- *  The category vacates its ring spot for the widget centre, so its items get
- *  all 360° at a compact radius — capacity is huge compared to any fan. */
-function solveOrbit(input: SolveInput, n: number, rMax: number): Pick<CatLayout, "mode" | "items"> {
-  // rectangle-safe capacity: neighbouring chord must clear the pill diagonal.
-  // The radius STRETCHES toward the window cap when the item count needs it.
-  const minChord = Math.hypot(SUB_W, SUB_H) + 2;
-  const rNeeded = minChord / (2 * Math.sin(Math.PI / n));
-  const r = Math.min(Math.max(90, input.petSize / 2 + 26, rNeeded), rMax);
-  if (2 * r * Math.sin(Math.PI / n) < minChord) return { mode: "popover", items: [] };
+/** Same, for a point on the circle (angle, r) around the widget centre. */
+function blocked(input: SolveInput, angle: number, r: number, hw: number, hh: number): boolean {
+  return blockedXY(input, input.W / 2 + r * Math.cos(rad(angle)), input.H / 2 + r * Math.sin(rad(angle)), hw, hh);
+}
 
-  // Free-space distribution: mask the angles where a pill would leave the
-  // window or hit chrome, then spread the items evenly through the FREE
-  // degrees. Neighbours that straddle a blocked sector only ever get FURTHER
-  // apart — crowding is impossible by construction. (A per-item nudge can
-  // clear the chrome yet slide into its neighbour; this can't.)
+/** Drill-down ladder for one category: Orbit → Popover.
+ *  The category vacates its ring spot for the widget centre, so its items get
+ *  the full perimeter. The orbit starts as a circle and STRETCHES toward the
+ *  window's aspect (an ellipse) when the circle can't hold the items — a
+ *  wide-short window has its spare room at the sides, so use it. v0.2.0 capped
+ *  both axes by the SHORT dimension and demanded a perfectly free circle at
+ *  bare capacity, so any chrome overlap dropped 8-item orbits to popover. */
+function solveOrbit(input: SolveInput, n: number): Pick<CatLayout, "mode" | "items"> {
+  const rxMax = input.W / 2 - SUB_W / 2 - MARGIN; // per-axis caps, not min-dim
+  const ryMax = input.H / 2 - SUB_H / 2 - MARGIN;
+  const minChord = Math.hypot(SUB_W, SUB_H) + 2;
+  const rNeeded = minChord / (2 * Math.sin(Math.PI / n)); // circle estimate
+  const r0 = Math.max(90, input.petSize / 2 + 26, rNeeded);
+
+  // scale from the preferred circle toward the full window ellipse
+  for (let s = 0; s <= 1.001; s += 0.2) {
+    const rx = Math.min(r0 + s * Math.max(0, rxMax - r0), rxMax);
+    const ry = Math.min(r0 + s * Math.max(0, ryMax - r0), ryMax);
+    const fit = orbitAt(input, n, rx, ry);
+    if (fit) return { mode: "orbit", items: fit };
+    if (rx >= rxMax && ry >= ryMax) break;
+  }
+  return { mode: "popover", items: [] };
+}
+
+/** Try one ellipse: mask blocked param-angles, spread the items evenly through
+ *  the FREE ones (neighbours straddling a blocked sector only get FURTHER
+ *  apart), then EXACT-validate: no two pill rectangles may come within a
+ *  10×10px gap of each other. Geometry approximations propose; boxes decide. */
+function orbitAt(input: SolveInput, n: number, rx: number, ry: number): ItemPos[] | null {
   const RES = 2;
   const slots = 360 / RES;
   const mask: boolean[] = [];
-  let freeDeg = 0;
+  let free = 0;
   for (let s = 0; s < slots; s++) {
-    const ok = !blocked(input, s * RES, r, SUB_W / 2, SUB_H / 2);
+    const a = rad(s * RES);
+    const ok = !blockedXY(input, input.W / 2 + rx * Math.cos(a), input.H / 2 + ry * Math.sin(a), SUB_W / 2, SUB_H / 2);
     mask.push(ok);
-    if (ok) freeDeg += RES;
+    if (ok) free++;
   }
-  const sReq = deg(2 * Math.asin(Math.min(0.95, minChord / (2 * r))));
-  if (freeDeg < n * sReq) return { mode: "popover", items: [] };
+  if (free < n) return null;
 
   // walk the free slots clockwise from the top (or the first free angle after it)
   let s0 = Math.round(270 / RES) % slots;
@@ -122,18 +138,30 @@ function solveOrbit(input: SolveInput, n: number, rMax: number): Pick<CatLayout,
   const items: ItemPos[] = [];
   for (let i = 0; i < n; i++) {
     const a = freeList[Math.floor((i * freeList.length) / n)];
-    const p = pos(a, r);
-    items.push({ angle: a, radius: r, x: Math.round(p.x), y: Math.round(p.y) });
+    items.push({
+      angle: a,
+      radius: rx,
+      x: Math.round(rx * Math.cos(rad(a))),
+      y: Math.round(ry * Math.sin(rad(a))),
+    });
   }
-  return { mode: "orbit", items };
+  // exact pairwise clearance — every pill box vs every other, plus the centred Back button
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(items[i].x) < (SUB_W + CAT_BTN) / 2 + 4 && Math.abs(items[i].y) < (SUB_H + CAT_BTN) / 2 + 4) return null;
+    for (let j = i + 1; j < n; j++) {
+      const dx = Math.abs(items[i].x - items[j].x);
+      const dy = Math.abs(items[i].y - items[j].y);
+      if (dx < SUB_W + 10 && dy < SUB_H + 10) return null;
+    }
+  }
+  return items;
 }
 
 export function solveRadial(input: SolveInput): Layout {
   const { W, H, petSize } = input;
-  // two independent caps: sub-pills orbit the CENTRE (not the category ring),
-  // so the category ring only has to fit its own buttons
-  const rMax = Math.min(W, H) / 2 - Math.max(SUB_W, SUB_H) / 2 - MARGIN; // orbit cap
-  const rCatMax = Math.min(W, H) / 2 - CAT_BTN / 2 - MARGIN;            // category-ring cap
+  // orbit caps are per-axis (inside solveOrbit); the category ring only has
+  // to fit its own buttons in the short dimension
+  const rCatMax = Math.min(W, H) / 2 - CAT_BTN / 2 - MARGIN;
   if (rCatMax < CAT_FLOOR) return { mode: "sheet" };
 
   const rCat = Math.min(Math.max(86, petSize / 2 + 18), rCatMax);
@@ -158,7 +186,7 @@ export function solveRadial(input: SolveInput): Layout {
       angle: best,
       x: Math.round(p.x),
       y: Math.round(p.y),
-      ...solveOrbit(input, cat.n, rMax),
+      ...solveOrbit(input, cat.n),
     };
   });
 
