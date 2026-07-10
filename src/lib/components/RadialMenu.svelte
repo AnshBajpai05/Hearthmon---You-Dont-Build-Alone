@@ -870,7 +870,7 @@
     pointer-events: none;
   }
 
-  .cat-icon { font-size: 16px; line-height: 1; pointer-events: none; }
+  .cat-icon { font-size: 16px; line-height: 1; pointer-events: none; color: #f2edff; }
 
   /* ── Whisper hover label ───────────────────────────────── */
   .whisper {
@@ -958,6 +958,9 @@
     font-size: 14px;
     line-height: 1;
     pointer-events: none;
+    /* text glyphs (＋ － ✕ ⏻) inherit the UA's near-black button colour and
+       vanish on the dark pills — emoji ignore colour, these don't */
+    color: #f2edff;
   }
   .sub-label {
     font-size: 8.5px;
