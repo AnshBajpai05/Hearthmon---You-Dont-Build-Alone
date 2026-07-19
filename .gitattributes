@@ -1,4 +1,22 @@
+# Baseline: normalize text files — store LF in the repo, check out native per platform.
+* text=auto
+
 # Windows batch/cmd scripts MUST stay CRLF — with LF endings cmd.exe mis-parses
 # multi-line `if (...)` blocks and dies with ". was unexpected at this time."
+# (Listed after `*` so these specific rules win.)
 *.bat text eol=crlf
 *.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets — never touch line endings, never diff.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.icns binary
+*.mp3  binary
+*.wav  binary
+*.mp4  binary
+*.onnx binary
+*.zip  binary
