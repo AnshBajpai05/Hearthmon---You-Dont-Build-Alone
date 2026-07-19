@@ -18,7 +18,7 @@
 
 `100% local` · `no account` · `no cloud` · `~10 MB native` · `Tauri 2 + Svelte 5 + Rust + Pixi.js v8`
 
-*🔓 We'll **open-source Hearthmon** once it's a stable product with the rough edges sanded down. Until then it's a hand-shared beta — free, never for sale.*
+*🔓 **Open source** — the original code is [MIT-licensed](#license--use), free to read, learn from, and build on. Still a hand-shared beta: free, never for sale. Pokémon assets belong to their owners.*
 
 </div>
 
@@ -229,7 +229,9 @@ _Want a longer chapter? Just reach out for a builder pass — they're free, and 
 
 ### License & use
 
-Personal project. Pokémon sprites, cries, names, and any supplied/cloned voice audio are Nintendo / The Pokémon Company / voice-actor IP — **personal use only, never redistribute.**
+The original **source code** is released under the **[MIT License](LICENSE)** — free to read, learn from, fork, and build on.
+
+**Not covered by that license** (and not mine to license): **Pokémon** sprites, cries, names, and designs are trademarks / copyright of **Nintendo · Creatures · GAME FREAK**. Hearthmon is an unofficial, **non-commercial fan project** — not affiliated with or endorsed by them; those assets are for personal / educational use only, **never redistribute or use commercially**. Bundled third-party components keep their own licenses (YAMNet — Google, Apache-2.0; Pokémon Showdown sprites & PokéAPI data — their respective owners). Full details in [LICENSE](LICENSE).
 
 🤖 Built with [Claude Code](https://claude.com/claude-code) & ❤️ by **Ansh Bajpai** ([@AnshBajpai05](https://github.com/AnshBajpai05)).
 *If it stays beside you — let Ansh know. 🌙*
