@@ -6,13 +6,13 @@
 
 <p align="center">
   <a href="https://github.com/AnshBajpai05/Hearthmon-Trial_Beta/releases/latest">
-    <img src="./assets/hearthmon-status.svg?v=1783661078" width="750"/>
+    <img src="./assets/hearthmon-status.svg?v=1794919821" width="750"/>
   </a>
 </p>
 
-**Current Companion:** Raichu<br/>
+**Current Companion:** Entei<br/>
 **Mood:** In Focus<br/>
-**Status:** *"heads down"*<br/>
+**Status:** *"deep in it"*<br/>
 
 *↑ This card is **alive** — Hearthmon writes it back into your repo as you build, so your profile breathes.*
 
