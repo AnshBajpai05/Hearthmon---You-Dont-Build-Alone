@@ -286,9 +286,16 @@ export function buildCard(s: CardState): string {
       /* deliberate typography — never the browser's default serif */
       text { font-family: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif; }
 
-      /* the card is decoration-dense; respect viewers who opt out of motion
-         (initially-invisible bits like the heart and particles simply stay hidden) */
-      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+      /* reduced motion ≠ NO motion. A blanket \`* { animation: none }\` froze the whole card into a
+         still image for anyone with Windows' "Animation effects" off (Chromium maps that toggle to
+         prefers-reduced-motion). So: stop only what TRAVELS — sway/hop, drifting aurora, rising
+         motes, spins, lightning flashes — and keep the in-place life: the companion's own idle
+         frames, breathing, twinkles, soft glows. Initially-invisible travellers (heart, sparkles,
+         embers, …) simply stay hidden. A NEW travelling effect class must be added to this list. */
+      @media (prefers-reduced-motion: reduce) {
+        .monWrap, .shadow, .aur, .aur2, .pt, .heart, .bub,
+        .ember, .bub2, .pollen, .flake, .psy, .wisp, .wind, .ltflash, .ltbolt { animation: none !important; }
+      }
 
       /*
        * ── SPRITE MOVEMENT SYSTEM ───────────────────────────────────────────
